@@ -1,5 +1,6 @@
 import docx
 from docx.api import Document
+import docx.shared
 from typing import List
 import shutil
 import re
@@ -137,31 +138,64 @@ def _inject_tagged_text(paragraph, text: str, tags_map: dict):
             continue
             
         # Check if this part is a tag block
-        # Regex again or simple check?
         tag_match = re.match(r'<(\d+)>(.*?)<\/\1>', part)
         
         if tag_match:
             tag_id = tag_match.group(1)
             content = tag_match.group(2)
             
-            run = paragraph.add_run(content)
-            
-            # Apply formatting based on tag_id
+            # Special Tag Types
             if tag_id in tags_map:
                 tag_info = tags_map[tag_id]
-                _apply_formatting(run, tag_info)
+                
+                if tag_info.type == "tab":
+                    # It's a TAB. Content is likely [TAB]. 
+                    # We add a run with a tab.
+                    run = paragraph.add_run()
+                    run.add_tab()
+                elif tag_info.type == "link":
+                     # It's a Link. For MVP, we insert text + styling (Blue/Underline).
+                     # Real hyperlinks require relationship manipulation which is complex.
+                     # We emulate it visually.
+                     run = paragraph.add_run(content)
+                     run.font.color.rgb = docx.shared.RGBColor(0x05, 0x63, 0xC1) # Typical Blue
+                     run.font.underline = True
+                elif tag_info.type == "comment":
+                    # Ignore comments in export for now? Or insert?
+                    # User didn't ask for comments export yet.
+                    # Just skip or insert text?
+                    # Skip [COMMENT] marker.
+                    pass 
+                else:
+                    # Formatting Tag (Bold, Italic, etc.)
+                    run = paragraph.add_run(content)
+                    _apply_formatting(run, tag_info)
+            else:
+                # Unknown tag, just insert content
+                paragraph.add_run(content)
         
         elif re.match(r'\d+', part) or re.match(r'</\d+>', part) or re.match(r'<\d+>', part):
-             # This is a byproduct of the split (the capture groups), ignore
              continue
+             
         else:
-            # Regular text
-            paragraph.add_run(part)
+            # Regular text. Check for <br/> literal?
+            if "<br/>" in part:
+                # Split by <br/>
+                sub_parts = part.split("<br/>")
+                for i, sp in enumerate(sub_parts):
+                    if i > 0:
+                        # Add break
+                        run = paragraph.add_run()
+                        run.add_break()
+                    if sp:
+                        paragraph.add_run(sp)
+            else:
+                paragraph.add_run(part)
 
 def _apply_formatting(run, tag_info: TagModel):
-    if "bold" in tag_info.type:
+    if tag_info.type == "bold":
         run.bold = True
-    if "italic" in tag_info.type:
+    if tag_info.type == "italic":
         run.italic = True
-    if "underline" in tag_info.type:
+    if tag_info.type == "underline":
         run.underline = True

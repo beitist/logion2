@@ -33,6 +33,7 @@ class SegmentResponse(BaseModel):
     target_content: Optional[str] = None
     status: str
     project_id: str
+    tags: Optional[Dict[str, TagModel]] = None
     
     class Config:
         from_attributes = True

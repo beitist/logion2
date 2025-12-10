@@ -163,50 +163,14 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
         
         # 1. Regular Run (w:r)
         if tag_name == qn('w:r'):
-            # Check for embedded CommentReference first
-            com_refs = child.findall(qn('w:commentReference'))
-            if com_refs:
-                for cr in com_refs:
-                     comment_id = cr.get(qn('w:id'))
-                     if comment_id and context["comments_map"].get(comment_id):
-                        comment_text = context["comments_map"][comment_id]
-                        com_tag = TagModel(
-                            type="comment", 
-                            content=comment_text,
-                            ref_id=comment_id
-                        )
-                        tid = add_tag(com_tag)
-                        full_text += f"<{tid}>[COMMENT]</{tid}>"
-
-            # Check for generic drawing/object if needed (ignored for now)
-            
-            run = Run(child, para)
-            text = run.text
-            if not text:
-                continue
-            
-            extracted_tags = _extract_tags(run)
-            if extracted_tags:
-                active_ids = []
-                # Open tags
-                for t in extracted_tags:
-                    tid = add_tag(t)
-                    full_text += f"<{tid}>"
-                    active_ids.append(tid)
-                
-                full_text += text
-                
-                # Close tags
-                for tid in reversed(active_ids):
-                    full_text += f"</{tid}>"
-
-            else:
-                full_text += text
+             # Handle run content via helper
+             run_text = _process_run_element(child, para, add_tag, context)
+             if run_text:
+                 full_text += run_text
 
         # 2. Hyperlink (w:hyperlink)
         elif tag_name == qn('w:hyperlink'):
             # Create a Link Tag wrapping the whole content
-            # We don't extract URL for MVP yet, or we assume it's just 'link'
             link_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True})
             tid = add_tag(link_tag)
             
@@ -215,8 +179,10 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
             # Iterate children of hyperlink (runs)
             for sub_child in child:
                 if sub_child.tag == qn('w:r'):
-                    run = Run(sub_child, para)
-                    full_text += run.text
+                    # Treat as run
+                    run_text = _process_run_element(sub_child, para, add_tag, context)
+                    if run_text:
+                        full_text += run_text
             
             full_text += f"</{tid}>"
 
@@ -239,30 +205,13 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
             # Treat as normal content. Iterate children (runs)
             for sub_child in child:
                 if sub_child.tag == qn('w:r'):
-                    # Check for embedded CommentReference first (copy-paste logic from w:r above, ideally refactor)
-                    # For MVP short-code, we just handle direct run text.
-                    # TODO: If comments are inside insertions, we need recursion or helper.
-                    
-                    # Recursion helper?
-                    # Let's simple-inline the Run handling for now.
-                    run = Run(sub_child, para)
-                    text = run.text
-                    if text:
-                        extracted_tags = _extract_tags(run)
-                        if extracted_tags:
-                            active_ids = []
-                            for t in extracted_tags:
-                                tid = add_tag(t)
-                                full_text += f"<{tid}>"
-                                active_ids.append(tid)
-                            full_text += text
-                            for tid in reversed(active_ids):
-                                full_text += f"</{tid}>"
-                        else:
-                            full_text += text
+                     run_text = _process_run_element(sub_child, para, add_tag, context)
+                     if run_text:
+                         full_text += run_text
 
         # 5. Deleted Text (w:del) - Tracked Changes REJECT (Skip)
         elif tag_name == qn('w:del'):
+             # Future: Maybe extract deleted text if user wants "Show Revisions"
             continue
 
     if not full_text:
@@ -300,12 +249,13 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
 
     return final_segments
 
+import pysbd
+
+_segmenter = pysbd.Segmenter(language="en", clean=False)
+
 def _split_sentences(text: str) -> List[str]:
-    # Split by . ! ? followed by whitespace or end of string
-    # Positive lookbehind for delimiter
-    pattern = r'(?<=[.!?])\s+'
-    parts = re.split(pattern, text)
-    return [p.strip() for p in parts if p.strip()]
+    # Use pysbd for robust splitting
+    return _segmenter.segment(text)
 
 def _extract_tags(run) -> List[TagModel]:
     """
@@ -324,3 +274,126 @@ def _extract_tags(run) -> List[TagModel]:
     # TODO: Comments, Superscript, Subscript
         
     return found
+
+def _process_run_element(run_element, para, add_tag_func, context) -> str:
+    """
+    Helper to process a w:r element.
+    Handles formatting (Bold/Italic), Embedded Comments, Tabs, Breaks, and Text.
+    Also handles URL regex detection.
+    """
+    # 1. Embedded Comments (w:commentReference in Run)
+    # Check for embedded CommentReference logic copied/adapted?
+    # Usually they are siblings to text in w:r, so we iterate items.
+    
+    # 2. Extract formatting from Run object
+    run_obj = Run(run_element, para)
+    extracted_tags = _extract_tags(run_obj)
+    
+    active_ids = []
+    full_run_text = ""
+    
+    # Open formatting tags
+    if extracted_tags:
+        for t in extracted_tags:
+            tid = add_tag_func(t)
+            full_run_text += f"<{tid}>"
+            active_ids.append(tid)
+            
+    # 3. Iterate Children of w:r (Text, Tab, Br, CommentRef)
+    content_accum = ""
+    
+    for child in run_element:
+        tag_name = child.tag
+        
+        if tag_name == qn('w:t'):
+            text_val = child.text or ""
+            content_accum += text_val
+            
+        elif tag_name == qn('w:tab'):
+             # Handle TAB
+             # Strategy: Convert to Tag or literal. Plan said <4>TAB</4> tag type="tab".
+             # Let's create a TagModel for it.
+             tab_tag = TagModel(type="tab", content="[TAB]")
+             tid = add_tag_func(tab_tag)
+             # Visual spacer? Or just the tag?
+             # Let's render it as a visual block in frontend, so [TAB] is good.
+             content_accum += f"<{tid}>[TAB]</{tid}>"
+             
+        elif tag_name == qn('w:br'):
+             # Handle LINE BREAK
+             # Insert HTML break and maybe a Tag?
+             # Plan says: <br/> literal.
+             content_accum += "<br/>"
+
+        elif tag_name == qn('w:commentReference'):
+            cid = child.get(qn('w:id'))
+            if cid and context["comments_map"].get(cid):
+                ctext = context["comments_map"][cid]
+                com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
+                tid = add_tag_func(com_tag)
+                content_accum += f"<{tid}>[COMMENT]</{tid}>"
+
+    # 4. Process Text for URLs (Regex)
+    # URL detection works on text parts.
+    # But mixed content (text <br> text) makes regex hard.
+    # Simple strategy: Run regex on the whole accumulated string? 
+    # Risk: Regex matching tags inside.
+    # Better: Only run regex on the w:t parts before appending?
+    # But we already accumulated them.
+    # Refactoring:
+    # URL regex should run on text chunks only.
+    # Let's just do it post-hoc on the accumulated text if it hasn't tags inside?
+    # Or, simpler: Just return content_accum.
+    # If we want High-Fidelity URL detection in mixed content (Tabs/Breaks), it requires distinct processing.
+    # For MVP: Re-apply the URL pattern to text parts?
+    # Let's modify the loop above:
+    
+    # New Loop logic to handle URL splitting on the fly
+    content_accum_final = ""
+    
+    # helper for checking URL in text
+    def process_text_for_urls(txt):
+        if not txt: return ""
+        url_pattern = re.compile(r'(https?://[^\s]+)')
+        parts = url_pattern.split(txt)
+        res = ""
+        if len(parts) > 1:
+            for part in parts:
+                if url_pattern.match(part):
+                        l_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True})
+                        l_tid = add_tag_func(l_tag)
+                        res += f"<{l_tid}>{part}</{l_tid}>"
+                elif part:
+                        res += part
+            return res
+        else:
+            return txt
+
+    # Re-iterate or just rebuild logic
+    final_content = ""
+    for child in run_element:
+        tag_name = child.tag
+        if tag_name == qn('w:t'):
+            final_content += process_text_for_urls(child.text or "")
+        elif tag_name == qn('w:tab'):
+             tab_tag = TagModel(type="tab", content="[TAB]")
+             tid = add_tag_func(tab_tag)
+             final_content += f"<{tid}>[TAB]</{tid}>"
+        elif tag_name == qn('w:br'):
+             final_content += "<br/>"
+        elif tag_name == qn('w:commentReference'):
+            cid = child.get(qn('w:id'))
+            if cid and context["comments_map"].get(cid):
+                ctext = context["comments_map"][cid]
+                com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
+                tid = add_tag_func(com_tag)
+                final_content += f"<{tid}>[COMMENT]</{tid}>"
+
+    full_run_text += final_content
+
+    # Close formatting tags
+    if extracted_tags:
+        for tid in reversed(active_ids):
+            full_run_text += f"</{tid}>"
+            
+    return full_run_text

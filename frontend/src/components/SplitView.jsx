@@ -64,20 +64,59 @@ export function SplitView({ projectId }) {
         }
     };
 
-    // Helper to visualize tags as badges using regex replacement
-    const formatSourceContent = (htmlContent) => {
+    // Helper to visualize tags as badges & apply smart hiding
+    const formatSourceContent = (htmlContent, tags) => {
         if (!htmlContent) return "";
+
+        // 1. Check for Full Wrap: e.g. <1>Content</1>
+        // Regex: ^<(\d+)>(.*?)<\/\1>$
+        const wrapMatch = htmlContent.match(/^<(\d+)>(.*?)<\/\1>$/);
+
+        let contentToRender = htmlContent;
+        let wrapperStyle = ""; // CSS class or style
+
+        if (wrapMatch && tags) {
+            const tid = wrapMatch[1];
+            const innerText = wrapMatch[2];
+            const tagInfo = tags[tid];
+
+            // Should we hide this tag? Only for formatting types.
+            if (tagInfo && ['bold', 'italic', 'underline'].includes(tagInfo.type)) {
+                // Apply style and STRIP the outer tags for display
+                if (tagInfo.type === 'bold') wrapperStyle += " font-bold";
+                if (tagInfo.type === 'italic') wrapperStyle += " italic";
+                if (tagInfo.type === 'underline') wrapperStyle += " underline";
+
+                // Recurse? If we strip <1>, maybe <2> is inside.
+                // For MVP, just strip the outer shell.
+                // But we must pass the modified content to the next steps.
+                contentToRender = innerText;
+            }
+        }
+
+        // 2. Badge Replacement (Standard)
         // Replace <n> with Blue Badge
-        let formatted = htmlContent.replace(/<(\d+)>/g,
+        let formatted = contentToRender.replace(/<(\d+)>/g,
             '<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">$1</span>');
 
         // Replace </n> with Red/Orange Badge
         formatted = formatted.replace(/<\/(\d+)>/g,
             '<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/$1</span>');
 
-        // Replace [COMMENT] special marker
+        // Replace [TAB]
+        formatted = formatted.replace(/\[TAB\]/g,
+            '<span class="bg-gray-100 text-gray-500 text-[10px] px-1 rounded mx-0.5 border border-gray-300">⇥ TAB</span>');
+
+        // Replace [COMMENT]
         formatted = formatted.replace(/\[COMMENT\]/g,
             '<span class="bg-yellow-200 text-yellow-800 text-[10px] px-1 rounded mx-0.5">💬</span>');
+
+        // Replace <br/> (already HTML, but ensure it's safe? dangerouslySetInnerHTML handles it)
+
+        // 3. Wrap result if we stripped a wrapper
+        if (wrapperStyle) {
+            return `<span class="${wrapperStyle}">${formatted}</span>`;
+        }
 
         return formatted;
     };
@@ -102,7 +141,7 @@ export function SplitView({ projectId }) {
                             {/* Source Column */}
                             <div className="w-1/2 p-4 bg-gray-50 rounded text-sm leading-relaxed border-r border-gray-100">
                                 {/* Simulating ReadOnly for Source */}
-                                <div dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content) }} />
+                                <div dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content, seg.tags) }} />
                             </div>
 
                             {/* Target Column */}
