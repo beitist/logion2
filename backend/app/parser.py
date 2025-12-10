@@ -212,7 +212,7 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
                 # MVP: Intra-paragraph ranges work. Spanning ranges will look like separate comments per segment.
                 
                 # We need to store 'xml_id' -> 'tag_id' for this paragraph.
-                if not hasattr(context, "_active_ranges"):
+                if "_active_ranges" not in context:
                     context["_active_ranges"] = {} # XML_ID -> TAG_ID
                 
                 context["_active_ranges"][comment_id] = tid
@@ -222,13 +222,12 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
         elif tag_name == qn('w:commentRangeEnd'):
             comment_id = child.get(qn('w:id'))
             # Check if we have an open tag for this
-            if hasattr(context, "_active_ranges") and comment_id in context["_active_ranges"]:
+            if "_active_ranges" in context and comment_id in context["_active_ranges"]:
                 tid = context["_active_ranges"][comment_id]
                 full_text += f"</{tid}>"
                 # Mark as handled so Ref doesn't duplicate? 
-                # Actually remove from active logic.
-                # But Ref needs to know it WAS a range.
-                if not hasattr(context, "_handled_ranges"):
+                
+                if "_handled_ranges" not in context:
                     context["_handled_ranges"] = set()
                 context["_handled_ranges"].add(comment_id)
                 
@@ -239,8 +238,8 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
             comment_id = child.get(qn('w:id'))
             
             # Check if this was already handled as a range
-            was_handled = hasattr(context, "_handled_ranges") and comment_id in context["_handled_ranges"]
-            is_active = hasattr(context, "_active_ranges") and comment_id in context["_active_ranges"]
+            was_handled = "_handled_ranges" in context and comment_id in context["_handled_ranges"]
+            is_active = "_active_ranges" in context and comment_id in context["_active_ranges"]
             
             if was_handled or is_active:
                 # It's a range comment, we ignore the anchor reference to avoid duplication
@@ -439,7 +438,16 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
              final_content += "<br/>"
         elif tag_name == qn('w:commentReference'):
             cid = child.get(qn('w:id'))
-            if cid and context["comments_map"].get(cid):
+            
+            # Check if this was already handled as a range
+            # Note: _process_run_element shares the same context dict as _process_paragraph
+            was_handled = "_handled_ranges" in context and cid in context["_handled_ranges"]
+            is_active = "_active_ranges" in context and cid in context["_active_ranges"]
+            
+            if was_handled or is_active:
+                # Suppress point comment
+                pass
+            elif cid and context["comments_map"].get(cid):
                 ctext = context["comments_map"][cid]
                 com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
                 tid = add_tag_func(com_tag)
