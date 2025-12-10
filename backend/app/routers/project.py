@@ -93,26 +93,36 @@ from ..schemas import SegmentResponse # Assuming SegmentResponse is defined here
 @router.get("/{project_id}/segments", response_model=List[SegmentResponse])
 def get_project_segments(project_id: str, db: Session = Depends(get_db)):
     segments = db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
-    # Convert tag_models JSON to list of TagModel for response
-    # Pydantic should handle it if model matches alias?
-    # Actually, SQLAlchemy model metadata_json is a dict/JSON. Pydantic expects dict/list.
-    # We might need to map it explicitly if Pydantic doesn't auto-convert.
-    # The current Project/Segment Models use JSON type, and Pydantic schema expects TagModel list.
-    # Let's trust Pydantic + SQLA for now, or ensure 'tags' field is populated from metadata if separate.
-    # Wait, our Segment model in DB has 'metadata_json', but SegmentInternal has 'tags'.
-    # In 'create_upload_file', we dumped tags into metadata_json if I recall?
-    # Let's check 'parser.py' output. It returns SegmentInternal which has 'tags'.
-    # In 'create_upload_file' (line 62 in previous version), we did:
-    # segment_db = Segment(..., metadata_json=seg.model_dump().get("metadata"))
-    # We might have LOST the tags if they weren't in metadata_json!
-    # Checking parser: tags are in 'tags' field of SegmentInternal, metadata is separate.
-    # Checking Project.py upload:
-    # seg_data = seg.model_dump() ... segment_db = Segment(..., metadata_json=json.dumps(seg_data)) 
-    # If we dumped the WHOLE model, then tags are inside metadata_json['tags'].
     
-    # Correction: The SegmentResponse schema needs to align with what we return.
-    # For now, let's just implement EXPORT as that is the goal here.
-    return segments
+    # Manual mapping to Pydantic schema to ensure 'tags' are extracted from metadata_json
+    response_list = []
+    for s in segments:
+        # metadata_json is a dict
+        stored_meta = s.metadata_json or {}
+        
+        # Extract tags dict
+        # The parser stores tags as a dict inside the model dump.
+        # Check if 'tags' is a key in stored_meta
+        tags_data = stored_meta.get("tags")
+        
+        # Ensure we return valid TagModel objects if needed, o dicts? 
+        # Schema says: tags: Optional[Dict[str, TagModel]]
+        # Pydantic is smart enough to convert Dict[str, dict] to Dict[str, TagModel]
+        
+        # Construct response object
+        # We can use SegmentResponse.model_validate but we need to feed it the right dict
+        seg_dict = {
+            "id": s.id,
+            "index": s.index,
+            "source_content": s.source_content,
+            "target_content": s.target_content,
+            "status": s.status,
+            "project_id": s.project_id,
+            "tags": tags_data # Inject extracted tags here
+        }
+        response_list.append(seg_dict)
+        
+    return response_list
 
 from fastapi.responses import FileResponse
 from ..reassembly import reassemble_docx
@@ -163,7 +173,19 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
         target_text = db_seg.target_content
         if target_text is None:
             target_text = db_seg.source_content # Fallback to source
-
+        else:
+            # Cleanup Tiptap HTML
+            # Tiptap usually wraps in <p>...</p>. We are injecting into an existing w:p.
+            # We want to remove the outer <p> tags.
+            # Simple check for now.
+            target_text = target_text.strip()
+            if target_text.startswith("<p>") and target_text.endswith("</p>"):
+                target_text = target_text[3:-4]
+            
+            # Handle multiple paragraphs (e.g. <p>A</p><p>B</p>) -> A<br/>B
+            # Replace </p><p> with <br/> or proper break tag our Reassembler supports
+            # Our Reassembler detects "<br/>" literal.
+            target_text = target_text.replace("</p><p>", "<br/>")
         
         seg_internal = SegmentInternal(
             id=db_seg.id,

@@ -153,9 +153,19 @@ export function SplitView({ projectId }) {
     // Helper to extract comments for display
     const getSegmentComments = (tags) => {
         if (!tags) return [];
-        return Object.values(tags)
-            .filter(t => t.type === 'comment')
-            .map(t => t.content);
+        const uniqueComments = new Map(); // ref_id -> content
+
+        Object.values(tags).forEach(t => {
+            if (t.type === 'comment') {
+                // Use ref_id for uniqueness if available, else content
+                const key = t.ref_id || t.content;
+                if (!uniqueComments.has(key)) {
+                    uniqueComments.set(key, t.content);
+                }
+            }
+        });
+
+        return Array.from(uniqueComments.values());
     };
 
     if (loading) return <div className="p-8 text-center">Loading...</div>;
