@@ -24,7 +24,7 @@ if not os.path.exists(UPLOAD_DIR):
 router = APIRouter(prefix="/project", tags=["project"])
 
 @router.post("/upload")
-def upload_project(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_project(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Uploads a DOCX, parses it, and creates a Project with Segments.
     """

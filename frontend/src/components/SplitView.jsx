@@ -111,7 +111,10 @@ export function SplitView({ projectId }) {
                     // So Generic Button -> `<N>[TAB]</N>`.
                     return `<${realId}>[TAB]</${realId}>`;
                 } else {
-                    return ""; // Run out of tab IDs? Ignore or insert space?
+                    // Fallback: Return literal [TAB] marker.
+                    // The backend reassembly supports "[TAB]" in text and converts it to a w:tab.
+                    // This allows users to add MORE tabs than were in the source.
+                    return "[TAB]";
                 }
             }
 
