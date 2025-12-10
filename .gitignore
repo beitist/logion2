@@ -35,3 +35,12 @@ dist-ssr
 
 # Python Cache Files
 *.pyc
+
+.venv
+venv
+
+.venv/*
+venv/*
+
+resource/*
+resource
