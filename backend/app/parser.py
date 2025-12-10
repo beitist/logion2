@@ -186,15 +186,71 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
             
             full_text += f"</{tid}>"
 
+        # 2b. Comment Range Start
+        elif tag_name == qn('w:commentRangeStart'):
+            comment_id = child.get(qn('w:id'))
+            if comment_id and context["comments_map"].get(comment_id):
+                # Start a wrapping tag
+                comment_text = context["comments_map"][comment_id]
+                com_tag = TagModel(
+                    type="comment",
+                    content=comment_text,
+                    ref_id=comment_id
+                )
+                tid = add_tag(com_tag)
+                # Store mapping so we know this ID is active/handled as a range
+                # We need to map XML-ID to our TAG-ID to close it later
+                # Use context or local dict? Local is fine for para-scope? 
+                # WARNING: Comments can span paragraphs! 
+                # If a comment spans paragraphs, we have a problem with our SegmentInternal Design (per Paragraph).
+                # MVP Limitation: We CLOSE all tags at end of paragraph. 
+                # If we encounter EndTag in next para without StartTag, we ignore? 
+                # OR we just treat intra-paragraph ranges for now. 
+                # Let's support Intra-Paragraph Ranges fully.
+                # For Inter-Paragraph, we might leave open? No, SegmentInternal must be self-contained XML-ish.
+                # Decision: Auto-Close at end of para. Auto-Reopen at start of next? Too complex.
+                # MVP: Intra-paragraph ranges work. Spanning ranges will look like separate comments per segment.
+                
+                # We need to store 'xml_id' -> 'tag_id' for this paragraph.
+                if not hasattr(context, "_active_ranges"):
+                    context["_active_ranges"] = {} # XML_ID -> TAG_ID
+                
+                context["_active_ranges"][comment_id] = tid
+                full_text += f"<{tid}>"
+
+        # 2c. Comment Range End
+        elif tag_name == qn('w:commentRangeEnd'):
+            comment_id = child.get(qn('w:id'))
+            # Check if we have an open tag for this
+            if hasattr(context, "_active_ranges") and comment_id in context["_active_ranges"]:
+                tid = context["_active_ranges"][comment_id]
+                full_text += f"</{tid}>"
+                # Mark as handled so Ref doesn't duplicate? 
+                # Actually remove from active logic.
+                # But Ref needs to know it WAS a range.
+                if not hasattr(context, "_handled_ranges"):
+                    context["_handled_ranges"] = set()
+                context["_handled_ranges"].add(comment_id)
+                
+                del context["_active_ranges"][comment_id]
+
         # 3. Comment Reference (w:commentReference)
         elif tag_name == qn('w:commentReference'):
             comment_id = child.get(qn('w:id'))
-            if comment_id and context["comments_map"].get(comment_id):
+            
+            # Check if this was already handled as a range
+            was_handled = hasattr(context, "_handled_ranges") and comment_id in context["_handled_ranges"]
+            is_active = hasattr(context, "_active_ranges") and comment_id in context["_active_ranges"]
+            
+            if was_handled or is_active:
+                # It's a range comment, we ignore the anchor reference to avoid duplication
+                pass
+            elif comment_id and context["comments_map"].get(comment_id):
+                # Point Comment (no range seen in this para)
                 comment_text = context["comments_map"][comment_id]
-                # Embed as a Tag with content
                 com_tag = TagModel(
                     type="comment", 
-                    content=comment_text,
+                    content=comment_text, 
                     ref_id=comment_id
                 )
                 tid = add_tag(com_tag)
