@@ -8,7 +8,7 @@ import Underline from '@tiptap/extension-underline'
 // but we want to visualize <1> as chips later.
 // For skeleton MVP, we allow editing text.
 
-export function TiptapEditor({ content, onUpdate, isReadOnly }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly }) {
     const editor = useEditor({
         extensions: [
             StarterKit,

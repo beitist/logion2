@@ -1,21 +1,46 @@
-import docx
-from docx.api import Document
 from typing import List, Tuple, Dict
 import uuid
 import re
+from docx.oxml.ns import qn
+from docx.api import Document
+from docx.text.run import Run
+from lxml import etree
 
 from .schemas import SegmentInternal, TagModel
 
 def parse_docx(file_path: str) -> List[SegmentInternal]:
     """
-    Parses a DOCX file and returns a list of SegmentInternal objects.
-    Each paragraph is treated as a segment (simplification for MVP).
+    Parses a DOCX file and extracts segments with tags for formatting, hyperlinks, and comments.
     """
     doc = Document(file_path)
     segments = []
+    
+    # 1. Load Comments Map (id -> text)
+    comments_map = {}
+    try:
+        # Try explicit XML parsing for comments as python-docx support varies
+        # We need to find the comments part
+        part = doc.part
+        # This is a bit hacky but robust for reading: iterate relations
+        for rel in part.rels.values():
+            if "comments" in rel.reltype and not "commentsExtended" in rel.reltype and not "commentsIds" in rel.reltype:
+                 # Found comments.xml
+                 xml_data = rel.target_part.blob
+                 root = etree.fromstring(xml_data)
+                 # Namespace usually w:
+                 namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                 for comment in root.findall('.//w:comment', namespaces):
+                     cid = comment.get(qn('w:id'))
+                     ctext = "".join([t.text for t in comment.findall('.//w:t', namespaces) if t.text])
+                     comments_map[cid] = ctext
+    except Exception as e:
+        print(f"Warning: Could not load comments: {e}")
+
+    # Helper context to pass comments_map
+    context = {"comments_map": comments_map}
 
     # 1. Body
-    segments.extend(_process_container(doc, {"type": "body"}))
+    segments.extend(_process_container(doc, {"type": "body"}, context))
 
     # 2. Key Sections (Headers/Footers)
     for s_idx, section in enumerate(doc.sections):
@@ -24,17 +49,17 @@ def parse_docx(file_path: str) -> List[SegmentInternal]:
              segments.extend(_process_container(section.header, {
                  "type": "header", 
                  "section_index": s_idx
-             }))
+             }, context))
         # Footer
         if section.footer:
              segments.extend(_process_container(section.footer, {
                  "type": "footer", 
                  "section_index": s_idx
-             }))
+             }, context))
     
     return segments
 
-def _process_container(container, base_metadata: dict) -> List[SegmentInternal]:
+def _process_container(container, base_metadata: dict, context: dict) -> List[SegmentInternal]:
     container_segments = []
     
     # 1. Paragraphs
@@ -50,7 +75,7 @@ def _process_container(container, base_metadata: dict) -> List[SegmentInternal]:
         else:
             loc["p_index"] = i
             
-        segment = _process_paragraph(para, loc)
+        segment = _process_paragraph(para, loc, context)
         if segment:
             container_segments.append(segment)
 
@@ -105,70 +130,102 @@ def _process_container(container, base_metadata: dict) -> List[SegmentInternal]:
                     loc["cell_index"] = c_idx
                     loc["p_index"] = p_idx
                     
-                    segment = _process_paragraph(para, loc)
+                    segment = _process_paragraph(para, loc, context)
                     if segment:
                         container_segments.append(segment)
 
     return container_segments
 
-def _process_paragraph(para, location: dict) -> SegmentInternal:
+def _process_paragraph(para, location: dict, context: dict) -> SegmentInternal:
     """
     Converts a docx Paragraph object into a SegmentInternal with tags.
+    Handles Runs, Hyperlinks, and Comments via XML iteration.
     """
-    source_text_parts = []
+    full_text = ""
     tags = {}
+    
+    # Counter for tags
     tag_counter = 1
+    
+    def add_tag(tag_model: TagModel):
+        nonlocal tag_counter
+        tid = str(tag_counter)
+        tags[tid] = tag_model
+        tag_counter += 1
+        return tid
 
-    for run in para.runs:
-        current_tags = _extract_tags(run)
+    # IMPORTANT: We iterate DIRECT children of the paragraph element.
+    # Hyperlinks and Runs are children of the paragraph.
+    # We must treat them sequentially.
+    
+    for child in para._element:
+        tag_name = child.tag
         
-        text = run.text
-        if not text:
-            continue
+        # 1. Regular Run (w:r)
+        if tag_name == qn('w:r'):
+            run = Run(child, para)
+            text = run.text
+            if not text:
+                continue
+            
+            extracted_tags = _extract_tags(run)
+            if extracted_tags:
+                active_ids = []
+                # Open tags
+                for t in extracted_tags:
+                    tid = add_tag(t)
+                    full_text += f"<{tid}>"
+                    active_ids.append(tid)
+                
+                full_text += text
+                
+                # Close tags
+                for tid in reversed(active_ids):
+                    full_text += f"</{tid}>"
 
-        if current_tags:
-            # If run has relevant formatting, wrap it in a tag
-            # For MVP: we treat the whole run as one tag block if it has ANY format.
-            # Real world: might have multiple formats. We flatten to single ID for now.
-            
-            # Use the first extracted tag type as dominant, or combine?
-            # Let's map tag_id -> TagModel
-            
-            # Optimization: Group identical consecutive runs? (Not for step 1)
+            else:
+                full_text += text
 
-            tag_id = str(tag_counter)
-            tag_counter += 1
+        # 2. Hyperlink (w:hyperlink)
+        elif tag_name == qn('w:hyperlink'):
+            # Create a Link Tag wrapping the whole content
+            # We don't extract URL for MVP yet, or we assume it's just 'link'
+            link_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True})
+            tid = add_tag(link_tag)
             
-            # Store the simplified tag info. 
-            # If multiple styles (Bold + Italic), we might need a composite type or list.
-            # Spec says: "1": { "type": "bold" }
-            # Let's check what we have.
+            full_text += f"<{tid}>"
             
-            # Simple approach: If bold, type='bold'. If italic, type='italic'. 
-            # If both, we might need nested tags? Or a 'style' tag?
-            # Specs says: <1>...<1>.
-            # Let's stick to: Create a tag entry for this run.
+            # Iterate children of hyperlink (runs)
+            for sub_child in child:
+                if sub_child.tag == qn('w:r'):
+                    run = Run(sub_child, para)
+                    full_text += run.text
             
-            # Merging attributes
-            combined_type = "+".join([t.type for t in current_tags])
-            
-            tags[tag_id] = TagModel(
-                type=combined_type,
-                xml_attributes={} # Placeholder for real XML extraction later
-            )
-            
-            source_text_parts.append(f"<{tag_id}>{text}</{tag_id}>")
-        else:
-            source_text_parts.append(text)
+            full_text += f"</{tid}>"
 
-    # If no text after processing (e.g. only images), return None
-    full_text = "".join(source_text_parts)
+        # 3. Comment Reference (w:commentReference)
+        elif tag_name == qn('w:commentReference'):
+            comment_id = child.get(qn('w:id'))
+            if comment_id and context["comments_map"].get(comment_id):
+                comment_text = context["comments_map"][comment_id]
+                # Embed as a Tag with content
+                com_tag = TagModel(
+                    type="comment", 
+                    content=comment_text,
+                    ref_id=comment_id
+                )
+                tid = add_tag(com_tag)
+                full_text += f"<{tid}>[COMMENT]</{tid}>"
+
     if not full_text.strip():
         return None
 
     return SegmentInternal(
+        id=str(uuid.uuid4()),
         segment_id=str(uuid.uuid4()),
         source_text=full_text,
+        target_content=None,
+        status="draft",
         tags=tags,
         metadata=location
     )
