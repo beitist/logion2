@@ -1,0 +1,60 @@
+/* Basic Editor Reset */
+.ProseMirror {
+    outline: none !important;
+    min-height: 120px;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    float: left;
+    color: #adb5bd;
+    pointer-events: none;
+    height: 0;
+}
+
+/* Tag Mark Visualization */
+.tag-mark {
+    background-color: #eff6ff;
+    /* blue-50 */
+    border-bottom: 2px solid #bfdbfe;
+    /* blue-200 */
+    padding: 2px 0;
+    margin: 0 2px;
+    border-radius: 2px;
+    position: relative;
+    display: inline;
+}
+
+/* Start Chip */
+.tag-mark::before {
+    content: var(--tag-label);
+    background-color: #dbeafe;
+    /* blue-100 */
+    color: #1e40af;
+    /* blue-800 */
+    font-size: 0.65em;
+    font-family: monospace;
+    padding: 1px 4px;
+    border-radius: 4px;
+    margin-right: 2px;
+    vertical-align: middle;
+    user-select: none;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+}
+
+/* End Chip */
+.tag-mark::after {
+    content: "/" var(--tag-label);
+    background-color: #ffedd5;
+    /* orange-100 */
+    color: #9a3412;
+    /* orange-800 */
+    font-size: 0.65em;
+    font-family: monospace;
+    padding: 1px 4px;
+    border-radius: 4px;
+    margin-left: 2px;
+    vertical-align: middle;
+    user-select: none;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+}

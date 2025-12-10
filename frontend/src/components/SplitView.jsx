@@ -209,8 +209,30 @@ export function SplitView({ projectId }) {
 
                                 {/* Target Column */}
                                 <div className="p-4 bg-white relative group">
-                                    <div className="text-xs text-gray-400 font-mono mb-1 uppercase tracking-wider flex justify-between">
-                                        <span>Target (DE)</span>
+                                    <div className="text-xs text-gray-400 font-mono mb-1 uppercase tracking-wider flex justify-between items-center">
+                                        <div className="flex items-center gap-2">
+                                            <span>Target (DE)</span>
+                                            {/* Context Badges */}
+                                            {seg.metadata && (
+                                                <>
+                                                    {seg.metadata.type === 'header' && (
+                                                        <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-purple-200">
+                                                            HEADER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index}` : ''}
+                                                        </span>
+                                                    )}
+                                                    {seg.metadata.type === 'footer' && (
+                                                        <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-purple-200">
+                                                            FOOTER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index}` : ''}
+                                                        </span>
+                                                    )}
+                                                    {(seg.metadata.type === 'table' || seg.metadata.child_type === 'table_cell') && (
+                                                        <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-blue-200">
+                                                            TABLE [{seg.metadata.table_index},{seg.metadata.row_index},{seg.metadata.cell_index}]
+                                                        </span>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] ${seg.status === 'draft' ? 'bg-yellow-100 text-yellow-700' :
                                             seg.status === 'translated' ? 'bg-green-100 text-green-700' : 'bg-gray-100'
                                             }`}>
@@ -222,6 +244,7 @@ export function SplitView({ projectId }) {
                                         segmentId={seg.id}
                                         onSave={handleSave}
                                         isReadOnly={false}
+                                        availableTags={seg.tags}
                                     />
                                 </div>
                             </div>
