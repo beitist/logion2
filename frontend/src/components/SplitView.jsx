@@ -35,9 +35,25 @@ export function SplitView({ projectId }) {
     const handleSave = async (id, content) => {
         console.log("Saving segment", id);
         setSavingId(id);
+
+        // Serialize Tiptap HTML -> Logion Format
+        // We need to convert <span data-tag-id="1">...</span> back to <1>...</1>
+        // Use a DOM parser or regex. Regex is risky for nested, but our structure is flat-ish.
+        // Let's use string manipulation for safety:
+        let serialized = content;
+
+        // Replace <span data-tag-id="N" ...>Content</span> with <N>Content</N>
+        serialized = serialized.replace(/<span[^>]*data-tag-id="(\d+)"[^>]*>(.*?)<\/span>/g, '<$1>$2</$1>');
+
+        // Note: Tiptap might add style="" or class="" attributes we don't need.
+        // The backend handles <p> stripping.
+
         try {
-            await updateSegment(id, content);
-            // Maybe show a toast?
+            await updateSegment(id, serialized);
+            // Update local state to show saved content?
+            // Actually handleEditorUpdate already updated state with RAW html.
+            // We should ensure local state reflects what Tiptap is showing (which is HTML).
+            // So we don't need to update local segments with serialized.
         } catch (err) {
             console.error("Save failed", err);
             alert("Save failed!");
