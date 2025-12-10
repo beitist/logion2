@@ -18,19 +18,20 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly 
         content: content || "",
         editable: !isReadOnly,
         onUpdate: ({ editor }) => {
-            // In a real app we'd debounce this
-            // and sanitize back to tag format? 
-            // Current architecture: "Review" updates status, save happens separately?
-            // Spec says: PATCH /segment/{id} updates translation.
+            // Local state update if needed
+            if (onUpdate) onUpdate(editor.getHTML());
+        },
+        onBlur: ({ editor }) => {
+            if (onSave && segmentId) {
+                onSave(segmentId, editor.getHTML())
+            }
         },
     })
 
     // Update content if it changes externally (e.g. initial load)
     useEffect(() => {
-        if (editor && content !== editor.getHTML()) {
-            // Simple string comparison is dangerous with HTML but ok for init
-            // editor.commands.setContent(content) 
-            // Careful with loops.
+        if (editor && content && content !== editor.getHTML()) {
+            editor.commands.setContent(content)
         }
     }, [content, editor])
 

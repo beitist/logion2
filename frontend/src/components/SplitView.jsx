@@ -64,6 +64,24 @@ export function SplitView({ projectId }) {
         }
     };
 
+    // Helper to visualize tags as badges using regex replacement
+    const formatSourceContent = (htmlContent) => {
+        if (!htmlContent) return "";
+        // Replace <n> with Blue Badge
+        let formatted = htmlContent.replace(/<(\d+)>/g,
+            '<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">$1</span>');
+
+        // Replace </n> with Red/Orange Badge
+        formatted = formatted.replace(/<\/(\d+)>/g,
+            '<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/$1</span>');
+
+        // Replace [COMMENT] special marker
+        formatted = formatted.replace(/\[COMMENT\]/g,
+            '<span class="bg-yellow-200 text-yellow-800 text-[10px] px-1 rounded mx-0.5">💬</span>');
+
+        return formatted;
+    };
+
     if (loading) return <div className="p-8 text-center">Loading...</div>;
 
     return (
@@ -82,9 +100,9 @@ export function SplitView({ projectId }) {
                     {segments.map((seg) => (
                         <div key={seg.id} className="grid grid-cols-2 gap-4 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                             {/* Source Column */}
-                            <div className="w-1/2 p-2 bg-gray-50 rounded">
+                            <div className="w-1/2 p-4 bg-gray-50 rounded text-sm leading-relaxed border-r border-gray-100">
                                 {/* Simulating ReadOnly for Source */}
-                                <div dangerouslySetInnerHTML={{ __html: seg.source_content }} />
+                                <div dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content) }} />
                             </div>
 
                             {/* Target Column */}
@@ -99,6 +117,8 @@ export function SplitView({ projectId }) {
                                 </div>
                                 <TiptapEditor
                                     content={seg.target_content || ""}
+                                    segmentId={seg.id}
+                                    onSave={handleSave}
                                     isReadOnly={false}
                                 />
                             </div>

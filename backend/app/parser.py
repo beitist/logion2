@@ -75,9 +75,9 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
         else:
             loc["p_index"] = i
             
-        segment = _process_paragraph(para, loc, context)
-        if segment:
-            container_segments.append(segment)
+        segment_list = _process_paragraph(para, loc, context)
+        if segment_list:
+            container_segments.extend(segment_list)
 
     # 2. Tables
     for t_idx, table in enumerate(container.tables):
@@ -130,13 +130,13 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
                     loc["cell_index"] = c_idx
                     loc["p_index"] = p_idx
                     
-                    segment = _process_paragraph(para, loc, context)
-                    if segment:
-                        container_segments.append(segment)
+                    segment_list = _process_paragraph(para, loc, context)
+                    if segment_list:
+                        container_segments.extend(segment_list)
 
     return container_segments
 
-def _process_paragraph(para, location: dict, context: dict) -> SegmentInternal:
+def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInternal]:
     """
     Converts a docx Paragraph object into a SegmentInternal with tags.
     Handles Runs, Hyperlinks, and Comments via XML iteration.
@@ -265,18 +265,47 @@ def _process_paragraph(para, location: dict, context: dict) -> SegmentInternal:
         elif tag_name == qn('w:del'):
             continue
 
-    if not full_text.strip():
-        return None
+    if not full_text:
+        return []
 
-    return SegmentInternal(
-        id=str(uuid.uuid4()),
-        segment_id=str(uuid.uuid4()),
-        source_text=full_text,
-        target_content=None,
-        status="draft",
-        tags=tags,
-        metadata=location
-    )
+    # Decision: Split or Keep Whole?
+    # MVP Strategy: Only split if NO TAGS are present to avoid breaking tag structure.
+    # Future: Parse <n>...</n> and split safely.
+    segments_to_create = []
+    
+    if not tags:
+        # Pure text, safe to split
+        sentences = _split_sentences(full_text)
+        for idx, sentence in enumerate(sentences):
+             segments_to_create.append((sentence, idx))
+    else:
+        # Has tags, keep whole
+        segments_to_create.append((full_text, 0))
+
+    final_segments = []
+    for content, sub_index in segments_to_create:
+        # Create unique location
+        seg_loc = location.copy()
+        seg_loc["sub_index"] = sub_index
+        
+        final_segments.append(SegmentInternal(
+            id=str(uuid.uuid4()),
+            segment_id=str(uuid.uuid4()),
+            source_text=content,
+            target_content=None, # Translation starts empty/null
+            status="draft",
+            tags=tags if sub_index == 0 else {}, # Tags technically belong to the whole, but we only have them here if we didn't split.
+            metadata=seg_loc
+        ))
+
+    return final_segments
+
+def _split_sentences(text: str) -> List[str]:
+    # Split by . ! ? followed by whitespace or end of string
+    # Positive lookbehind for delimiter
+    pattern = r'(?<=[.!?])\s+'
+    parts = re.split(pattern, text)
+    return [p.strip() for p in parts if p.strip()]
 
 def _extract_tags(run) -> List[TagModel]:
     """

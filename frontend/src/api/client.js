@@ -28,3 +28,21 @@ export async function getSegments(projectId) {
     if (!res.ok) throw new Error("Failed to fetch segments");
     return res.json();
 }
+
+export async function updateSegment(segmentId, content) {
+    const res = await fetch(`${API_BASE}/segment/${segmentId}`, {
+        method: "PATCH",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ target_content: content }),
+    });
+    if (!res.ok) throw new Error("Failed to update segment");
+    return res.json();
+}
+
+export async function downloadProject(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/export`);
+    if (!res.ok) throw new Error("Failed to export project");
+    return res.blob();
+}
