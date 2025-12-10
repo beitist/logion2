@@ -32,28 +32,133 @@ export function SplitView({ projectId }) {
         );
     };
 
-    const handleSave = async (id, content) => {
+    // Helper: Hydrate generic XML tags (<1>, </1>) into Tiptap TagNodes
+    const hydrateContent = (content, tags) => {
+        if (!content) return "";
+        let hydrated = content;
+
+        // Match <(\d+)> OR </(\d+)>
+        hydrated = hydrated.replace(/<(\d+)>|<\/(\d+)>/g, (match, openId, closeId) => {
+            const id = openId || closeId;
+            const tagInfo = tags ? tags[id] : null;
+            let label = id;
+            let finalId = id;
+
+            if (tagInfo) {
+                if (tagInfo.type === 'tab') {
+                    label = 'TAB';
+                    finalId = 'TAB'; // Use generic ID so user can behave generically
+                }
+                else if (tagInfo.type === 'comment') label = '💬';
+            }
+
+            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
+        });
+
+        return hydrated;
+    };
+
+    const handleSave = async (id, htmlContent) => {
         console.log("Saving segment", id);
         setSavingId(id);
 
-        // Serialize Tiptap HTML -> Logion Format
-        // We need to convert <span data-tag-id="1">...</span> back to <1>...</1>
-        // Use a DOM parser or regex. Regex is risky for nested, but our structure is flat-ish.
-        // Let's use string manipulation for safety:
-        let serialized = content;
+        // Serialization: Convert TagNodes back to <1>...</1>
 
-        // Replace <span data-tag-id="N" ...>Content</span> with <N>Content</N>
-        serialized = serialized.replace(/<span[^>]*data-tag-id="(\d+)"[^>]*>(.*?)<\/span>/g, '<$1>$2</$1>');
+        // 1. Prepare Smart Mapping for Generic Tabs
+        // We need the original segment to know available tab IDs
+        const seg = segments.find(s => s.id === id);
+        const tabIds = [];
+        if (seg && seg.tags) {
+            // Collect all IDs that are tabs, sorted numerically or by appearance order?
+            // Usually keys are strings "1", "10". Numeric sort is safest.
+            Object.keys(seg.tags).forEach(k => {
+                if (seg.tags[k].type === 'tab') tabIds.push(parseInt(k));
+            });
+            tabIds.sort((a, b) => a - b);
+        }
 
-        // Note: Tiptap might add style="" or class="" attributes we don't need.
-        // The backend handles <p> stripping.
+        // 2. Serialize
+        const openTags = new Set();
+        let serialized = htmlContent;
+        let tabIndex = 0;
+
+        // Replace <span ... data-id="X"></span> with <X> or </X>
+        serialized = serialized.replace(/<span[^>]*data-type="tag-node"[^>]*data-id="([^"]+)"[^>]*>.*?<\/span>/g, (match, nodeId) => {
+
+            let realId = nodeId;
+
+            // Handle Generic TAB
+            if (nodeId === 'TAB') {
+                if (tabIndex < tabIds.length) {
+                    realId = String(tabIds[tabIndex]);
+                    tabIndex++;
+                    // Note: Tabs are typically "Self-Closing" or "Content wrapping [TAB]".
+                    // In Tiptap [TAB] is a chip.
+                    // If we treat it as an Open Tag, we need a closing tag?
+                    // Tabs in our model are <N>[TAB]</N>.
+                    // So we probably want `<N></N>`? Or does reassembly expect content?
+                    // Reassembly splits by tags.
+                    // If we just return `<N>`, reassembly parsers `<N>`.
+                    // Actually, our previous logic was: First instance <N>, Second </N>.
+                    // If we just insert ONE chip `[TAB]`, serialization sees ONE node.
+                    // It returns `<N>`.
+                    // But we likely need `<N>[TAB]</N>` or just `<N>[TAB]`?
+                    // The backend parser expects `<N>...</N>`.
+                    // So we should probably output the FULL PAIR `<ID>[TAB]</ID>` for a single [TAB] chip?
+                    // OR, we assume the user inserts PAIRS?
+                    // User said: "1 Button... I click as often as I need".
+                    // Implies single click = 1 Tab.
+                    // So Generic Button -> `<N>[TAB]</N>`.
+                    return `<${realId}>[TAB]</${realId}>`;
+                } else {
+                    return ""; // Run out of tab IDs? Ignore or insert space?
+                }
+            }
+
+            // Standard Logic for other IDs (1, 2, C...)
+            if (openTags.has(realId)) {
+                openTags.delete(realId);
+                return `</${realId}>`;
+            } else {
+                openTags.add(realId);
+                return `<${realId}>`;
+            }
+        });
+
+        // Serialize Tabs/Comments Visuals back to markers
+        // note: Generic Tabs logic above already injected [TAB] inside tags!
+        // So we don't need to replace `[TAB]` visual unless it was manually typed? 
+        // But `htmlContent` contains `<span...>TAB</span>` inside the node?
+        // Wait, replace loop matched the WHOLE span. So inner content is GONE.
+        // My return `<${realId}>[TAB]</${realId}>` REPLACES the whole chip.
+        // So I don't need to clean up `⇥ TAB` span for Tabs.
+
+        // But for Comments? Comments are standard nodes.
+        // Standard logic returns `<ID>`. Inner content was consumed.
+        // Does Tiptap node contain "💬"? Yes.
+        // So `<ID>` is returned. Content is GONE?
+        // NO. `match` consumes the span. The return value replaces it.
+        // For comments, we want `<ID>[COMMENT]</ID>`?
+        // Or does the user wrap text? "Reference Comment".
+        // If it's a range comment, user wraps text.
+        // But `TagNode` is an ATOM. It cannot wrap text.
+        // Wait. `TagNode` is an ATOM. It is a point.
+        // So for COMMENTS (Ranges), using `TagNode` is wrong?
+        // User changed plan to "Insert at Cursor".
+        // Meaning: Click "C" -> Insert `[C]`. Move cursor -> Click "C" -> Insert `[C]`.
+        // Result: `[C] text [C]`.
+        // Serialization: `<C> text </C>`.
+        // Perfect.
+        // The inner content of the [C] chip (💬) doesn't matter. It's just a marker.
+        // So standard logic works.
+
+        // Only TAB is special because <1>[TAB]</1> is a single unit in strict sense?
+        // Or is it <1>...tabs...</1>?
+        // Logic says Tab tag wraps a [TAB] marker.
+        // So inserting `<1>[TAB]</1>` for a single chip is correct.
 
         try {
             await updateSegment(id, serialized);
-            // Update local state to show saved content?
-            // Actually handleEditorUpdate already updated state with RAW html.
-            // We should ensure local state reflects what Tiptap is showing (which is HTML).
-            // So we don't need to update local segments with serialized.
         } catch (err) {
             console.error("Save failed", err);
             alert("Save failed!");
@@ -128,10 +233,11 @@ export function SplitView({ projectId }) {
             const t = tags ? tags[id] : null;
             // If it's a TAB or COMMENT or LINK, we might want to hide the generic numeric chip 
             // because we render the content specially (or want to avoid double-visuals).
-            // Link: We WANT the chip (user needs to know where link starts).
-            // Tab/Comment: The content is [TAB]/[COMMENT] which we style distinctively. Hiding the wrapper is cleaner.
+
+            // Tab: Logic change - We ALWAYS want to show [TAB] badge, but not the numeric wrapper.
+            // Since [TAB] marker is inside, we hide the wrapper.
             if (t && (t.type === 'tab' || t.type === 'comment')) {
-                return ""; // Hide start tag
+                return ""; // Hide start tag wrapper, content ([TAB]) will be styled below
             }
             return `<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">${id}</span>`;
         });
@@ -145,13 +251,24 @@ export function SplitView({ projectId }) {
             return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/${id}</span>`;
         });
 
-        // Replace [TAB]
+        // Replace [TAB] -> [TAB] Badge
         formatted = formatted.replace(/\[TAB\]/g,
-            '<span class="bg-gray-100 text-gray-500 text-[10px] px-1 rounded mx-0.5 border border-gray-300">⇥ TAB</span>');
+            '<span class="bg-gray-100 text-gray-800 text-[10px] font-bold px-1 rounded mx-0.5 border border-gray-300">⇥ TAB</span>');
 
-        // Replace [COMMENT] - Show inline chip
+        // Replace [COMMENT] -> [💬] Badge
         formatted = formatted.replace(/\[COMMENT\]/g,
             '<span class="cursor-help bg-yellow-200 text-yellow-800 text-[10px] px-1 rounded mx-0.5 align-middle">💬</span>');
+
+        // Replace <br/> -> [↵] Badge
+        // Regex for <br/> or <br> or <br />
+        formatted = formatted.replace(/<br\s*\/?>/gi,
+            '<span class="bg-purple-50 text-purple-400 text-[10px] px-1 rounded mx-0.5 select-none inline-block">↵</span><br/>');
+        // We append real <br/> so it breaks line visually too? 
+        // User said "nicht erahnen wo welche sind".
+        // If I keep real <br/>, it breaks. If I remove it, it becomes one line with badges.
+        // Usually keeping the break IS desired, but the badge makes it EXPLICIT.
+        // Let's keep both. Badge + Break.
+
 
         // Replace <br/> (already HTML, but ensure it's safe? dangerouslySetInnerHTML handles it)
 
@@ -256,7 +373,7 @@ export function SplitView({ projectId }) {
                                         </span>
                                     </div>
                                     <TiptapEditor
-                                        content={seg.target_content || ""}
+                                        content={hydrateContent(seg.target_content, seg.tags)}
                                         segmentId={seg.id}
                                         onSave={handleSave}
                                         isReadOnly={false}

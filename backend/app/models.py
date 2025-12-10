@@ -26,6 +26,7 @@ class Project(Base):
     source_lang = Column(String, default="en")
     target_lang = Column(String, default="de")
     use_clean_template = Column(Boolean, default=False)
+    file_hash = Column(String, nullable=True) # Hash for duplicate detection
     config = Column(JSON, nullable=True) # Extra config if needed
 
     segments = relationship("Segment", back_populates="project", cascade="all, delete-orphan")

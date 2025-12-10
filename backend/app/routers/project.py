@@ -4,6 +4,7 @@ from typing import List
 import shutil
 import os
 import uuid
+import hashlib
 
 from ..database import get_db
 from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse
@@ -30,12 +31,22 @@ def upload_project(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not file.filename.endswith('.docx'):
         raise HTTPException(status_code=400, detail="Only DOCX files allowed")
 
-    # 1. Save File
+    # Read file content for hashing and saving
+    content = await file.read()
+    file_hash = hashlib.sha256(content).hexdigest()
+
+    # 1. Check for existing project based on file hash
+    existing_project = db.query(Project).filter(Project.file_hash == file_hash).first()
+    if existing_project:
+        # If a project with this hash already exists, return it
+        return {"id": existing_project.id, "filename": existing_project.filename, "message": "Project already exists (based on file hash)."}
+
+    # If not existing, proceed with new project creation
     project_id = str(uuid.uuid4())
     file_path = os.path.join(UPLOAD_DIR, f"{project_id}_{file.filename}")
     
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(content) # Write the content read earlier
         
     # 2. Parse File
     try:
@@ -50,7 +61,8 @@ def upload_project(file: UploadFile = File(...), db: Session = Depends(get_db)):
     new_project = Project(
         id=project_id,
         filename=file.filename,
-        status="processing" # or review immediately?
+        status="processing", # or review immediately?
+        file_hash=file_hash # Store the hash
     )
     db.add(new_project)
     

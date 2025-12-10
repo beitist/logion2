@@ -1,7 +1,7 @@
 /* Basic Editor Reset */
 .ProseMirror {
     outline: none !important;
-    min-height: 120px;
+    min-height: 100px;
 }
 
 .ProseMirror p.is-editor-empty:first-child::before {
@@ -12,49 +12,46 @@
     height: 0;
 }
 
-/* Tag Mark Visualization */
-.tag-mark {
-    background-color: #eff6ff;
-    /* blue-50 */
-    border-bottom: 2px solid #bfdbfe;
-    /* blue-200 */
-    padding: 2px 0;
+/* Tag Node Visualization (Atom) */
+.tag-node {
+    display: inline-block;
+    vertical-align: middle;
     margin: 0 2px;
-    border-radius: 2px;
-    position: relative;
-    display: inline;
+    cursor: default;
+    user-select: none;
+    line-height: normal;
 }
 
-/* Start Chip */
-.tag-mark::before {
+.tag-node::before {
     content: var(--tag-label);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background-color: #dbeafe;
     /* blue-100 */
     color: #1e40af;
     /* blue-800 */
-    font-size: 0.65em;
+    border: 1px solid #bfdbfe;
+    /* blue-200 */
+    font-size: 0.75em;
     font-family: monospace;
-    padding: 1px 4px;
+    font-weight: bold;
+    padding: 0px 4px;
+    height: 18px;
+    min-width: 18px;
     border-radius: 4px;
-    margin-right: 2px;
-    vertical-align: middle;
-    user-select: none;
-    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
 }
 
-/* End Chip */
-.tag-mark::after {
-    content: "/" var(--tag-label);
-    background-color: #ffedd5;
-    /* orange-100 */
-    color: #9a3412;
-    /* orange-800 */
-    font-size: 0.65em;
-    font-family: monospace;
-    padding: 1px 4px;
+/* Hover effect */
+.tag-node:hover::before {
+    background-color: #bfdbfe;
+    border-color: #93c5fd;
+}
+
+/* Selected state (ProseMirror selection) */
+.ProseMirror-selectednode {
+    outline: 2px solid #3b82f6;
+    /* blue-500 */
     border-radius: 4px;
-    margin-left: 2px;
-    vertical-align: middle;
-    user-select: none;
-    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
 }

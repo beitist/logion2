@@ -265,7 +265,8 @@ def _inject_tagged_text(paragraph, text, tags_map):
     Parses 'text' which may contain:
     1. Custom Tags: <1>...</1> (mapped to properties via tags_map)
     2. HTML Tags: <b>, <strong>, <i>, <em>, <u>, <br/>
-    3. Custom Markers: [TAB], [COMMENT] (inside tags usually)
+    3. Custom Markers: [TAB], [COMMENT] (inside tags usually or standalone)
+    4. Raw HTML spans from frontend (e.g. for tabs/comments if not serialized clean)
     
     Reconstructs the paragraph with appropriate runs and formatting.
     """
@@ -273,48 +274,82 @@ def _inject_tagged_text(paragraph, text, tags_map):
     p_element = paragraph._element
     p_element.clear_content()
 
-    # Tokenize: Split by tags (Custom or HTML)
+    # Tokenize: Split by tags (Custom or embedded HTML)
     # Regex: (<[^>]+>) captures any tag
     tokens = re.split(r'(<[^>]+>)', text)
     
-    # State Stack of active formatters
-    # Each item is a dict of properties: {'bold': True, 'italic': True, 'highlight': 'yellow', ...}
-    # Or simplified: Set of active format keys.
-    # For Custom Tags, we look up `tags_map` and see what it implies.
-    # For HTML, we imply bold/italic/underline.
+    # Active formatting state (properties to apply to new runs)
+    # We use a dict to track active toggle states: {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': None}
+    # Counters allow for nesting.
+    active_style = {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': False}
     
-    active_formats = [] # List of active format dicts
-    
-    def get_combined_format():
-        combined = {}
-        for fmt in active_formats:
-            combined.update(fmt) # Later ones override? Usually additive.
-        return combined
-
     for token in tokens:
         if not token:
             continue
             
-             
-        else:
-            # Regular text. Check for <br/> literal?
-            if "<br/>" in part:
-                # Split by <br/>
-                sub_parts = part.split("<br/>")
-                for i, sp in enumerate(sub_parts):
-                    if i > 0:
-                        # Add break
-                        run = paragraph.add_run()
-                        run.add_break()
-                    if sp:
-                        paragraph.add_run(sp)
+        # Is it a Tag?
+        if token.startswith("<") and token.endswith(">"):
+            tag_content = token[1:-1] # strip < >
+            is_closing = tag_content.startswith("/")
+            if is_closing:
+                tag_content = tag_content[1:]
+                
+            # Check ID (Digits) -> Custom Tag
+            if tag_content.isdigit():
+                tid = tag_content
+                tag = tags_map.get(tid)
+                if tag:
+                    # Apply tag formatting
+                    # We map tag types to styles
+                    if tag.type == 'bold':
+                        active_style['bold'] += -1 if is_closing else 1
+                    elif tag.type == 'italic':
+                        active_style['italic'] += -1 if is_closing else 1
+                    elif tag.type == 'underline':
+                        active_style['underline'] += -1 if is_closing else 1
+                    elif tag.type == 'comment':
+                        active_style['highlight'] = not is_closing # Toggle highlight
+                        
+            # Check HTML Tags
             else:
-                paragraph.add_run(part)
+                lower_tag = tag_content.lower()
+                if lower_tag == 'br/':
+                    paragraph.add_run().add_break()
+                    continue
+                elif lower_tag in ['b', 'strong']:
+                   active_style['bold'] += -1 if is_closing else 1
+                elif lower_tag in ['i', 'em']:
+                   active_style['italic'] += -1 if is_closing else 1
+                elif lower_tag == 'u':
+                   active_style['underline'] += -1 if is_closing else 1
+                
+                # Ignore unknown tags (like generic spans)
 
-def _apply_formatting(run, tag_info: TagModel):
-    if tag_info.type == "bold":
-        run.bold = True
-    if tag_info.type == "italic":
-        run.italic = True
-    if tag_info.type == "underline":
-        run.underline = True
+        else:
+            # It is generic text.
+            # Convert [TAB] to actual tab if needed?
+            # User uses [TAB] marker. We can insert a tab character OR [TAB] text.
+            # Let's support [TAB] marker replacement for cleaner DOCX.
+            
+            # Helper to add run
+            def add_styled_run(content):
+                run = paragraph.add_run(content)
+                if active_style['bold'] > 0: run.bold = True
+                if active_style['italic'] > 0: run.italic = True
+                if active_style['underline'] > 0: run.underline = True
+                if active_style['highlight']: 
+                    run.font.highlight_color = docx.enum.text.WD_COLOR_INDEX.YELLOW
+            
+            # Handle [TAB] replacement in text
+            if "[TAB]" in token:
+                parts = token.split("[TAB]")
+                for i, part in enumerate(parts):
+                    if i > 0:
+                        # Add Tab
+                        paragraph.add_run().add_tab()
+                    if part:
+                         add_styled_run(part)
+            else:
+                add_styled_run(token)
+
+

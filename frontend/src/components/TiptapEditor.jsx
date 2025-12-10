@@ -1,52 +1,139 @@
 import React, { useEffect } from 'react'
-import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react'
+import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
-import { Mark, mergeAttributes } from '@tiptap/core'
+import { Node, mergeAttributes } from '@tiptap/core'
 
-import './TiptapStyles.css'; // We'll create this for the pseudo-elements
+import './TiptapStyles.css';
 
-// Custom Mark for Tags
-const TagMark = Mark.create({
-    name: 'tagMark',
-
-    addOptions() {
-        return {
-            HTMLAttributes: {},
-        }
-    },
+// Custom Node for Tags (Atom/Inline)
+// This represents a single tag marker (Start OR End is determined by context)
+const TagNode = Node.create({
+    name: 'tag',
+    group: 'inline',
+    inline: true,
+    atom: true, // It is a single unit
 
     addAttributes() {
         return {
-            tagId: {
+            id: {
                 default: null,
-                parseHTML: element => element.getAttribute('data-tag-id'),
+                parseHTML: element => element.getAttribute('data-id'),
                 renderHTML: attributes => {
                     return {
-                        'data-tag-id': attributes.tagId,
-                        // Add class for styling
-                        'class': `tag-mark tag-mark-${attributes.tagId}`,
-                        'style': `--tag-label: "${attributes.tagId}"`
-                        // We use CSS variable to pass content to pseudo-element!
+                        'data-id': attributes.id,
+                        'data-type': 'tag-node', // marker for parsing
+                        'class': `tag-node tag-node-${attributes.id}`,
                     }
                 },
             },
+            label: {
+                default: '?',
+                parseHTML: element => element.getAttribute('data-label'),
+                renderHTML: attributes => {
+                    return {
+                        'data-label': attributes.label,
+                        // CSS var for content
+                        'style': `--tag-label: "${attributes.label}"`
+                    }
+                },
+            }
         }
     },
 
     parseHTML() {
         return [
             {
-                tag: 'span[data-tag-id]',
+                tag: 'span[data-type="tag-node"]',
             },
         ]
     },
 
     renderHTML({ HTMLAttributes }) {
-        return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0]
+        return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes)]
     },
 })
+
+const MenuBar = ({ editor, availableTags }) => {
+    if (!editor) {
+        return null
+    }
+
+    return (
+        <div className="flex flex-wrap items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 rounded-t-md">
+            <button
+                onClick={() => editor.chain().focus().toggleBold().run()}
+                className={`px-2 py-1 text-sm rounded hover:bg-gray-200 ${editor.isActive('bold') ? 'bg-gray-200 font-bold' : ''}`}
+                title="Bold"
+            >
+                B
+            </button>
+            <button
+                onClick={() => editor.chain().focus().toggleItalic().run()}
+                className={`px-2 py-1 text-sm italic rounded hover:bg-gray-200 ${editor.isActive('italic') ? 'bg-gray-200' : ''}`}
+                title="Italic"
+            >
+                i
+            </button>
+            <button
+                onClick={() => editor.chain().focus().toggleUnderline().run()}
+                className={`px-2 py-1 text-sm underline rounded hover:bg-gray-200 ${editor.isActive('underline') ? 'bg-gray-200' : ''}`}
+                title="Underline"
+            >
+                U
+            </button>
+
+            <div className="w-px h-4 bg-gray-300 mx-2"></div>
+
+            {/* Tag Buttons: INSERT NODE */}
+            {/* 1. Generic Tab Button (if any available) */}
+            {availableTags && Object.values(availableTags).some(t => t.type === 'tab') && (
+                <button
+                    onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: 'TAB', label: 'TAB' } }).run()}
+                    className="px-2 py-1 text-xs font-mono rounded border bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200 active:bg-gray-300 min-w-[24px] font-bold"
+                    title="Insert Tab (Auto-mapped)"
+                >
+                    ⇥
+                </button>
+            )}
+
+            {/* 2. Specific ID Buttons (excluding Tabs and Formatters) */}
+            {availableTags && Object.keys(availableTags).map(tid => {
+                const tag = availableTags[tid];
+
+                // Skip formatting tags (handled by B/I/U buttons)
+                if (tag.type === 'bold' || tag.type === 'italic' || tag.type === 'underline') return null;
+                // Skip Tabs (handled by generic button)
+                if (tag.type === 'tab') return null;
+
+                // Determine Label
+                let label = tid;
+                let display = tid;
+                let title = `Tag ${tid}`;
+
+                if (tag.type === 'comment') {
+                    label = '💬'; // Or 'C'
+                    display = '💬';
+                    title = 'Insert Comment Tag';
+                }
+
+                return (
+                    <button
+                        key={tid}
+                        onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: tid, label: label } }).run()}
+                        className="px-2 py-1 text-xs font-mono rounded border bg-white text-gray-600 border-gray-300 hover:bg-blue-50 active:bg-blue-100 min-w-[24px]"
+                        title={title}
+                    >
+                        {display}
+                    </button>
+                )
+            })}
+
+            {!availableTags && <span className="text-xs text-gray-400">No tags</span>}
+        </div>
+    )
+}
 
 export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags }) {
     const editor = useEditor({
@@ -59,16 +146,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                     class: 'text-blue-500 underline cursor-pointer',
                 },
             }),
-            TagMark,
+            TagNode,
         ],
-        content: content || "", // We might need to parse initial content to apply marks if passing raw <1>... strings? 
-        // Logic Gap: If content comes as "Text <1>Bold</1>", Tiptap sees text.
-        // We need a Deserializer to convert "<N>...</N>" string into TagMark?
-        // OR rely on User to re-tag.
-        // For MVP, existing chips are text <1>. 
-        // Improving Deserialization is a "Nice to Have" but user is asking for INPUT.
-        // Assuming user types fresh or we implement hydration later.
-
+        content: content || "",
         editable: !isReadOnly,
         onUpdate: ({ editor }) => {
             if (onUpdate) onUpdate(editor.getHTML());
@@ -81,29 +161,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     })
 
     // Update content if it changes externally
+    // Note: 'content' passed here MUST be hydrated HTML with <span data-type="tag-node"> already!
     useEffect(() => {
         if (editor && content && content !== editor.getHTML()) {
-            // TODO: If we want to support showing existing tags as marks, we need to PARSE 'content' 
-            // and replace <1>...</1> patterns with <span data-tag-id="1">...</span> BEFORE setting content.
-            // Let's do a quick regex replacement here to "Hydrate" existing tags into Marks!
-
-            // Regex to match <N>content</N>
-            // Note: Nested tags might break with simple regex.
-            // But basic ones work.
-            let hydrated = content;
-            // Loop to replace <(\d+)>(.*?)</\1> with <span data-tag-id="$1">$2</span>
-            // We need a loop for nesting logic or just simple replace for non-nested.
-            // Let's rely on standard HTML behavior? No, <1> is invalid HTML, Tiptap strips it or keeps as text.
-            // Tiptap StarterKit likely treats <1> as text.
-
-            // Replace <N>...</N> with <span data-tag-id="N">...</span>
-            // We do this responsibly.
-            // Actually, we must be careful not to break HTML.
-            // Let's skip hydration complexity in this step to avoid breaking existing workflow 
-            // unless user explicitly asked to "see" existing tags as chips in input.
-            // User asked for INPUT support. 
-            // existing content is displayed as text <1>.
-
             editor.commands.setContent(content)
         }
     }, [content, editor])
@@ -114,46 +174,11 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
 
     return (
         <div className={`prose max-w-none border rounded-md transition-shadow relative group/editor ${isReadOnly
-                ? 'bg-gray-50 text-gray-700 border-gray-200'
-                : 'bg-white border-gray-300 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm'
+            ? 'bg-gray-50 text-gray-700 border-gray-200'
+            : 'bg-white border-gray-300 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm'
             }`}>
-            {/* Bubble Menu */}
-            {editor && !isReadOnly && (
-                <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }} className="flex bg-white shadow-lg border border-gray-200 rounded divide-x divide-gray-200 overflow-hidden">
-                    <button
-                        onClick={() => editor.chain().focus().toggleBold().run()}
-                        className={`px-3 py-1 text-sm hover:bg-gray-100 ${editor.isActive('bold') ? 'bg-gray-100 font-bold' : ''}`}
-                    >
-                        B
-                    </button>
-                    <button
-                        onClick={() => editor.chain().focus().toggleItalic().run()}
-                        className={`px-3 py-1 text-sm italic hover:bg-gray-100 ${editor.isActive('italic') ? 'bg-gray-100' : ''}`}
-                    >
-                        i
-                    </button>
-                    <button
-                        onClick={() => editor.chain().focus().toggleUnderline().run()}
-                        className={`px-3 py-1 text-sm underline hover:bg-gray-100 ${editor.isActive('underline') ? 'bg-gray-100' : ''}`}
-                    >
-                        U
-                    </button>
-
-                    {/* Tag Buttons */}
-                    {availableTags && Object.keys(availableTags).map(tid => (
-                        <button
-                            key={tid}
-                            onClick={() => editor.chain().focus().toggleMark('tagMark', { tagId: tid }).run()}
-                            className={`px-3 py-1 text-sm font-mono hover:bg-blue-50 text-blue-600 ${editor.isActive('tagMark', { tagId: tid }) ? 'bg-blue-100 ring-inset ring-1 ring-blue-200' : ''}`}
-                            title={`Tag ${tid}`}
-                        >
-                            {tid}
-                        </button>
-                    ))}
-                </BubbleMenu>
-            )}
-
-            <EditorContent editor={editor} className="min-h-[120px] outline-none p-4" />
+            {!isReadOnly && <MenuBar editor={editor} availableTags={availableTags} />}
+            <EditorContent editor={editor} className="min-h-[100px] outline-none p-4" />
         </div>
     )
 }
