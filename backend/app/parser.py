@@ -163,6 +163,23 @@ def _process_paragraph(para, location: dict, context: dict) -> SegmentInternal:
         
         # 1. Regular Run (w:r)
         if tag_name == qn('w:r'):
+            # Check for embedded CommentReference first
+            com_refs = child.findall(qn('w:commentReference'))
+            if com_refs:
+                for cr in com_refs:
+                     comment_id = cr.get(qn('w:id'))
+                     if comment_id and context["comments_map"].get(comment_id):
+                        comment_text = context["comments_map"][comment_id]
+                        com_tag = TagModel(
+                            type="comment", 
+                            content=comment_text,
+                            ref_id=comment_id
+                        )
+                        tid = add_tag(com_tag)
+                        full_text += f"<{tid}>[COMMENT]</{tid}>"
+
+            # Check for generic drawing/object if needed (ignored for now)
+            
             run = Run(child, para)
             text = run.text
             if not text:
@@ -216,6 +233,37 @@ def _process_paragraph(para, location: dict, context: dict) -> SegmentInternal:
                 )
                 tid = add_tag(com_tag)
                 full_text += f"<{tid}>[COMMENT]</{tid}>"
+
+        # 4. Inserted Text (w:ins) - Tracked Changes ACCEPT
+        elif tag_name == qn('w:ins'):
+            # Treat as normal content. Iterate children (runs)
+            for sub_child in child:
+                if sub_child.tag == qn('w:r'):
+                    # Check for embedded CommentReference first (copy-paste logic from w:r above, ideally refactor)
+                    # For MVP short-code, we just handle direct run text.
+                    # TODO: If comments are inside insertions, we need recursion or helper.
+                    
+                    # Recursion helper?
+                    # Let's simple-inline the Run handling for now.
+                    run = Run(sub_child, para)
+                    text = run.text
+                    if text:
+                        extracted_tags = _extract_tags(run)
+                        if extracted_tags:
+                            active_ids = []
+                            for t in extracted_tags:
+                                tid = add_tag(t)
+                                full_text += f"<{tid}>"
+                                active_ids.append(tid)
+                            full_text += text
+                            for tid in reversed(active_ids):
+                                full_text += f"</{tid}>"
+                        else:
+                            full_text += text
+
+        # 5. Deleted Text (w:del) - Tracked Changes REJECT (Skip)
+        elif tag_name == qn('w:del'):
+            continue
 
     if not full_text.strip():
         return None

@@ -28,9 +28,15 @@ class AITranslator:
         # 2. Translate
         if self.llm:
             try:
-                # Simple prompt for now
+                # Improved prompt for new tags
+                system_text = (
+                    f"You are a professional translator. Translate the text to {target_lang}. "
+                    "1. Preserve XML-like tags <n>...</n> exactly. "
+                    "2. Preserve <n>[COMMENT]</n> tags and do NOT translate the marker. "
+                    "3. Preserve <n>LinkText</n> tags but translate the content inside if it is text."
+                )
                 prompt = ChatPromptTemplate.from_messages([
-                    ("system", f"You are a professional translator. Translate the text to {target_lang}. Preserve XML-like tags <n>...</n> exactly."),
+                    ("system", system_text),
                     ("user", "{text}")
                 ])
                 chain = prompt | self.llm | StrOutputParser()
