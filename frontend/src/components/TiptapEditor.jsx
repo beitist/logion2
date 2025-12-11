@@ -3,7 +3,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, Extension, mergeAttributes } from '@tiptap/core'
 
 import './TiptapStyles.css';
 
@@ -112,7 +112,7 @@ const MenuBar = ({ editor, availableTags }) => {
     )
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches }) {
     const editor = useEditor({
         extensions: [
             StarterKit,
@@ -124,6 +124,37 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                 },
             }),
             TagNode,
+            Extension.create({
+                addKeyboardShortcuts() {
+                    return {
+                        'Alt-1': () => {
+                            if (contextMatches && contextMatches[0]) {
+                                return this.editor.commands.insertContent(contextMatches[0].content + " ")
+                            }
+                            return false
+                        },
+                        'Alt-2': () => {
+                            if (contextMatches && contextMatches[1]) {
+                                return this.editor.commands.insertContent(contextMatches[1].content + " ")
+                            }
+                            return false
+                        },
+                        'Alt-3': () => {
+                            if (contextMatches && contextMatches[2]) {
+                                return this.editor.commands.insertContent(contextMatches[2].content + " ")
+                            }
+                            return false
+                        },
+                        'Mod-Enter': () => {
+                            if (onSave && segmentId) {
+                                onSave(segmentId, this.editor.getHTML())
+                                return true
+                            }
+                            return false
+                        }
+                    }
+                }
+            })
         ],
         content: content || "",
         editable: !isReadOnly,
@@ -131,9 +162,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onBlur: ({ editor }) => {
-            if (onSave && segmentId) {
-                onSave(segmentId, editor.getHTML())
-            }
+            // Optional: Save on blur can be annoying if jumping between windows?
+            // User said Ctrl+Enter is safe.
         },
     })
 

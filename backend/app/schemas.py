@@ -65,6 +65,8 @@ class SegmentResponse(BaseModel):
     status: str
     project_id: str
     tags: Optional[Dict[str, TagModel]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    context_matches: Optional[list[Any]] = None
     
     class Config:
         from_attributes = True

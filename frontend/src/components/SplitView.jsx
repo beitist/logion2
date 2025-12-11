@@ -17,18 +17,32 @@ export function SplitView({ projectId }) {
 
     useEffect(() => {
         const loadData = async () => {
+            // ... existing load ...
             try {
                 const p = await getProject(projectId);
                 setProject(p);
-                // Load AI Instructions from config if available
-                if (p.config && p.config.ai_instructions) {
-                    // Ensure 3 fields
-                    const loaded = p.config.ai_instructions || [];
-                    const filled = [loaded[0] || "", loaded[1] || "", loaded[2] || ""];
-                    setAiInstructions(filled);
-                }
                 const s = await getSegments(projectId);
                 setSegments(s);
+
+                // Trigger AI Drafts for first 10 EMPTY segments
+                if (s && s.length > 0) {
+                    const emptySegs = s.slice(0, 10).filter(seg => !seg.target_content);
+                    emptySegs.forEach(async (seg) => {
+                        try {
+                            // We use the new generateDraft API
+                            // This expects we imported it!
+                            const { generateDraft } = await import("../api/client");
+                            const updated = await generateDraft(seg.id);
+
+                            // Update local state smoothly
+                            setSegments(prev => prev.map(current =>
+                                current.id === seg.id ? { ...current, ...updated } : current
+                            ));
+                        } catch (e) {
+                            console.warn("Auto-draft failed for", seg.id, e);
+                        }
+                    });
+                }
             } catch (err) {
                 console.error(err);
             } finally {
@@ -498,6 +512,38 @@ export function SplitView({ projectId }) {
                                             DEBUG Source-DB: {seg.source_content}
                                         </div>
                                     )}
+
+                                    {/* Context Panel (New) */}
+                                    {/* Check metadata for matches if schema/api provides it */}
+                                    {(seg.context_matches || (seg.metadata && seg.metadata.context_matches)) && (
+                                        <div className="mt-6 border-t pt-4">
+                                            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Context / References</h4>
+                                            <div className="space-y-3">
+                                                {(seg.context_matches || seg.metadata.context_matches).map((match, idx) => (
+                                                    <div
+                                                        key={idx}
+                                                        className={`p-3 rounded text-sm border-l-4 ${match.type === 'mandatory'
+                                                            ? 'border-red-500 bg-red-50'
+                                                            : 'border-blue-400 bg-blue-50'
+                                                            }`}
+                                                    >
+                                                        <div className="flex justify-between items-start mb-1">
+                                                            <span className={`text-xs font-bold uppercase ${match.type === 'mandatory' ? 'text-red-700' : 'text-blue-700'
+                                                                }`}>
+                                                                [{match.type === 'mandatory' ? 'Mandatory' : 'Optional'}] {idx + 1}
+                                                            </span>
+                                                            <span className="text-[10px] text-gray-500 truncate max-w-[120px]" title={match.filename}>
+                                                                {match.filename}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-gray-800 leading-snug">
+                                                            {match.content}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Target Column */}
@@ -536,6 +582,7 @@ export function SplitView({ projectId }) {
                                         content={hydrateContent(seg.target_content, seg.tags)}
                                         segmentId={seg.id}
                                         availableTags={seg.tags}
+                                        contextMatches={seg.context_matches || (seg.metadata && seg.metadata.context_matches)}
                                         onSave={handleSave}
                                     />
 

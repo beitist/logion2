@@ -70,3 +70,11 @@ export async function deleteProject(projectId) {
     if (!res.ok) throw new Error("Failed to delete project");
     return res.json();
 }
+
+export async function generateDraft(segmentId) {
+    const res = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to generate draft");
+    return res.json();
+}

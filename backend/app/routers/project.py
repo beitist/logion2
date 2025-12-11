@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import shutil
@@ -31,6 +31,7 @@ def get_projects(db: Session = Depends(get_db)):
 
 @router.post("/create", response_model=ProjectResponse)
 async def create_project(
+    background_tasks: BackgroundTasks,
     name: str = Form(...),
     source_lang: str = Form("en"),
     target_lang: str = Form("de"),
@@ -60,66 +61,65 @@ async def create_project(
     db.add(new_project)
     db.commit() # Commit to get ID for relationships if needed (though we set UUID manually)
 
-    primary_source_docx = None
+
 
     # Helper to process files
-    async def process_files(files, category: ProjectFileCategory):
-        nonlocal primary_source_docx
-        if not files: return
+    from ..storage import upload_file, download_file
+
+    async def process_files(file: UploadFile, category: ProjectFileCategory, project_id: str, db: Session):
+        if not file.filename: return
         
-        for file in files:
-            if not file.filename: continue
+        # Create unique object name
+        # Format: {project_id}/{category}/{filename}
+        object_name = f"{project_id}/{category.value}/{file.filename}"
+        
+        try:
+            # We need to read the file to upload
+            # file.file is a SpooledTemporaryFile
+            # Move cursor to start just in case
+            await file.seek(0)
+            uploaded_obj = upload_file(file.file, object_name, content_type=file.content_type)
             
-            # Create unique object name
-            # Format: {project_id}/{category}/{filename}
-            object_name = f"{project_id}/{category.value}/{file.filename}"
+            # Create ProjectFile record (store object_name as file_path)
+            db_file = ProjectFile(
+                id=str(uuid.uuid4()),
+                project_id=project_id,
+                category=category.value,
+                filename=file.filename,
+                file_path=uploaded_obj
+            )
+            db.add(db_file)
             
-            # Upload to MinIO
-            from ..storage import upload_file
-            
-            try:
-                # We need to read the file to upload
-                # file.file is a SpooledTemporaryFile
-                # Move cursor to start just in case
-                await file.seek(0)
-                uploaded_obj = upload_file(file.file, object_name, content_type=file.content_type)
-                
-                # Create ProjectFile record (store object_name as file_path)
-                db_file = ProjectFile(
-                    id=str(uuid.uuid4()),
-                    project_id=project_id,
-                    category=category.value,
-                    filename=file.filename,
-                    file_path=uploaded_obj
-                )
-                db.add(db_file)
-                
-                # Identify primary source for parsing
-                # For parsing we might need to download it later or parse now.
-                # Since 'parse_docx' expects a path, we might need to download it to a temp path.
-                if category == ProjectFileCategory.source and file.filename.endswith(".docx") and not primary_source_docx:
-                    primary_source_docx = object_name
-                    
-            except Exception as e:
-                print(f"Failed to upload {file.filename}: {e}")
-                # Log error but maybe continue?
-                pass
+        except Exception as e:
+            print(f"Failed to upload {file.filename}: {e}")
+            # Log error but maybe continue?
+            pass
 
     # Process all file categories
-    await process_files(source_files, ProjectFileCategory.source)
-    await process_files(legal_files, ProjectFileCategory.legal)
-    await process_files(background_files, ProjectFileCategory.background)
+    for f in source_files or []:
+        await process_files(f, ProjectFileCategory.source, new_project.id, db)
+        
+    for f in legal_files or []:
+        await process_files(f, ProjectFileCategory.legal, new_project.id, db)
+        
+    for f in background_files or []:
+        await process_files(f, ProjectFileCategory.background, new_project.id, db)
     
     db.commit()
 
     # Parse segments if we have a source docx
-    from ..storage import download_file
+    # We find the source file record
+    source_record = db.query(ProjectFile).filter(
+        ProjectFile.project_id == new_project.id,
+        ProjectFile.category == ProjectFileCategory.source.value,
+        ProjectFile.filename.endswith(".docx")
+    ).first()
     
-    if primary_source_docx:
+    if source_record:
         temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_{project_id}.docx")
         try:
             # Download from MinIO
-            download_file(primary_source_docx, temp_parse_path)
+            download_file(source_record.file_path, temp_parse_path)
             
             segments_internal = parse_docx(temp_parse_path)
             
@@ -367,6 +367,73 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
     db.delete(project)
     db.commit()
     return {"message": "Project deleted successfully"}
+    
+# --- Segment Operations ---
+
+@router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
+def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
+    segment = db.query(Segment).filter(Segment.id == segment_id).first()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+        
+    project = db.query(Project).filter(Project.id == segment.project_id).first()
+    
+    from ..rag import generate_segment_draft
+    
+    # We strip XML tags for embedding query? 
+    # Actually rag.py should handle cleaning or we assume tags don't break embedding too much.
+    # But clean text is better for retrieval.
+    # Let's keep source_content as is, `rag.py` logic calls `embed_content`.
+    
+    result = generate_segment_draft(
+        segment_text=segment.source_content,
+        source_lang=project.source_lang,
+        target_lang=project.target_lang,
+        project_id=project.id,
+        db=db
+    )
+    
+    # Update Segment with Draft and Matches
+    # We assume 'target_content' gets the draft if it's currently empty or draft status?
+    # User might overwrite.
+    # If we overwrite `target_content`, user sees it immediately.
+    segment.target_content = result["target_text"]
+    
+    # Store context matches in metadata? Or we add a DB column?
+    # Adding a column `context_matches` (JSON) to Segment model is cleanest.
+    # But for now, let's put it in metadata_json to avoid migration if possible?
+    # Actually, adding a column is better.
+    # Wait, I can't add a column easily without migration script and ensuring it runs.
+    # I already modified models.py but didn't add context_matches column.
+    
+    # Let's use metadata_json for now.
+    current_meta = segment.metadata_json or {}
+    current_meta['context_matches'] = result["context_matches"]
+    segment.metadata_json = current_meta
+    
+    # Do NOT set status to 'translated' yet? 
+    # Status 'draft' is correct.
+    
+    db.commit()
+    db.refresh(segment)
+    
+    # Construct response
+    # SegmentResponse expects 'context_matches'.
+    # We must map it from metadata_json if the schema demands it.
+    # Pydantic `from_attributes` works with columns/properties.
+    # I can add a property to the model, or just return a dict that matches schema.
+    
+    # To make it clean, let's modify the response manually or ensure the Schema reads from metadata.
+    # Pydantic v2 is strict.
+    # Let's just return the object and rely on pydantic.
+    # But Segment model doesn't have `context_matches` attribute.
+    # So we need to patch it or return a dict.
+    
+    resp_dict = segment.__dict__.copy()
+    resp_dict['context_matches'] = result["context_matches"]
+    resp_dict['metadata'] = segment.metadata_json # Alias for metadata_json if schema uses 'metadata'
+    
+    return resp_dict
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)):

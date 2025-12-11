@@ -23,6 +23,7 @@ class Project(Base):
     filename = Column(String, nullable=False)
     name = Column(String, nullable=True) # Project Name
     status = Column(String, default=ProjectStatus.processing.value) 
+    rag_status = Column(String, default="created") # created, ingesting, ready, error 
     created_at = Column(DateTime, default=datetime.utcnow)
     source_lang = Column(String, default="en")
     target_lang = Column(String, default="de")
@@ -63,3 +64,23 @@ class Segment(Base):
     metadata_json = Column(JSON, nullable=True) # Renamed to avoid confusion with internal metadata
 
     project = relationship("Project", back_populates="segments")
+
+# --- RAG Models ---
+from pgvector.sqlalchemy import Vector
+
+class ContextChunk(Base):
+    """Stores vector embeddings for RAG"""
+    __tablename__ = "context_chunks"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    file_id = Column(String, ForeignKey("project_files.id", ondelete="CASCADE"), nullable=False)
+    
+    content = Column(Text, nullable=False) # The chunk text
+    embedding = Column(Vector(768)) # Google text-embedding-004
+    
+    # We link back to the file, which links to the project.
+    file = relationship("ProjectFile", back_populates="chunks")
+
+# Update relationships in ProjectFile
+ProjectFile.chunks = relationship("ContextChunk", back_populates="file", cascade="all, delete-orphan")
+
