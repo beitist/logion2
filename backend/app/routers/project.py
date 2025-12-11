@@ -5,8 +5,11 @@ import shutil
 import os
 import uuid
 import hashlib
+from bs4 import BeautifulSoup
+import re
+from docx import Document
 
-from ..database import get_db
+from ..database import get_db, SessionLocal, engine
 from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse
 from ..parser import parse_docx
 from ..models import Project, Segment
@@ -163,7 +166,7 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
         # So it contains keys: "source_text", "status", "tags", "metadata", etc.
         
         # metadata_json is already a dict in SQLAlchemy, no need for json.loads()
-        stored_data = db_seg.metadata_json
+        stored_data = db_seg.metadata_json or {}
         
         # Stored tags are dicts, need convert to TagModel
         # The tags are stored as a dictionary where keys are tag names and values are dicts of tag properties.
@@ -190,14 +193,64 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
             # Tiptap usually wraps in <p>...</p>. We are injecting into an existing w:p.
             # We want to remove the outer <p> tags.
             # Simple check for now.
-            target_text = target_text.strip()
-            if target_text.startswith("<p>") and target_text.endswith("</p>"):
-                target_text = target_text[3:-4]
-            
-            # Handle multiple paragraphs (e.g. <p>A</p><p>B</p>) -> A<br/>B
-            # Replace </p><p> with <br/> or proper break tag our Reassembler supports
-            # Our Reassembler detects "<br/>" literal.
-            target_text = target_text.replace("</p><p>", "<br/>")
+            # Cleanup Tiptap HTML using BeautifulSoup to handle Spans and Nesting
+            if target_text:
+                soup = BeautifulSoup(target_text, "html.parser")
+                
+                # 1. Convert Tiptap Spans to Custom Tags <ID>...</ID>
+                for span in soup.find_all("span", attrs={"data-type": "tag-node"}):
+                    tid = span.get("data-id")
+                    if tid:
+                        # CASE: Generic TAB
+                        if tid == 'TAB':
+                            # We replace with literal [TAB] for reassembly (or map to next ID if we had logic)
+                            # But here we don't know the ID mapping easily without the segment tags.
+                            # Luckily, reassembly support literal [TAB].
+                            # span.replace_with("[TAB]")
+                            span.replace_with("[TAB]") 
+                        
+                        else:
+                            # Standard Tag: <ID>content</ID>
+                            # We replace the tag with its content wrapped in custom markers.
+                            # We can't insert "Tags" into soup easily as they aren't valid HTML tags usually.
+                            # We insert text markers.
+                            # Beware: soup.decode() will escape < to &lt; if we just insert string.
+                            # We use replace_with_string logic?
+                            # Or we use a placeholder and replace later?
+                            # Better: We assume the output of soup.decode() is what we want, 
+                            # but we need unescaped <ID>. 
+                            
+                            # Valid XML tag strategy:
+                            # Rename the span tag to the ID? <1>...</1> might be valid XML for soup?
+                            # Tag names can't start with digits in XML/HTML?
+                            # Let's try renaming.
+                            # span.name = f"TAG_{tid}"  -> <TAG_1>...</TAG_1>
+                            # Then regex replace TAG_ -> nothing?
+                            span.attrs = {} # CRITICAL: Remove style, class, data-* ... everything so we get clean <TAG-X>
+                            span.name = f"TAG-{tid}"
+                
+                # 2. Handle Paragraphs
+                # Tiptap sends <p>A</p><p>B</p>.
+                # We want A<br/>B.
+                # Only if there are multiple Ps.
+                ps = soup.find_all("p")
+                if len(ps) > 0:
+                     # Join their contents with <br/>
+                     # This is tricky in converting partial tree.
+                     cleaned_html = ""
+                     for i, p in enumerate(ps):
+                         if i > 0: cleaned_html += "<br/>"
+                         cleaned_html += p.decode_contents()
+                else:
+                    cleaned_html = soup.decode_contents()
+
+                # 3. Post-Process
+                # Fix the TAG-X to X
+                cleaned_html = re.sub(r'<TAG-(\d+)', r'<\1', cleaned_html)
+                cleaned_html = re.sub(r'</TAG-(\d+)>', r'</\1>', cleaned_html)
+                 
+                target_text = cleaned_html
+
         
         seg_internal = SegmentInternal(
             id=db_seg.id,
@@ -232,6 +285,9 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
     try:
         reassemble_docx(input_path, output_path, reassembly_segments)
     except Exception as e:
+        import traceback
+        with open("export_error.log", "w") as f:
+            f.write(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Reassembly failed: {str(e)}")
     
     return FileResponse(output_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=output_filename)

@@ -62,29 +62,10 @@ const MenuBar = ({ editor, availableTags }) => {
 
     return (
         <div className="flex flex-wrap items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 rounded-t-md">
-            <button
-                onClick={() => editor.chain().focus().toggleBold().run()}
-                className={`px-2 py-1 text-sm rounded hover:bg-gray-200 ${editor.isActive('bold') ? 'bg-gray-200 font-bold' : ''}`}
-                title="Bold"
-            >
-                B
-            </button>
-            <button
-                onClick={() => editor.chain().focus().toggleItalic().run()}
-                className={`px-2 py-1 text-sm italic rounded hover:bg-gray-200 ${editor.isActive('italic') ? 'bg-gray-200' : ''}`}
-                title="Italic"
-            >
-                i
-            </button>
-            <button
-                onClick={() => editor.chain().focus().toggleUnderline().run()}
-                className={`px-2 py-1 text-sm underline rounded hover:bg-gray-200 ${editor.isActive('underline') ? 'bg-gray-200' : ''}`}
-                title="Underline"
-            >
-                U
-            </button>
+            {console.log("MenuBar Tags:", availableTags)}
+            {/* Standard Formatting Buttons Removed per User Request ("Lieber Chips") */}
 
-            <div className="w-px h-4 bg-gray-300 mx-2"></div>
+            {/* Tag Buttons: INSERT NODE */}
 
             {/* Tag Buttons: INSERT NODE */}
             {/* 1. Generic Tab Button (if any available) */}
@@ -98,25 +79,19 @@ const MenuBar = ({ editor, availableTags }) => {
                 </button>
             )}
 
-            {/* 2. Specific ID Buttons (excluding Tabs and Formatters) */}
+            {/* 2. Specific ID Buttons (excluding Tabs and Comments) */}
             {availableTags && Object.keys(availableTags).map(tid => {
                 const tag = availableTags[tid];
+                if (!tag) return null;
 
-                // Skip formatting tags (handled by B/I/U buttons)
-                if (tag.type === 'bold' || tag.type === 'italic' || tag.type === 'underline') return null;
-                // Skip Tabs (handled by generic button)
-                if (tag.type === 'tab') return null;
+                // Only skip 'tab' (generic button) and 'comment' (not needed as button)
+                // We SHOW bold/italic/underline as chips because the user expects them as numbered tags.
+                if (['tab', 'comment'].includes(tag.type)) return null;
 
                 // Determine Label
                 let label = tid;
                 let display = tid;
                 let title = `Tag ${tid}`;
-
-                if (tag.type === 'comment') {
-                    label = '💬'; // Or 'C'
-                    display = '💬';
-                    title = 'Insert Comment Tag';
-                }
 
                 return (
                     <button

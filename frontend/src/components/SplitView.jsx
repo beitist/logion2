@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { getSegments, getProject, updateSegment, downloadProject } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
@@ -52,7 +53,7 @@ export function SplitView({ projectId }) {
                 else if (tagInfo.type === 'comment') label = '💬';
             }
 
-            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
+            return `< span data - type="tag-node" data - id="${finalId}" data - label="${label}" ></span > `;
         });
 
         return hydrated;
@@ -83,8 +84,17 @@ export function SplitView({ projectId }) {
         let tabIndex = 0;
 
         // Replace <span ... data-id="X"></span> with <X> or </X>
-        serialized = serialized.replace(/<span[^>]*data-type="tag-node"[^>]*data-id="([^"]+)"[^>]*>.*?<\/span>/g, (match, nodeId) => {
+        // CRITICAL FIX: Tiptap/Browser may reorder attributes (e.g. data-id before data-type).
+        // Old Regex required specific order. New Regex matches SPAN tag and parses attributes manually.
+        serialized = serialized.replace(/<span([^>]+)><\/span>/g, (match, attrs) => {
+            // Check if it's our tag node
+            if (!attrs.includes('data-type="tag-node"')) return match;
 
+            // Extract ID
+            const idMatch = attrs.match(/data-id="([^"]+)"/);
+            if (!idMatch) return match;
+
+            const nodeId = idMatch[1];
             let realId = nodeId;
 
             // Handle Generic TAB
@@ -92,28 +102,8 @@ export function SplitView({ projectId }) {
                 if (tabIndex < tabIds.length) {
                     realId = String(tabIds[tabIndex]);
                     tabIndex++;
-                    // Note: Tabs are typically "Self-Closing" or "Content wrapping [TAB]".
-                    // In Tiptap [TAB] is a chip.
-                    // If we treat it as an Open Tag, we need a closing tag?
-                    // Tabs in our model are <N>[TAB]</N>.
-                    // So we probably want `<N></N>`? Or does reassembly expect content?
-                    // Reassembly splits by tags.
-                    // If we just return `<N>`, reassembly parsers `<N>`.
-                    // Actually, our previous logic was: First instance <N>, Second </N>.
-                    // If we just insert ONE chip `[TAB]`, serialization sees ONE node.
-                    // It returns `<N>`.
-                    // But we likely need `<N>[TAB]</N>` or just `<N>[TAB]`?
-                    // The backend parser expects `<N>...</N>`.
-                    // So we should probably output the FULL PAIR `<ID>[TAB]</ID>` for a single [TAB] chip?
-                    // OR, we assume the user inserts PAIRS?
-                    // User said: "1 Button... I click as often as I need".
-                    // Implies single click = 1 Tab.
-                    // So Generic Button -> `<N>[TAB]</N>`.
-                    return `<${realId}>[TAB]</${realId}>`;
+                    return `< ${realId}> [TAB]</${realId}> `;
                 } else {
-                    // Fallback: Return literal [TAB] marker.
-                    // The backend reassembly supports "[TAB]" in text and converts it to a w:tab.
-                    // This allows users to add MORE tabs than were in the source.
                     return "[TAB]";
                 }
             }
@@ -121,27 +111,27 @@ export function SplitView({ projectId }) {
             // Standard Logic for other IDs (1, 2, C...)
             if (openTags.has(realId)) {
                 openTags.delete(realId);
-                return `</${realId}>`;
+                return `</${realId}> `;
             } else {
                 openTags.add(realId);
-                return `<${realId}>`;
+                return `< ${realId}> `;
             }
         });
 
         // Serialize Tabs/Comments Visuals back to markers
         // note: Generic Tabs logic above already injected [TAB] inside tags!
         // So we don't need to replace `[TAB]` visual unless it was manually typed? 
-        // But `htmlContent` contains `<span...>TAB</span>` inside the node?
+        // But `htmlContent` contains ` < span...> TAB</span > ` inside the node?
         // Wait, replace loop matched the WHOLE span. So inner content is GONE.
-        // My return `<${realId}>[TAB]</${realId}>` REPLACES the whole chip.
+        // My return `< ${ realId }> [TAB]</${ realId }> ` REPLACES the whole chip.
         // So I don't need to clean up `⇥ TAB` span for Tabs.
 
         // But for Comments? Comments are standard nodes.
-        // Standard logic returns `<ID>`. Inner content was consumed.
+        // Standard logic returns `< ID > `. Inner content was consumed.
         // Does Tiptap node contain "💬"? Yes.
-        // So `<ID>` is returned. Content is GONE?
+        // So `< ID > ` is returned. Content is GONE?
         // NO. `match` consumes the span. The return value replaces it.
-        // For comments, we want `<ID>[COMMENT]</ID>`?
+        // For comments, we want `< ID > [COMMENT]</ID > `?
         // Or does the user wrap text? "Reference Comment".
         // If it's a range comment, user wraps text.
         // But `TagNode` is an ATOM. It cannot wrap text.
@@ -149,8 +139,8 @@ export function SplitView({ projectId }) {
         // So for COMMENTS (Ranges), using `TagNode` is wrong?
         // User changed plan to "Insert at Cursor".
         // Meaning: Click "C" -> Insert `[C]`. Move cursor -> Click "C" -> Insert `[C]`.
-        // Result: `[C] text [C]`.
-        // Serialization: `<C> text </C>`.
+        // Result: `[C] text[C]`.
+        // Serialization: `< C > text </C > `.
         // Perfect.
         // The inner content of the [C] chip (💬) doesn't matter. It's just a marker.
         // So standard logic works.
@@ -158,10 +148,22 @@ export function SplitView({ projectId }) {
         // Only TAB is special because <1>[TAB]</1> is a single unit in strict sense?
         // Or is it <1>...tabs...</1>?
         // Logic says Tab tag wraps a [TAB] marker.
-        // So inserting `<1>[TAB]</1>` for a single chip is correct.
+        // So inserting `< 1 > [TAB]</1 > ` for a single chip is correct.
+
+        // Calculate Status
+        // If content is empty or just an empty paragraph, it remains 'draft'.
+        // Otherwise 'translated'.
+        const isEmpty = !htmlContent || htmlContent.trim() === '' || htmlContent.trim() === '<p></p>';
+        const newStatus = isEmpty ? 'draft' : 'translated';
 
         try {
-            await updateSegment(id, serialized);
+            await updateSegment(id, serialized, newStatus);
+
+            // Update local state to reflect status change immediately (e.g. for badges)
+            setSegments(prev => prev.map(s =>
+                s.id === id ? { ...s, target_content: serialized, status: newStatus } : s
+            ));
+
         } catch (err) {
             console.error("Save failed", err);
             alert("Save failed!");
@@ -205,13 +207,17 @@ export function SplitView({ projectId }) {
             const tagInfo = tags ? tags[tid] : null;
 
             // Only strip standard formatting tags
-            if (tagInfo && ['bold', 'italic', 'underline'].includes(tagInfo.type)) {
-                if (tagInfo.type === 'bold') wrapperStyle += " font-bold";
-                if (tagInfo.type === 'italic') wrapperStyle += " italic";
-                if (tagInfo.type === 'underline') wrapperStyle += " underline";
+            // USER REQUEST 1321: "Source bitte auch keine RTF-formatierungen sondern ausschliesslich tags"
+            // We REMOVE the logic that strips tags and applies styles.
+            // Now these tags will fall through and be rendered as numeric chips below.
 
-                contentToRender = innerText;
-            } else if (tagInfo && tagInfo.type === 'comment') {
+            // if (tagInfo && ['bold', 'italic', 'underline'].includes(tagInfo.type)) {
+            //     if (tagInfo.type === 'bold') wrapperStyle += " font-bold";
+            //     if (tagInfo.type === 'italic') wrapperStyle += " italic";
+            //     if (tagInfo.type === 'underline') wrapperStyle += " underline";
+            //     contentToRender = innerText;
+            // } else 
+            if (tagInfo && tagInfo.type === 'comment') {
                 // COMMENT RANGE DETECTED!
                 // We unwrap it but apply a Highlight Style
                 wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
@@ -242,7 +248,7 @@ export function SplitView({ projectId }) {
             if (t && (t.type === 'tab' || t.type === 'comment')) {
                 return ""; // Hide start tag wrapper, content ([TAB]) will be styled below
             }
-            return `<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">${id}</span>`;
+            return `< span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title = "Start Tag" > ${id}</span > `;
         });
 
         // End Tags </n>
@@ -251,7 +257,7 @@ export function SplitView({ projectId }) {
             if (t && (t.type === 'tab' || t.type === 'comment')) {
                 return ""; // Hide end tag
             }
-            return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/${id}</span>`;
+            return `< span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title = "End Tag" > /${id}</span > `;
         });
 
         // Replace [TAB] -> [TAB] Badge
@@ -277,7 +283,7 @@ export function SplitView({ projectId }) {
 
         // 3. Wrap result if we stripped a wrapper
         if (wrapperStyle) {
-            return `<span class="${wrapperStyle}">${formatted}</span>`;
+            return `< span class="${wrapperStyle}" > ${formatted}</span > `;
         }
 
         return formatted;
@@ -353,12 +359,12 @@ export function SplitView({ projectId }) {
                                                 <>
                                                     {seg.metadata.type === 'header' && (
                                                         <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-purple-200">
-                                                            HEADER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index}` : ''}
+                                                            HEADER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index} ` : ''}
                                                         </span>
                                                     )}
                                                     {seg.metadata.type === 'footer' && (
                                                         <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-purple-200">
-                                                            FOOTER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index}` : ''}
+                                                            FOOTER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index} ` : ''}
                                                         </span>
                                                     )}
                                                     {(seg.metadata.type === 'table' || seg.metadata.child_type === 'table_cell') && (
@@ -369,19 +375,23 @@ export function SplitView({ projectId }) {
                                                 </>
                                             )}
                                         </div>
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] ${seg.status === 'draft' ? 'bg-yellow-100 text-yellow-700' :
-                                            seg.status === 'translated' ? 'bg-green-100 text-green-700' : 'bg-gray-100'
-                                            }`}>
+                                        <span className={`px - 2 py - 0.5 rounded - full text - [10px] ${seg.status === 'draft' ? 'bg-yellow-100 text-yellow-700' :
+                                                seg.status === 'translated' ? 'bg-green-100 text-green-700' : 'bg-gray-100'
+                                            } `}>
                                             {seg.status}
                                         </span>
                                     </div>
                                     <TiptapEditor
                                         content={hydrateContent(seg.target_content, seg.tags)}
                                         segmentId={seg.id}
-                                        onSave={handleSave}
-                                        isReadOnly={false}
                                         availableTags={seg.tags}
+                                        onSave={(html) => handleSave(seg.id, html)}
                                     />
+
+                                    {/* DEBUG: Show raw target content sent to backend */}
+                                    <div className="mt-1 p-1 bg-slate-100 text-[10px] font-mono text-slate-500 border border-slate-200 rounded break-all">
+                                        DEBUG DB-Content: {seg.target_content}
+                                    </div>
                                 </div>
                             </div>
                         )
