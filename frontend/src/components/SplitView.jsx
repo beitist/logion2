@@ -389,29 +389,66 @@ export function SplitView({ projectId }) {
                 {/* Settings Modal */}
                 {showSettings && (
                     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                        <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg">
-                            <h2 className="text-xl font-bold mb-4">Project Settings</h2>
+                        <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl h-[80vh] flex flex-col">
+                            <h2 className="text-xl font-bold mb-4">Project Files</h2>
 
-                            <div className="space-y-4 mb-6">
-                                <h3 className="font-semibold text-sm text-gray-700">AI Instructions</h3>
-                                <p className="text-xs text-gray-500 mb-2">These instructions will guide the AI translation.</p>
-
-                                {[0, 1, 2].map(i => (
-                                    <div key={i}>
-                                        <label className="block text-xs font-bold text-gray-600 mb-1">Instruction {i + 1}</label>
-                                        <textarea
-                                            className="w-full border p-2 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                            rows="2"
-                                            placeholder={`Instruction ${i + 1}...`}
-                                            value={aiInstructions[i]}
-                                            onChange={(e) => handleUpdateSettings(i, e.target.value)}
-                                            onBlur={saveSettings} // Auto-save on blur
-                                        />
+                            <div className="flex-1 overflow-hidden grid grid-cols-3 gap-4">
+                                {/* Window 1: Source Files */}
+                                <div className="border rounded-lg bg-gray-50 flex flex-col">
+                                    <h3 className="p-3 bg-white border-b font-medium text-gray-700 flex items-center gap-2">
+                                        📄 Source Files
+                                    </h3>
+                                    <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                                        {project.files && project.files.filter(f => f.category === 'source').length > 0 ? (
+                                            project.files.filter(f => f.category === 'source').map(f => (
+                                                <div key={f.id} className="text-sm bg-white p-2 rounded shadow-sm border border-gray-200 truncate" title={f.filename}>
+                                                    {f.filename}
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-gray-400 text-sm italic">No source files</p>
+                                        )}
                                     </div>
-                                ))}
+                                </div>
+
+                                {/* Window 2: Legal/Reference Files */}
+                                <div className="border rounded-lg bg-indigo-50 flex flex-col">
+                                    <h3 className="p-3 bg-white border-b font-medium text-indigo-700 flex items-center gap-2">
+                                        ⚖️ Legal / Reference
+                                    </h3>
+                                    <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                                        {project.files && project.files.filter(f => f.category === 'legal').length > 0 ? (
+                                            project.files.filter(f => f.category === 'legal').map(f => (
+                                                <div key={f.id} className="text-sm bg-white p-2 rounded shadow-sm border border-indigo-100 truncate text-indigo-700" title={f.filename}>
+                                                    {f.filename}
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-indigo-300 text-sm italic">No legal files</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Window 3: Background Files */}
+                                <div className="border rounded-lg bg-blue-50 flex flex-col">
+                                    <h3 className="p-3 bg-white border-b font-medium text-blue-700 flex items-center gap-2">
+                                        📚 Background / Context
+                                    </h3>
+                                    <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                                        {project.files && project.files.filter(f => f.category === 'background').length > 0 ? (
+                                            project.files.filter(f => f.category === 'background').map(f => (
+                                                <div key={f.id} className="text-sm bg-white p-2 rounded shadow-sm border border-blue-100 truncate text-blue-700" title={f.filename}>
+                                                    {f.filename}
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-blue-300 text-sm italic">No background files</p>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
 
-                            <div className="border-t pt-4 flex justify-between items-center">
+                            <div className="border-t pt-4 mt-4 flex justify-between items-center">
                                 <button
                                     onClick={handleDeleteProject}
                                     className="text-red-500 text-sm hover:underline"

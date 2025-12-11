@@ -28,11 +28,14 @@ export function NewProjectModal({ onClose, onCreated }) {
     };
 
     const handleFileChange = (e, category) => {
-        const selectedFiles = Array.from(e.target.files);
-        setFiles(prev => ({
-            ...prev,
-            [category]: [...prev[category], ...selectedFiles]
-        }));
+        if (e.target.files && e.target.files.length > 0) {
+            const selectedFiles = Array.from(e.target.files);
+            setFiles(prev => ({
+                ...prev,
+                [category]: [...prev[category], ...selectedFiles]
+            }));
+        }
+        e.target.value = ''; // Reset input so same file can be selected again
     };
 
     const removeFile = (category, index) => {
@@ -73,15 +76,16 @@ export function NewProjectModal({ onClose, onCreated }) {
         }
     };
 
-    const FileList = ({ category, list }) => (
+    // Helper for rendering file lists
+    const renderFileList = (category, list) => (
         <div className="mt-2 space-y-2">
             {list.map((f, i) => (
-                <div key={i} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded text-sm">
-                    <span className="truncate max-w-[200px]">{f.name}</span>
+                <div key={i} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded text-sm border border-gray-100">
+                    <span className="truncate max-w-[200px] text-gray-700">{f.name}</span>
                     <button
                         type="button"
                         onClick={() => removeFile(category, i)}
-                        className="text-gray-400 hover:text-red-500"
+                        className="text-gray-400 hover:text-red-500 p-1"
                     >
                         <X size={14} />
                     </button>
@@ -192,7 +196,7 @@ export function NewProjectModal({ onClose, onCreated }) {
                                         </div>
                                     </div>
                                 </div>
-                                <FileList category="source" list={files.source} />
+                                {renderFileList('source', files.source)}
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -200,14 +204,14 @@ export function NewProjectModal({ onClose, onCreated }) {
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">2) Legal / Reference</label>
                                     <input type="file" multiple onChange={(e) => handleFileChange(e, 'legal')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100" />
-                                    <FileList category="legal" list={files.legal} />
+                                    {renderFileList('legal', files.legal)}
                                 </div>
 
                                 {/* Background Files */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">3) Background / Context</label>
                                     <input type="file" multiple onChange={(e) => handleFileChange(e, 'background')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-                                    <FileList category="background" list={files.background} />
+                                    {renderFileList('background', files.background)}
                                 </div>
                             </div>
 
