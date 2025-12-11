@@ -39,6 +39,8 @@ class ProjectResponse(BaseModel):
     source_lang: Optional[str] = None
     target_lang: Optional[str] = None
     use_ai: bool = False
+    rag_status: Optional[str] = "created"
+    ingestion_logs: Optional[list[str]] = []
     files: Optional[list[ProjectFileSchema]] = []
     config: Optional[Dict[str, Any]] = None
     
@@ -50,9 +52,9 @@ class ProjectListResponse(BaseModel):
     name: Optional[str] = None
     filename: str
     status: str
-    created_at: datetime
-    source_lang: str
-    target_lang: str
+    created_at: Optional[datetime] = None
+    source_lang: Optional[str] = "en"
+    target_lang: Optional[str] = "de"
 
     class Config:
         from_attributes = True

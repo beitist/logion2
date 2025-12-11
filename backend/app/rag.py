@@ -69,35 +69,58 @@ def chunk_text(text, chunk_size=500, overlap=50):
         
     return chunks
 
-def ingest_project_files(project_id: str, db: Session):
+from .database import SessionLocal
+
+def ingest_project_files(project_id: str):
     """
     Task to be run in background.
     1. Fetch all 'legal' and 'background' files for the project.
     2. Extract text -> Chunk -> Embed -> Store.
     3. Update Project rag_status.
     """
-    print(f"Starting ingestion for project {project_id}")
+    db = SessionLocal()
     
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        print(f"Project {project_id} not found")
-        return
+    def log_msg(msg: str):
+        print(msg)
+        try:
+             # Refresh log list and append
+             # Note: Postgres JSON append is tricky with SQLAlchemy if not using specific ops.
+             # Easiest: read, append, write. (Race condition possible but unlikely for single writer)
+             p = db.query(Project).filter(Project.id == project_id).first()
+             current_logs = list(p.ingestion_logs) if p.ingestion_logs else []
+             current_logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] {msg}")
+             p.ingestion_logs = current_logs
+             db.commit()
+        except Exception as e:
+             print(f"Log error: {e}")
 
-    project.rag_status = "ingesting"
-    db.commit()
+    from datetime import datetime
     
     try:
-        # Get files that are NOT source (we don't RAG against source usually, unless requested?)
-        # User said: Legal (Mandatory) and Background (Optional)
+        log_msg(f"Starting analysis for project {project_id}")
+        
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            print(f"Project {project_id} not found")
+            return
+
+        project.rag_status = "ingesting"
+        db.commit()
+    
+        # Get files that are NOT source
         target_files = db.query(ProjectFile).filter(
             ProjectFile.project_id == project_id,
             ProjectFile.category.in_([ProjectFileCategory.legal.value, ProjectFileCategory.background.value])
         ).all()
+        
+        log_msg(f"Found {len(target_files)} reference files to process.")
 
         total_chunks = 0
         BATCH_SIZE = 100
         
         for file_record in target_files:
+            log_msg(f"Processing file: {file_record.filename}...")
+            
             # 1. Download
             temp_path = f"temp_rag_{file_record.id}_{file_record.filename}"
             try:
@@ -114,19 +137,21 @@ def ingest_project_files(project_id: str, db: Session):
                     raw_text = ""
                     
                 if not raw_text:
+                    log_msg(f"Skipping {file_record.filename} (empty or unsupported format)")
                     continue
-                    
+                
+                log_msg(f"Extracted {len(raw_text)} chars. Cleaning & Chunking...")
                 text = clean_text(raw_text)
                 
                 # 3. Chunk
                 chunks = chunk_text(text)
+                log_msg(f"Generated {len(chunks)} chunks. Vektorizing...")
                 
                 # 4. Embed & Store in batches
                 for i in range(0, len(chunks), BATCH_SIZE):
                     batch = chunks[i : i + BATCH_SIZE]
                     
                     # Google Embed Call
-                    # Using title to provide context if possible
                     result = genai.embed_content(
                         model='models/text-embedding-004',
                         content=batch,
@@ -145,23 +170,37 @@ def ingest_project_files(project_id: str, db: Session):
                         ))
                     
                     db.add_all(db_chunks)
-                    db.commit() # Commit per batch to be safe
+                    db.commit() 
                     total_chunks += len(batch)
+                    log_msg(f"Embedded batch {i // BATCH_SIZE + 1} ({len(batch)} vectors stored).")
 
             except Exception as e:
-                print(f"Error processing file {file_record.filename}: {e}")
+                log_msg(f"ERROR processing {file_record.filename}: {e}")
             finally:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
 
         project.rag_status = "ready"
+        log_msg(f"RAG READY. Total knowledge base: {total_chunks} vectors.")
         db.commit()
-        print(f"Ingestion complete for project {project_id}. Total chunks: {total_chunks}")
+
+    except Exception as e:
+        log_msg(f"FATAL ERROR: {e}")
+        try:
+             project.rag_status = "error"
+             db.commit()
+        except:
+             pass
 
     except Exception as e:
         print(f"Fatal RAG error: {e}")
-        project.rag_status = "error"
-        db.commit()
+        try:
+             project.rag_status = "error"
+             db.commit()
+        except:
+             pass
+    finally:
+        db.close()
 
 # --- Search Logic ---
 

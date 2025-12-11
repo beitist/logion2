@@ -31,6 +31,7 @@ class Project(Base):
     use_ai = Column(Boolean, default=False)
     file_hash = Column(String, nullable=True) 
     config = Column(JSON, nullable=True) 
+    ingestion_logs = Column(JSON, default=[]) # List of log strings 
 
     segments = relationship("Segment", back_populates="project", cascade="all, delete-orphan")
     files = relationship("ProjectFile", back_populates="project", cascade="all, delete-orphan")

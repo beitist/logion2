@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { createProject } from '../api/client';
+import React, { useState, useEffect } from 'react';
+import { createProject, getProject } from '../api/client';
 import { X, Upload, Sparkles } from 'lucide-react';
 
 export function NewProjectModal({ onClose, onCreated }) {
+    // ... Existing state ...
     const [formData, setFormData] = useState({
         name: '',
         source_lang: 'en',
@@ -19,6 +20,12 @@ export function NewProjectModal({ onClose, onCreated }) {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState(null);
 
+    // New State for Console
+    const [createdProject, setCreatedProject] = useState(null);
+    const [logs, setLogs] = useState([]);
+    const [ragStatus, setRagStatus] = useState(null);
+
+    // ... Input handlers (handleInputChange, handleFileChange, removeFile) ...
     const handleInputChange = (e) => {
         const { name, value, type, checked } = e.target;
         setFormData(prev => ({
@@ -35,7 +42,7 @@ export function NewProjectModal({ onClose, onCreated }) {
                 [category]: [...prev[category], ...selectedFiles]
             }));
         }
-        e.target.value = ''; // Reset input so same file can be selected again
+        e.target.value = '';
     };
 
     const removeFile = (category, index) => {
@@ -44,6 +51,27 @@ export function NewProjectModal({ onClose, onCreated }) {
             [category]: prev[category].filter((_, i) => i !== index)
         }));
     };
+
+    // Polling Effect
+    useEffect(() => {
+        let interval;
+        if (createdProject && createdProject.use_ai) {
+            interval = setInterval(async () => {
+                try {
+                    const p = await getProject(createdProject.id);
+                    setRagStatus(p.rag_status);
+                    setLogs(p.ingestion_logs || []);
+
+                    if (p.rag_status === 'ready' || p.rag_status === 'error') {
+                        clearInterval(interval);
+                    }
+                } catch (e) {
+                    console.error("Polling error", e);
+                }
+            }, 1000);
+        }
+        return () => clearInterval(interval);
+    }, [createdProject]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -67,16 +95,65 @@ export function NewProjectModal({ onClose, onCreated }) {
             files.background.forEach(f => submission.append('background_files', f));
 
             const newProject = await createProject(submission);
-            onCreated(newProject);
+
+            if (formData.use_ai) {
+                // Swith to console view
+                setCreatedProject(newProject);
+                setIsSubmitting(false);
+            } else {
+                onCreated(newProject);
+            }
+
         } catch (err) {
             console.error(err);
             setError("Failed to create project: " + err.message);
-        } finally {
             setIsSubmitting(false);
         }
     };
 
-    // Helper for rendering file lists
+    // Render Terminal View if project created and AI used
+    if (createdProject) {
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                <div className="bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col h-[600px] border border-green-500/30">
+                    <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-950">
+                        <h2 className="text-xl font-mono text-green-500 flex items-center gap-2">
+                            <Sparkles size={18} /> RAG INGESTION PROTOCOL
+                        </h2>
+                        {ragStatus && (
+                            <span className={`px-2 py-1 rounded text-xs font-mono uppercase ${ragStatus === 'ready' ? 'bg-green-900 text-green-100' : 'bg-yellow-900 text-yellow-100'}`}>
+                                STATUS: {ragStatus}
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="flex-1 bg-black p-4 overflow-y-auto font-mono text-sm">
+                        <div className="space-y-1">
+                            {logs.map((log, i) => (
+                                <div key={i} className="text-green-400 border-l-2 border-green-900 pl-2">
+                                    <span className="opacity-50 mr-2">{log.substring(0, 10)}</span>
+                                    {log.substring(11)}
+                                </div>
+                            ))}
+                            <div className="animate-pulse text-green-500">_</div>
+                        </div>
+                    </div>
+
+                    <div className="p-4 border-t border-gray-800 bg-gray-950 flex justify-end">
+                        <button
+                            onClick={() => onCreated(createdProject)}
+                            disabled={ragStatus !== 'ready' && ragStatus !== 'error'}
+                            className="px-6 py-2 font-mono text-black bg-green-500 rounded hover:bg-green-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        >
+                            {ragStatus === 'ready' ? 'ENTER COCKPIT >>' : 'INITIALIZING...'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
+    // Regular Form Render
     const renderFileList = (category, list) => (
         <div className="mt-2 space-y-2">
             {list.map((f, i) => (

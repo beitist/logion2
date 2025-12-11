@@ -123,12 +123,12 @@ async def create_project(
             
             segments_internal = parse_docx(temp_parse_path)
             
-            for seg_int in segments_internal:
+            for i, seg_int in enumerate(segments_internal):
                 seg_dump = seg_int.model_dump()
                 db_segment = Segment(
                     id=seg_int.segment_id,
                     project_id=project_id,
-                    index=seg_int.metadata.get("original_index", 0),
+                    index=i, # Force explicit order from list precedence
                     source_content=seg_int.source_text,
                     target_content=None,
                     status="draft",
@@ -148,6 +148,12 @@ async def create_project(
         finally:
              if os.path.exists(temp_parse_path):
                  os.remove(temp_parse_path)
+
+    # 5. Trigger RAG Ingestion (Background)
+    # We use new session in background task
+    if use_ai:
+        from ..rag import ingest_project_files
+        background_tasks.add_task(ingest_project_files, new_project.id)
 
     db.refresh(new_project)
     return new_project
