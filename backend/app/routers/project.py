@@ -10,7 +10,7 @@ import re
 from docx import Document
 
 from ..database import get_db, SessionLocal, engine
-from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse
+from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate
 from ..parser import parse_docx
 from ..models import Project, Segment
 # from ..schemas import ProjectOut, SegmentOut # We can reuse models or create schemas.
@@ -194,7 +194,14 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
             # We want to remove the outer <p> tags.
             # Simple check for now.
             # Cleanup Tiptap HTML using BeautifulSoup to handle Spans and Nesting
+            # Cleanup Tiptap HTML using BeautifulSoup to handle Spans and Nesting
             if target_text:
+                # 0. PRE-PROCESS: Protect existing <1> tags from BS4 escaping
+                # BS4/html.parser might treat <1> as invalid and escape it to &lt;1&gt;
+                # We convert them to placeholders first.
+                target_text = re.sub(r'<(\d+)>', r'__TAG_START_\1__', target_text)
+                target_text = re.sub(r'</(\d+)>', r'__TAG_END_\1__', target_text)
+
                 soup = BeautifulSoup(target_text, "html.parser")
                 
                 # 1. Convert Tiptap Spans to Custom Tags <ID>...</ID>
@@ -203,40 +210,28 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
                     if tid:
                         # CASE: Generic TAB
                         if tid == 'TAB':
-                            # We replace with literal [TAB] for reassembly (or map to next ID if we had logic)
-                            # But here we don't know the ID mapping easily without the segment tags.
-                            # Luckily, reassembly support literal [TAB].
-                            # span.replace_with("[TAB]")
                             span.replace_with("[TAB]") 
                         
                         else:
-                            # Standard Tag: <ID>content</ID>
-                            # We replace the tag with its content wrapped in custom markers.
-                            # We can't insert "Tags" into soup easily as they aren't valid HTML tags usually.
-                            # We insert text markers.
-                            # Beware: soup.decode() will escape < to &lt; if we just insert string.
-                            # We use replace_with_string logic?
-                            # Or we use a placeholder and replace later?
-                            # Better: We assume the output of soup.decode() is what we want, 
-                            # but we need unescaped <ID>. 
+                            # Detect if it is a Start or End tag based on content
+                            # Frontend renders Start as "1" and End as "/1"
+                            text_content = span.get_text().strip()
+                            is_end_tag = text_content.startswith("/")
                             
-                            # Valid XML tag strategy:
-                            # Rename the span tag to the ID? <1>...</1> might be valid XML for soup?
-                            # Tag names can't start with digits in XML/HTML?
-                            # Let's try renaming.
-                            # span.name = f"TAG_{tid}"  -> <TAG_1>...</TAG_1>
-                            # Then regex replace TAG_ -> nothing?
-                            span.attrs = {} # CRITICAL: Remove style, class, data-* ... everything so we get clean <TAG-X>
-                            span.name = f"TAG-{tid}"
-                
+                            # We replace the ENTIRE span (including visual label "1") with a placeholder.
+                            # We use safe placeholders preventing HTML escaping issues.
+                            if is_end_tag:
+                                placeholder = f"__TAG_END_{tid}__"
+                            else:
+                                placeholder = f"__TAG_START_{tid}__"
+                            
+                            span.replace_with(placeholder)
+
                 # 2. Handle Paragraphs
                 # Tiptap sends <p>A</p><p>B</p>.
                 # We want A<br/>B.
-                # Only if there are multiple Ps.
                 ps = soup.find_all("p")
                 if len(ps) > 0:
-                     # Join their contents with <br/>
-                     # This is tricky in converting partial tree.
                      cleaned_html = ""
                      for i, p in enumerate(ps):
                          if i > 0: cleaned_html += "<br/>"
@@ -245,9 +240,10 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
                     cleaned_html = soup.decode_contents()
 
                 # 3. Post-Process
-                # Fix the TAG-X to X
-                cleaned_html = re.sub(r'<TAG-(\d+)', r'<\1', cleaned_html)
-                cleaned_html = re.sub(r'</TAG-(\d+)>', r'</\1>', cleaned_html)
+                # Replace placeholders with real XML-like tags <1> and </1>
+                # Since we are operating on the decoded string, we insert literal < and >.
+                cleaned_html = re.sub(r'__TAG_START_(\d+)__', r'<\1>', cleaned_html)
+                cleaned_html = re.sub(r'__TAG_END_(\d+)__', r'</\1>', cleaned_html)
                  
                 target_text = cleaned_html
 
@@ -291,3 +287,35 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Reassembly failed: {str(e)}")
     
     return FileResponse(output_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=output_filename)
+
+@router.delete("/{project_id}")
+async def delete_project(project_id: str, db: Session = Depends(get_db)):
+    """
+    Deletes a project and all associated segments.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Delete segments manually to ensure cleanup
+    db.query(Segment).filter(Segment.project_id == project_id).delete()
+    db.delete(project)
+    db.commit()
+    return {"message": "Project deleted successfully"}
+
+@router.patch("/{project_id}", response_model=ProjectResponse)
+async def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)):
+    """
+    Update project metadata (e.g. config/instructions).
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    update_data = payload.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(project, key, value)
+    
+    db.commit()
+    db.refresh(project)
+    return project

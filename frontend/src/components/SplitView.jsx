@@ -1,19 +1,32 @@
 
 import React, { useEffect, useState } from 'react';
-import { getSegments, getProject, updateSegment, downloadProject } from "../api/client";
+import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
+
+// GLOBAL DEBUG FLAG
+const SHOW_DEBUG = true;
 
 export function SplitView({ projectId }) {
     const [segments, setSegments] = useState([]);
+    // ... (rest of imports/state)
     const [project, setProject] = useState(null);
     const [loading, setLoading] = useState(true);
     const [savingId, setSavingId] = useState(null); // ID of segment currently saving
+    const [showSettings, setShowSettings] = useState(false);
+    const [aiInstructions, setAiInstructions] = useState(["", "", ""]); // 3 fields
 
     useEffect(() => {
         const loadData = async () => {
             try {
                 const p = await getProject(projectId);
                 setProject(p);
+                // Load AI Instructions from config if available
+                if (p.config && p.config.ai_instructions) {
+                    // Ensure 3 fields
+                    const loaded = p.config.ai_instructions || [];
+                    const filled = [loaded[0] || "", loaded[1] || "", loaded[2] || ""];
+                    setAiInstructions(filled);
+                }
                 const s = await getSegments(projectId);
                 setSegments(s);
             } catch (err) {
@@ -38,7 +51,18 @@ export function SplitView({ projectId }) {
         if (!content) return "";
         let hydrated = content;
 
-        // Match <(\d+)> OR </(\d+)>
+        // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
+        // We replace the whole sequence with a single Tab Chip to avoid duplication (Chip + Text + Chip).
+        hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
+            const tagInfo = tags ? tags[id] : null;
+            if (tagInfo && tagInfo.type === 'tab') {
+                // Return a SINGLE chip for the whole group
+                return `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`;
+            }
+            return match;
+        });
+
+        // 2. Standard Match <(\d+)> OR </(\d+)>
         hydrated = hydrated.replace(/<(\d+)>|<\/(\d+)>/g, (match, openId, closeId) => {
             const id = openId || closeId;
             const tagInfo = tags ? tags[id] : null;
@@ -53,7 +77,7 @@ export function SplitView({ projectId }) {
                 else if (tagInfo.type === 'comment') label = '💬';
             }
 
-            return `< span data - type="tag-node" data - id="${finalId}" data - label="${label}" ></span > `;
+            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
         });
 
         return hydrated;
@@ -102,7 +126,7 @@ export function SplitView({ projectId }) {
                 if (tabIndex < tabIds.length) {
                     realId = String(tabIds[tabIndex]);
                     tabIndex++;
-                    return `< ${realId}> [TAB]</${realId}> `;
+                    return `<${realId}>[TAB]</${realId}>`;
                 } else {
                     return "[TAB]";
                 }
@@ -111,10 +135,10 @@ export function SplitView({ projectId }) {
             // Standard Logic for other IDs (1, 2, C...)
             if (openTags.has(realId)) {
                 openTags.delete(realId);
-                return `</${realId}> `;
+                return `</${realId}>`;
             } else {
                 openTags.add(realId);
-                return `< ${realId}> `;
+                return `<${realId}>`;
             }
         });
 
@@ -190,6 +214,37 @@ export function SplitView({ projectId }) {
         }
     };
 
+    const handleUpdateSettings = async (index, value) => {
+        const newInstructions = [...aiInstructions];
+        newInstructions[index] = value;
+        setAiInstructions(newInstructions);
+    };
+
+    const saveSettings = async () => {
+        if (!project) return;
+        try {
+            const config = { ...(project.config || {}), ai_instructions: aiInstructions };
+            await updateProject(projectId, { config });
+            // console.log("Settings saved");
+            // Update local project state
+            setProject(prev => ({ ...prev, config }));
+        } catch (err) {
+            console.error("Failed to save settings", err);
+            alert("Failed to save settings");
+        }
+    };
+
+    const handleDeleteProject = async () => {
+        if (!window.confirm("Are you sure you want to delete this project? This cannot be undone.")) return;
+        try {
+            await deleteProject(projectId);
+            window.location.href = "/"; // Force reload/redirect to home
+        } catch (err) {
+            console.error("Failed to delete project", err);
+            alert("Failed to delete project");
+        }
+    };
+
     // Helper to visualize tags as badges & apply smart hiding
     const formatSourceContent = (htmlContent, tags) => {
         if (!htmlContent) return "";
@@ -211,27 +266,27 @@ export function SplitView({ projectId }) {
             // We REMOVE the logic that strips tags and applies styles.
             // Now these tags will fall through and be rendered as numeric chips below.
 
-            // if (tagInfo && ['bold', 'italic', 'underline'].includes(tagInfo.type)) {
-            //     if (tagInfo.type === 'bold') wrapperStyle += " font-bold";
-            //     if (tagInfo.type === 'italic') wrapperStyle += " italic";
-            //     if (tagInfo.type === 'underline') wrapperStyle += " underline";
-            //     contentToRender = innerText;
-            // } else 
-            if (tagInfo && tagInfo.type === 'comment') {
-                // COMMENT RANGE DETECTED!
-                // We unwrap it but apply a Highlight Style
-                wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
+            if (tagInfo && ['bold', 'italic', 'underline'].includes(tagInfo.type)) {
+                // STRIP redundant specific styling tags that wrap the whole segment.
+                // We do NOT apply the style (wrapperStyle) to keep the "Chip Mode" strict/clean look.
+                // The tag simply disappears from view, reducing noise.
                 contentToRender = innerText;
+            } else
+                if (tagInfo && tagInfo.type === 'comment') {
+                    // COMMENT RANGE DETECTED!
+                    // We unwrap it but apply a Highlight Style
+                    wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
+                    contentToRender = innerText;
 
-                // Note: We strip the tag, so the "Start Tag" chip logic below won't fire for this ID.
-                // This is perfect! We get highlight but no generic chip <N>.
-                // But wait, the loop continues. If we unwrapped, regex below won't find <ID> anymore.
-                // We need to ensure we don't break the loop logic if we want to strip INNER tags too.
-                // Yes, continue unwrapping.
-            } else {
-                // If it's a Link or Comment, stop stripping so the chip remains visible
-                break;
-            }
+                    // Note: We strip the tag, so the "Start Tag" chip logic below won't fire for this ID.
+                    // This is perfect! We get highlight but no generic chip <N>.
+                    // But wait, the loop continues. If we unwrapped, regex below won't find <ID> anymore.
+                    // We need to ensure we don't break the loop logic if we want to strip INNER tags too.
+                    // Yes, continue unwrapping.
+                } else {
+                    // If it's a Link or Comment, stop stripping so the chip remains visible
+                    break;
+                }
         }
 
         // 2. Badge Replacement (Smart)
@@ -248,7 +303,7 @@ export function SplitView({ projectId }) {
             if (t && (t.type === 'tab' || t.type === 'comment')) {
                 return ""; // Hide start tag wrapper, content ([TAB]) will be styled below
             }
-            return `< span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title = "Start Tag" > ${id}</span > `;
+            return `<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">${id}</span>`;
         });
 
         // End Tags </n>
@@ -257,7 +312,7 @@ export function SplitView({ projectId }) {
             if (t && (t.type === 'tab' || t.type === 'comment')) {
                 return ""; // Hide end tag
             }
-            return `< span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title = "End Tag" > /${id}</span > `;
+            return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/${id}</span>`;
         });
 
         // Replace [TAB] -> [TAB] Badge
@@ -283,7 +338,7 @@ export function SplitView({ projectId }) {
 
         // 3. Wrap result if we stripped a wrapper
         if (wrapperStyle) {
-            return `< span class="${wrapperStyle}" > ${formatted}</span > `;
+            return `<span class="${wrapperStyle}">${formatted}</span>`;
         }
 
         return formatted;
@@ -316,11 +371,63 @@ export function SplitView({ projectId }) {
         <div className="h-screen flex flex-col">
             <header className="p-4 bg-gray-100 border-b flex justify-between items-center">
                 <h1 className="font-bold">Project: {project?.filename}</h1>
-                <button
-                    onClick={handleExport}
-                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
-                    Export DOCX
-                </button>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => setShowSettings(true)}
+                        className="bg-gray-200 text-gray-700 px-3 py-2 rounded hover:bg-gray-300"
+                        title="Project Settings"
+                    >
+                        ⚙️ Settings
+                    </button>
+                    <button
+                        onClick={handleExport}
+                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                        Export DOCX
+                    </button>
+                </div>
+
+                {/* Settings Modal */}
+                {showSettings && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg">
+                            <h2 className="text-xl font-bold mb-4">Project Settings</h2>
+
+                            <div className="space-y-4 mb-6">
+                                <h3 className="font-semibold text-sm text-gray-700">AI Instructions</h3>
+                                <p className="text-xs text-gray-500 mb-2">These instructions will guide the AI translation.</p>
+
+                                {[0, 1, 2].map(i => (
+                                    <div key={i}>
+                                        <label className="block text-xs font-bold text-gray-600 mb-1">Instruction {i + 1}</label>
+                                        <textarea
+                                            className="w-full border p-2 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            rows="2"
+                                            placeholder={`Instruction ${i + 1}...`}
+                                            value={aiInstructions[i]}
+                                            onChange={(e) => handleUpdateSettings(i, e.target.value)}
+                                            onBlur={saveSettings} // Auto-save on blur
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="border-t pt-4 flex justify-between items-center">
+                                <button
+                                    onClick={handleDeleteProject}
+                                    className="text-red-500 text-sm hover:underline"
+                                >
+                                    🗑️ Delete Project
+                                </button>
+                                <button
+                                    onClick={() => setShowSettings(false)}
+                                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </header>
 
             <div className="flex-1 overflow-auto p-4">
@@ -345,6 +452,13 @@ export function SplitView({ projectId }) {
                                                     <li key={i}>{c}</li>
                                                 ))}
                                             </ul>
+                                        </div>
+                                    )}
+
+                                    {/* DEBUG: Show raw source content */}
+                                    {SHOW_DEBUG && (
+                                        <div className="mt-4 p-1 bg-red-50 text-[10px] font-mono text-red-500 border border-red-200 rounded break-all">
+                                            DEBUG Source-DB: {seg.source_content}
                                         </div>
                                     )}
                                 </div>
@@ -375,9 +489,9 @@ export function SplitView({ projectId }) {
                                                 </>
                                             )}
                                         </div>
-                                        <span className={`px - 2 py - 0.5 rounded - full text - [10px] ${seg.status === 'draft' ? 'bg-yellow-100 text-yellow-700' :
-                                                seg.status === 'translated' ? 'bg-green-100 text-green-700' : 'bg-gray-100'
-                                            } `}>
+                                        <span className={`px-2 py-0.5 rounded-full text-[10px] ${seg.status === 'draft' ? 'bg-yellow-100 text-yellow-700' :
+                                            seg.status === 'translated' ? 'bg-green-100 text-green-700' : 'bg-gray-100'
+                                            }`}>
                                             {seg.status}
                                         </span>
                                     </div>
@@ -385,13 +499,15 @@ export function SplitView({ projectId }) {
                                         content={hydrateContent(seg.target_content, seg.tags)}
                                         segmentId={seg.id}
                                         availableTags={seg.tags}
-                                        onSave={(html) => handleSave(seg.id, html)}
+                                        onSave={handleSave}
                                     />
 
                                     {/* DEBUG: Show raw target content sent to backend */}
-                                    <div className="mt-1 p-1 bg-slate-100 text-[10px] font-mono text-slate-500 border border-slate-200 rounded break-all">
-                                        DEBUG DB-Content: {seg.target_content}
-                                    </div>
+                                    {SHOW_DEBUG && (
+                                        <div className="mt-1 p-1 bg-slate-100 text-[10px] font-mono text-slate-500 border border-slate-200 rounded break-all">
+                                            DEBUG Target-DB: {seg.target_content}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )

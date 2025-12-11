@@ -49,3 +49,21 @@ export async function downloadProject(projectId) {
     if (!res.ok) throw new Error("Failed to export project");
     return res.blob();
 }
+
+export async function updateProject(projectId, data) {
+    const res = await fetch(`${API_BASE}/project/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Failed to update project");
+    return res.json();
+}
+
+export async function deleteProject(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete project");
+    return res.json();
+}

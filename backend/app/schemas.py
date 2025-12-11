@@ -15,6 +15,12 @@ class TagModel(BaseModel):
 class ProjectCreate(BaseModel):
     pass # Upload creates project, usually no body needed or just config
 
+class ProjectUpdate(BaseModel):
+    source_lang: Optional[str] = None
+    target_lang: Optional[str] = None
+    status: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+
 class ProjectResponse(BaseModel):
     id: str
     filename: str
@@ -22,6 +28,7 @@ class ProjectResponse(BaseModel):
     created_at: datetime
     source_lang: Optional[str] = None
     target_lang: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
     
     class Config:
         from_attributes = True

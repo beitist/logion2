@@ -72,6 +72,7 @@ const MenuBar = ({ editor, availableTags }) => {
             {availableTags && Object.values(availableTags).some(t => t.type === 'tab') && (
                 <button
                     onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: 'TAB', label: 'TAB' } }).run()}
+                    onMouseDown={(e) => e.preventDefault()}
                     className="px-2 py-1 text-xs font-mono rounded border bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200 active:bg-gray-300 min-w-[24px] font-bold"
                     title="Insert Tab (Auto-mapped)"
                 >
@@ -97,6 +98,7 @@ const MenuBar = ({ editor, availableTags }) => {
                     <button
                         key={tid}
                         onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: tid, label: label } }).run()}
+                        onMouseDown={(e) => e.preventDefault()}
                         className="px-2 py-1 text-xs font-mono rounded border bg-white text-gray-600 border-gray-300 hover:bg-blue-50 active:bg-blue-100 min-w-[24px]"
                         title={title}
                     >
