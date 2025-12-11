@@ -21,53 +21,23 @@ def reassemble_docx(original_path: str, output_path: str, segments: List[Segment
     # In reality, we must match IDs or indices.
     # Our parser saved "original_index" in metadata!
     
-    segment_map = {} # Key -> Segment
+    # segment_map caused collisions for split segments (make_key ignored sub_index).
+    # We now pass the full list of segments to _inject_into_container and let it group them properly.
     
-    # helper for keys
-    def make_key(loc):
-        # We need a robust key generation based on loc
-        # body: type=body, index=...
-        # table: type=table, table_index=..., ...
-        # header: type=header, section_index=..., p_index=...
-        # header table: type=header, sub_type=table, ...
-        
-        parts = [loc.get("type", "")]
-        if loc.get("type") == "body":
-            parts.append(str(loc.get("index", "")))
-        elif loc.get("type") == "table":
-            parts.append(f"{loc.get('table_index')}_{loc.get('row_index')}_{loc.get('cell_index')}_{loc.get('p_index')}")
-        elif loc.get("type") in ["header", "footer"]:
-            parts.append(str(loc.get("section_index")))
-            if loc.get("sub_type") == "table":
-                parts.append("table")
-                parts.append(f"{loc.get('table_index')}_{loc.get('row_index')}_{loc.get('cell_index')}_{loc.get('p_index')}")
-            else:
-                parts.append(str(loc.get("p_index")))
-        return "_".join(parts)
-
-    for seg in segments:
-        if seg.metadata:
-            k = make_key(seg.metadata)
-            segment_map[k] = seg
-
     # 1. Body
-    _inject_into_container(doc, {"type": "body"}, segment_map)
+    _inject_into_container(doc, {"type": "body"}, segments)
     
     # 2. Sections
     for s_idx, section in enumerate(doc.sections):
         if section.header:
-            _inject_into_container(section.header, {"type": "header", "section_index": s_idx}, segment_map)
+            _inject_into_container(section.header, {"type": "header", "section_index": s_idx}, segments)
         if section.footer:
-             _inject_into_container(section.footer, {"type": "footer", "section_index": s_idx}, segment_map)
+             _inject_into_container(section.footer, {"type": "footer", "section_index": s_idx}, segments)
 
     doc.save(output_path)
 
-def _inject_into_container(container, base_metadata, segment_map):
-    # 1. Group ALL segments by their visual location (if not already done outside? No, we do it here based on map)
-    # Wait, 'segment_map' passed in is Key->Segment. 
-    # But we need GROUPED segments by paragraph (multiple lines per p).
-    # The previous code did grouping INSIDE here. 
-    # Efficiency note: We rebuild groups every time. That's fine for now.
+def _inject_into_container(container, base_metadata, source_segments):
+    # source_segments: List[SegmentInternal]
     
     # Helper to merge segments targeting the same paragraph
     def get_merged_content(segs_for_para):
@@ -84,15 +54,13 @@ def _inject_into_container(container, base_metadata, segment_map):
                 combined_tags.update(s.tags)
         return full_text, combined_tags
 
-    # 1. Build Grouped Segments from the flat map/list
-    # Logic: iterate all values in segment_map? 
-    # segment_map keys are strings. 
-    # We should probably pass the LIST of segments to this function or just iterate segment_map.values()
-    
+    # 1. Build Grouped Segments from the flat list
     grouped_segments = {}
     
-    for s in segment_map.values():
+    for s in source_segments:
         m = s.metadata
+        if not m: continue
+        
         stype = m.get("type", "body")
         section_idx = m.get("section_index", -1)
         
@@ -115,6 +83,11 @@ def _inject_into_container(container, base_metadata, segment_map):
     stype = base_metadata.get("type")
     s_idx = base_metadata.get("section_index", -1)
 
+    # DEBUG DUMP
+    with open("debug_reassembly_keys.log", "a") as f:
+         f.write(f"--- Injecting into {stype} s_idx={s_idx} ---\n")
+         f.write(f"Grouped Keys: {[k for k in grouped_segments.keys() if k[0] == stype]}\n")
+
     # A. Paragraphs
     for i, para in enumerate(container.paragraphs):
         # Key = (stype, s_idx, None, i)
@@ -124,8 +97,11 @@ def _inject_into_container(container, base_metadata, segment_map):
             try:
                 text, tags = get_merged_content(grouped_segments[key])
                 _inject_tagged_text(para, text, tags)
+                with open("debug_reassembly_keys.log", "a") as f: f.write(f"Inject Para {key}: OK\n")
             except Exception as e:
                 print(f"Error injecting segment {key}: {e}")
+        else:
+            with open("debug_reassembly_keys.log", "a") as f: f.write(f"Inject Para {key}: MISSED\n")
 
     # B. Tables
     for t_i, table in enumerate(container.tables):
@@ -133,9 +109,6 @@ def _inject_into_container(container, base_metadata, segment_map):
             for c_i, cell in enumerate(row.cells):
                 for p_i, para in enumerate(cell.paragraphs):
                     # Key Construction
-                    # If Body: type="table" (per parser)
-                    # If Header: type="header", sub_type="table" (handled by t_coords presence in grouping)
-                    
                     target_type = stype
                     if stype == "body":
                         target_type = "table"
@@ -146,8 +119,11 @@ def _inject_into_container(container, base_metadata, segment_map):
                         try:
                             text, tags = get_merged_content(grouped_segments[key])
                             _inject_tagged_text(para, text, tags)
+                            with open("debug_reassembly_keys.log", "a") as f: f.write(f"Inject Table {key}: OK\n")
                         except Exception as e:
                             print(f"Error injecting table segment {key}: {e}")
+                    else:
+                        with open("debug_reassembly_keys.log", "a") as f: f.write(f"Inject Table {key}: MISSED\n")
 
 
     
