@@ -1,17 +1,20 @@
 const API_BASE = "http://localhost:8000";
 
-export async function uploadProject(file) {
-    const formData = new FormData();
-    formData.append("file", file);
+export async function getProjects() {
+    const res = await fetch(`${API_BASE}/project/`);
+    if (!res.ok) throw new Error("Failed to fetch projects");
+    return res.json();
+}
 
-    const res = await fetch(`${API_BASE}/project/upload`, {
+export async function createProject(formData) {
+    const res = await fetch(`${API_BASE}/project/create`, {
         method: "POST",
         body: formData,
     });
 
     if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || "Upload failed");
+        throw new Error(err.detail || "Creation failed");
     }
 
     return res.json();

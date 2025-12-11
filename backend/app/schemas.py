@@ -21,15 +21,39 @@ class ProjectUpdate(BaseModel):
     status: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
 
+class ProjectFileSchema(BaseModel):
+    id: str
+    category: str
+    filename: str
+    uploaded_at: datetime
+    
+    class Config:
+        from_attributes = True
+
 class ProjectResponse(BaseModel):
     id: str
+    name: Optional[str] = None
     filename: str
     status: str
     created_at: datetime
     source_lang: Optional[str] = None
     target_lang: Optional[str] = None
+    use_ai: bool = False
+    files: Optional[list[ProjectFileSchema]] = []
     config: Optional[Dict[str, Any]] = None
     
+    class Config:
+        from_attributes = True
+
+class ProjectListResponse(BaseModel):
+    id: str
+    name: Optional[str] = None
+    filename: str
+    status: str
+    created_at: datetime
+    source_lang: str
+    target_lang: str
+
     class Config:
         from_attributes = True
 

@@ -1,6 +1,6 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import shutil
 import os
 import uuid
@@ -8,17 +8,12 @@ import hashlib
 from bs4 import BeautifulSoup
 import re
 from docx import Document
+from datetime import datetime
 
 from ..database import get_db, SessionLocal, engine
-from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate
+from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse, ProjectFileSchema
 from ..parser import parse_docx
-from ..models import Project, Segment
-# from ..schemas import ProjectOut, SegmentOut # We can reuse models or create schemas.
-# For MVP speed, let's use ORM models but we usually need Pydantic schemas for response_model.
-# Let's define simple response schemas here or in schemas.py if strictly needed.
-# We'll just return dicts or ORM objects and let FastAPI serialization handle it if possible,
-# but Pydantic is safer.
-
+from ..models import Project, Segment, ProjectFile, ProjectFileCategory
 
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
@@ -26,106 +21,155 @@ if not os.path.exists(UPLOAD_DIR):
 
 router = APIRouter(prefix="/project", tags=["project"])
 
-@router.post("/upload")
-async def upload_project(file: UploadFile = File(...), db: Session = Depends(get_db)):
+@router.get("/", response_model=List[ProjectListResponse])
+def get_projects(db: Session = Depends(get_db)):
     """
-    Uploads a DOCX, parses it, and creates a Project with Segments.
+    Returns a list of all projects.
     """
-    if not file.filename.endswith('.docx'):
-        raise HTTPException(status_code=400, detail="Only DOCX files allowed")
+    projects = db.query(Project).order_by(Project.created_at.desc()).all()
+    return projects
 
-    # Read file content for hashing and saving
-    content = await file.read()
-    file_hash = hashlib.sha256(content).hexdigest()
-
-    # 1. Check for existing project based on file hash
-    existing_project = db.query(Project).filter(Project.file_hash == file_hash).first()
-    if existing_project:
-        # If a project with this hash already exists, return it
-        return {"id": existing_project.id, "filename": existing_project.filename, "message": "Project already exists (based on file hash)."}
-
-    # If not existing, proceed with new project creation
+@router.post("/create", response_model=ProjectResponse)
+async def create_project(
+    name: str = Form(...),
+    source_lang: str = Form("en"),
+    target_lang: str = Form("de"),
+    use_ai: bool = Form(False),
+    source_files: List[UploadFile] = File(None),
+    legal_files: List[UploadFile] = File(None),
+    background_files: List[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Creates a new project with multiple files and settings.
+    Parses the first valid source DOCX for segments.
+    """
     project_id = str(uuid.uuid4())
-    file_path = os.path.join(UPLOAD_DIR, f"{project_id}_{file.filename}")
     
-    with open(file_path, "wb") as buffer:
-        buffer.write(content) # Write the content read earlier
-        
-    # 2. Parse File
-    try:
-        segments_internal = parse_docx(file_path)
-    except Exception as e:
-        # Cleanup
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
-        
-    # 3. Create Project Record
+    # Create Project Record
     new_project = Project(
         id=project_id,
-        filename=file.filename,
-        status="processing", # or review immediately?
-        file_hash=file_hash # Store the hash
+        name=name,
+        filename=source_files[0].filename if source_files else "Untitled", # Main filename
+        status="processing",
+        source_lang=source_lang,
+        target_lang=target_lang,
+        use_ai=use_ai,
+        created_at=datetime.utcnow()
     )
     db.add(new_project)
-    
-    # 4. Create Segment Records
-    for seg_int in segments_internal:
-        # Note: tags are dicts, we need to store them as JSON in metadata.
-        
-        # We need to serialize TagModel objects to dict for JSON column
-        # tags_json = {k: v.model_dump() for k, v in seg_int.tags.items()} # This line is no longer needed
-        
-        # Serialize tags and metadata properly
-        # seg_int.tags is a dict of TagModels. seg_int.metadata is a dict.
-        # We want to store everything needed for reconstruction.
-        seg_dump = seg_int.model_dump()
-        
-        db_segment = Segment(
-            id=seg_int.segment_id, # Keep original segment_id from parser
-            project_id=project_id,
-            index=seg_int.metadata.get("original_index", 0), # Keep original index logic
-            source_content=seg_int.source_text,
-            target_content=None, # Empty initially
-            status="draft",
-            metadata_json=seg_dump # Save the full dump which includes 'tags' and 'metadata'
-        )
-        db.add(db_segment)
-        
-    db.commit()
-    
-    return {"id": project_id, "filename": file.filename, "segments_count": len(segments_internal)}
+    db.commit() # Commit to get ID for relationships if needed (though we set UUID manually)
 
-@router.get("/{project_id}")
+    primary_source_docx = None
+
+    # Helper to process files
+    async def process_files(files, category: ProjectFileCategory):
+        nonlocal primary_source_docx
+        if not files: return
+        
+        for file in files:
+            if not file.filename: continue
+            
+            # Create unique object name
+            # Format: {project_id}/{category}/{filename}
+            object_name = f"{project_id}/{category.value}/{file.filename}"
+            
+            # Upload to MinIO
+            from ..storage import upload_file
+            
+            try:
+                # We need to read the file to upload
+                # file.file is a SpooledTemporaryFile
+                # Move cursor to start just in case
+                await file.seek(0)
+                uploaded_obj = upload_file(file.file, object_name, content_type=file.content_type)
+                
+                # Create ProjectFile record (store object_name as file_path)
+                db_file = ProjectFile(
+                    id=str(uuid.uuid4()),
+                    project_id=project_id,
+                    category=category.value,
+                    filename=file.filename,
+                    file_path=uploaded_obj
+                )
+                db.add(db_file)
+                
+                # Identify primary source for parsing
+                # For parsing we might need to download it later or parse now.
+                # Since 'parse_docx' expects a path, we might need to download it to a temp path.
+                if category == ProjectFileCategory.source and file.filename.endswith(".docx") and not primary_source_docx:
+                    primary_source_docx = object_name
+                    
+            except Exception as e:
+                print(f"Failed to upload {file.filename}: {e}")
+                # Log error but maybe continue?
+                pass
+
+    # Process all file categories
+    await process_files(source_files, ProjectFileCategory.source)
+    await process_files(legal_files, ProjectFileCategory.legal)
+    await process_files(background_files, ProjectFileCategory.background)
+    
+    db.commit()
+
+    # Parse segments if we have a source docx
+    from ..storage import download_file
+    
+    if primary_source_docx:
+        temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_{project_id}.docx")
+        try:
+            # Download from MinIO
+            download_file(primary_source_docx, temp_parse_path)
+            
+            segments_internal = parse_docx(temp_parse_path)
+            
+            for seg_int in segments_internal:
+                seg_dump = seg_int.model_dump()
+                db_segment = Segment(
+                    id=seg_int.segment_id,
+                    project_id=project_id,
+                    index=seg_int.metadata.get("original_index", 0),
+                    source_content=seg_int.source_text,
+                    target_content=None,
+                    status="draft",
+                    metadata_json=seg_dump
+                )
+                db.add(db_segment)
+            
+            # Update project status or simple message?
+            new_project.status = "review" # Ready for review after parsing
+            db.add(new_project)
+            db.commit()
+            
+        except Exception as e:
+            db.delete(new_project)
+            db.commit()
+            raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
+        finally:
+             if os.path.exists(temp_parse_path):
+                 os.remove(temp_parse_path)
+
+    db.refresh(new_project)
+    return new_project
+
+
+@router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: str, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
-from ..schemas import SegmentResponse # Assuming SegmentResponse is defined here or in schemas.py
 
 @router.get("/{project_id}/segments", response_model=List[SegmentResponse])
 def get_project_segments(project_id: str, db: Session = Depends(get_db)):
     segments = db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
     
-    # Manual mapping to Pydantic schema to ensure 'tags' are extracted from metadata_json
     response_list = []
     for s in segments:
-        # metadata_json is a dict
         stored_meta = s.metadata_json or {}
-        
-        # Extract tags dict
-        # The parser stores tags as a dict inside the model dump.
-        # Check if 'tags' is a key in stored_meta
         tags_data = stored_meta.get("tags")
         
-        # Ensure we return valid TagModel objects if needed, o dicts? 
-        # Schema says: tags: Optional[Dict[str, TagModel]]
-        # Pydantic is smart enough to convert Dict[str, dict] to Dict[str, TagModel]
-        
-        # Construct response object
-        # We can use SegmentResponse.model_validate but we need to feed it the right dict
         seg_dict = {
             "id": s.id,
             "index": s.index,
@@ -133,7 +177,7 @@ def get_project_segments(project_id: str, db: Session = Depends(get_db)):
             "target_content": s.target_content,
             "status": s.status,
             "project_id": s.project_id,
-            "tags": tags_data # Inject extracted tags here
+            "tags": tags_data
         }
         response_list.append(seg_dict)
         
@@ -259,32 +303,53 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
         )
         reassembly_segments.append(seg_internal)
         
-    # 3. Path to original file
-    # We saved it as UPLOAD_DIR / {project.id}_{project.filename} ? 
-    # Let's check upload logic.
-    # "file_location = f"uploads/{file.filename}"" -> Wait, this might conflict if same filename used!
-    # We should have used ID. But let's check what we did.
-    # In 'create_upload_file': file_location = f"uploads/{file.filename}"
-    # This is a risk. But for now we assume it's there.
+    # 3. Path to original file (Source)
+    # We need to find the source file for this project
+    source_file_record = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id, 
+        ProjectFile.category == ProjectFileCategory.source.value
+    ).first()
+
+    if not source_file_record:
+        # Fallback to old behavior for migration or errors?
+        # Try to find file by hash or legacy methods if needed, but for new system:
+        raise HTTPException(status_code=404, detail="Original source file not found for project")
     
-    # Corrected input_path based on upload logic:
-    input_path = os.path.join(UPLOAD_DIR, f"{project.id}_{project.filename}")
-    if not os.path.exists(input_path):
-        # Fallback query: maybe we didn't save with project.id prefix?
-        # Ideally we should fix upload to be unique.
-        raise HTTPException(status_code=404, detail=f"Original file not found at {input_path}")
-        
+    # Check if file_path looks like a MinIO object path (no leading slash, etc) or absolute path
+    # New system uses object path. Old system used absolute path.
+    # Simple heuristic:
+    input_object_name = source_file_record.file_path
+    
+    # Temp input path
+    temp_input_path = os.path.join(UPLOAD_DIR, f"temp_export_in_{project_id}.docx")
+    
+    from ..storage import download_file, upload_file
+    
+    try:
+        download_file(input_object_name, temp_input_path)
+    except Exception as e:
+         # Try legacy local path check?
+         if os.path.exists(input_object_name):
+             # It was a local path
+             shutil.copy(input_object_name, temp_input_path)
+         else:
+             raise HTTPException(status_code=404, detail=f"Source file download failed: {e}")
+
     output_filename = f"translated_{project.filename}"
     output_path = os.path.join(UPLOAD_DIR, output_filename)
     
     # 4. Reassemble
     try:
-        reassemble_docx(input_path, output_path, reassembly_segments)
+        reassemble_docx(temp_input_path, output_path, reassembly_segments)
     except Exception as e:
         import traceback
         with open("export_error.log", "w") as f:
             f.write(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Reassembly failed: {str(e)}")
+    finally:
+        # Cleanup input temp
+        if os.path.exists(temp_input_path):
+            os.remove(temp_input_path)
     
     return FileResponse(output_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=output_filename)
 

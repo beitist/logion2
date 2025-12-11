@@ -1,15 +1,59 @@
 import React, { useState } from 'react'
-import { UploadView } from './components/UploadView'
+import { ProjectList } from './components/ProjectList'
+import { NewProjectModal } from './components/NewProjectModal'
 import { SplitView } from './components/SplitView'
 
 function App() {
   const [projectId, setProjectId] = useState(null)
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false)
 
-  if (!projectId) {
-    return <UploadView onUploadSuccess={setProjectId} />
+  // Navigate to Project
+  const handleSelectProject = (id) => {
+    setProjectId(id)
   }
 
-  return <SplitView projectId={projectId} />
+  // Handle Project Creation
+  const handleProjectCreated = (newProject) => {
+    setShowNewProjectModal(false)
+    setProjectId(newProject.id) // Auto-open the new project
+  }
+
+  // Back to Dashboard
+  const handleBack = () => {
+    setProjectId(null)
+  }
+
+  if (projectId) {
+    // Editor View
+    return (
+      <div className="h-screen flex flex-col">
+        <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-4">
+          <button onClick={handleBack} className="text-sm text-gray-500 hover:text-gray-900">&larr; Back to Projects</button>
+          {/* We could show project name here if we fetched it or passed it */}
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <SplitView projectId={projectId} />
+        </div>
+      </div>
+    )
+  }
+
+  // Dashboard View
+  return (
+    <>
+      <ProjectList
+        onSelectProject={handleSelectProject}
+        onNewProject={() => setShowNewProjectModal(true)}
+      />
+
+      {showNewProjectModal && (
+        <NewProjectModal
+          onClose={() => setShowNewProjectModal(false)}
+          onCreated={handleProjectCreated}
+        />
+      )}
+    </>
+  )
 }
 
 export default App

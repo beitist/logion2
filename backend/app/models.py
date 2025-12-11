@@ -21,15 +21,35 @@ class Project(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     filename = Column(String, nullable=False)
-    status = Column(String, default=ProjectStatus.processing.value) # Storing as string for simplicity with SQLite
+    name = Column(String, nullable=True) # Project Name
+    status = Column(String, default=ProjectStatus.processing.value) 
     created_at = Column(DateTime, default=datetime.utcnow)
     source_lang = Column(String, default="en")
     target_lang = Column(String, default="de")
     use_clean_template = Column(Boolean, default=False)
-    file_hash = Column(String, nullable=True) # Hash for duplicate detection
-    config = Column(JSON, nullable=True) # Extra config if needed
+    use_ai = Column(Boolean, default=False)
+    file_hash = Column(String, nullable=True) 
+    config = Column(JSON, nullable=True) 
 
     segments = relationship("Segment", back_populates="project", cascade="all, delete-orphan")
+    files = relationship("ProjectFile", back_populates="project", cascade="all, delete-orphan")
+
+class ProjectFileCategory(str, enum.Enum):
+    source = "source"
+    legal = "legal"
+    background = "background"
+
+class ProjectFile(Base):
+    __tablename__ = "project_files"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    category = Column(String, default=ProjectFileCategory.source.value)
+    filename = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="files")
 
 class Segment(Base):
     __tablename__ = "segments"
