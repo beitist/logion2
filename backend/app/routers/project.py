@@ -236,14 +236,14 @@ def export_project(project_id: str, db: Session = Depends(get_db)):
         
         # Use current target_content from DB (this has the user edits!)
         target_text = db_seg.target_content
-        if target_text is None:
-            target_text = db_seg.source_content # Fallback to source
+        # Fallback to source if target is None OR empty string (Draft/Untranslated)
+        if not target_text:
+            target_text = db_seg.source_content 
         else:
             # Cleanup Tiptap HTML
             # Tiptap usually wraps in <p>...</p>. We are injecting into an existing w:p.
             # We want to remove the outer <p> tags.
             # Simple check for now.
-            # Cleanup Tiptap HTML using BeautifulSoup to handle Spans and Nesting
             # Cleanup Tiptap HTML using BeautifulSoup to handle Spans and Nesting
             if target_text:
                 # 0. PRE-PROCESS: Protect existing <1> tags from BS4 escaping
@@ -383,6 +383,14 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Segment not found")
         
     project = db.query(Project).filter(Project.id == segment.project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Get settings from project config
+    config = project.config if project.config else {}
+    ai_settings = config.get("ai_settings", {})
+    threshold = float(ai_settings.get("similarity_threshold", 0.40))
+    model_name = ai_settings.get("model", "gemini-1.5-flash") # Default to Flash
     
     from ..rag import generate_segment_draft
     
@@ -391,12 +399,19 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     # But clean text is better for retrieval.
     # Let's keep source_content as is, `rag.py` logic calls `embed_content`.
     
+    # Read config
+    config = project.config or {}
+    ai_settings = config.get("ai_settings", {})
+    threshold = float(ai_settings.get("similarity_threshold", 0.4))
+    
     result = generate_segment_draft(
         segment_text=segment.source_content,
         source_lang=project.source_lang,
         target_lang=project.target_lang,
-        project_id=project.id,
-        db=db
+        project_id=str(project.id),
+        db=db,
+        threshold=threshold,
+        model_name=model_name
     )
     
     # Update Segment with Draft and Matches
@@ -405,41 +420,33 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     # If we overwrite `target_content`, user sees it immediately.
     segment.target_content = result["target_text"]
     
-    # Store context matches in metadata? Or we add a DB column?
-    # Adding a column `context_matches` (JSON) to Segment model is cleanest.
-    # But for now, let's put it in metadata_json to avoid migration if possible?
-    # Actually, adding a column is better.
-    # Wait, I can't add a column easily without migration script and ensuring it runs.
-    # I already modified models.py but didn't add context_matches column.
-    
     # Let's use metadata_json for now.
     current_meta = segment.metadata_json or {}
     current_meta['context_matches'] = result["context_matches"]
     segment.metadata_json = current_meta
     
-    # Do NOT set status to 'translated' yet? 
-    # Status 'draft' is correct.
-    
     db.commit()
     db.refresh(segment)
-    
-    # Construct response
-    # SegmentResponse expects 'context_matches'.
-    # We must map it from metadata_json if the schema demands it.
-    # Pydantic `from_attributes` works with columns/properties.
-    # I can add a property to the model, or just return a dict that matches schema.
-    
-    # To make it clean, let's modify the response manually or ensure the Schema reads from metadata.
-    # Pydantic v2 is strict.
-    # Let's just return the object and rely on pydantic.
-    # But Segment model doesn't have `context_matches` attribute.
-    # So we need to patch it or return a dict.
     
     resp_dict = segment.__dict__.copy()
     resp_dict['context_matches'] = result["context_matches"]
     resp_dict['metadata'] = segment.metadata_json # Alias for metadata_json if schema uses 'metadata'
     
     return resp_dict
+
+@router.post("/{project_id}/reingest")
+async def reingest_project_endpoint(project_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Triggers a full re-ingestion of the project.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    from ..rag import reingest_project
+    background_tasks.add_task(reingest_project, project_id)
+    
+    return {"message": "Re-ingestion started"}
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)):

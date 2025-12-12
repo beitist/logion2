@@ -78,3 +78,11 @@ export async function generateDraft(segmentId) {
     if (!res.ok) throw new Error("Failed to generate draft");
     return res.json();
 }
+
+export async function reingestProject(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/reingest`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to re-ingest project");
+    return res.json();
+}

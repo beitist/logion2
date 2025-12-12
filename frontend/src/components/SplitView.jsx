@@ -1,37 +1,62 @@
-
 import React, { useEffect, useState } from 'react';
-import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject } from "../api/client";
+import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
 
 // GLOBAL DEBUG FLAG
-const SHOW_DEBUG = true;
+// GLOBAL DEBUG FLAG REMOVED - now strict state controlled
+
+import { AISettingsTab } from './AISettingsTab';
+
+import { Terminal, Bug } from 'lucide-react';
+import { LogConsole } from './LogConsole';
 
 export function SplitView({ projectId }) {
+    // ... existing state ...
     const [segments, setSegments] = useState([]);
-    // ... (rest of imports/state)
     const [project, setProject] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [savingId, setSavingId] = useState(null); // ID of segment currently saving
+    const [savingId, setSavingId] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
-    const [aiInstructions, setAiInstructions] = useState(["", "", ""]); // 3 fields
+    const [activeSettingsTab, setActiveSettingsTab] = useState('files'); // 'files' or 'ai'
 
+    // Console & Debug State
+    const [showConsole, setShowConsole] = useState(false);
+    const [showDebug, setShowDebug] = useState(false); // Toggle for per-segment debug info
+    const [logs, setLogs] = useState([]);
+
+    const log = (message, type = 'info', details = null) => {
+        setLogs(prev => [...prev, {
+            time: new Date().toLocaleTimeString(),
+            message,
+            type,
+            details
+        }]);
+        // Auto-open console on error? Or just let user see notification?
+        // Let's keep it manual for now to not be annoying.
+    };
+
+    // ... useEffect loadData ...
     useEffect(() => {
         const loadData = async () => {
-            // ... existing load ...
             try {
+                setLoading(true);
                 const p = await getProject(projectId);
                 setProject(p);
                 const s = await getSegments(projectId);
                 setSegments(s);
 
-                // Trigger AI Drafts for first 10 EMPTY segments
-                if (s && s.length > 0) {
-                    const emptySegs = s.slice(0, 10).filter(seg => !seg.target_content);
+                // Trigger AI Drafts for configured number of segments
+                const config = p.config || {};
+                const aiSettings = config.ai_settings || {};
+                const preTranslateCount = parseInt(aiSettings.pre_translate_count) || 0;
+
+                if (s && s.length > 0 && preTranslateCount > 0) {
+                    const emptySegs = s.filter(seg => !seg.target_content).slice(0, preTranslateCount);
                     emptySegs.forEach(async (seg) => {
                         try {
                             // We use the new generateDraft API
                             // This expects we imported it!
-                            const { generateDraft } = await import("../api/client");
+                            // const { generateDraft } = await import("../api/client"); // Already imported at top
                             const updated = await generateDraft(seg.id);
 
                             // Update local state smoothly
@@ -125,7 +150,7 @@ export function SplitView({ projectId }) {
         // CRITICAL FIX: Tiptap/Browser may reorder attributes (e.g. data-id before data-type).
         // Old Regex required specific order. New Regex matches SPAN tag and parses attributes manually.
         serialized = serialized.replace(/<span([^>]+)><\/span>/g, (match, attrs) => {
-            // Check if it's our tag node
+            // Check if it is a tag node
             if (!attrs.includes('data-type="tag-node"')) return match;
 
             // Extract ID
@@ -229,23 +254,26 @@ export function SplitView({ projectId }) {
     };
 
     const handleUpdateSettings = async (index, value) => {
-        const newInstructions = [...aiInstructions];
-        newInstructions[index] = value;
-        setAiInstructions(newInstructions);
+        // This function is not used anymore as AISettingsTab handles its own state and updates
+        // Keeping it for now in case it's re-purposed.
+        // const newInstructions = [...aiInstructions];
+        // newInstructions[index] = value;
+        // setAiInstructions(newInstructions);
     };
 
     const saveSettings = async () => {
-        if (!project) return;
-        try {
-            const config = { ...(project.config || {}), ai_instructions: aiInstructions };
-            await updateProject(projectId, { config });
-            // console.log("Settings saved");
-            // Update local project state
-            setProject(prev => ({ ...prev, config }));
-        } catch (err) {
-            console.error("Failed to save settings", err);
-            alert("Failed to save settings");
-        }
+        // This function is not used anymore as AISettingsTab handles its own state and updates
+        // if (!project) return;
+        // try {
+        //     const config = { ...(project.config || {}), ai_instructions: aiInstructions };
+        //     await updateProject(projectId, { config });
+        //     // console.log("Settings saved");
+        //     // Update local project state
+        //     setProject(prev => ({ ...prev, config }));
+        // } catch (err) {
+        //     console.error("Failed to save settings", err);
+        //     alert("Failed to save settings");
+        // }
     };
 
     const handleDeleteProject = async () => {
@@ -379,99 +407,172 @@ export function SplitView({ projectId }) {
         return Array.from(uniqueComments.values());
     };
 
-    if (loading) return <div className="p-8 text-center">Loading...</div>;
+    // Handler for manual AI Draft triggers
+    const handleAiDraft = async (segmentId) => {
+        const seg = segments.find(s => s.id === segmentId);
+        log(`Generating draft for segment #${seg?.index + 1}...`, 'info', { segmentId });
+        try {
+            const start = performance.now();
+            const updated = await generateDraft(segmentId);
+            const duration = Math.round(performance.now() - start);
+
+            log(`Draft generated in ${duration}ms`, 'success', {
+                target_len: updated.target_content?.length,
+                matches: updated.context_matches?.length || 0
+            });
+
+            setSegments(prev => prev.map(s =>
+                s.id === segmentId ? { ...s, ...updated } : s
+            ));
+            return updated.target_content;
+        } catch (err) {
+            log("AI Draft failed", 'error', err.message);
+            console.error("AI Draft failed", err);
+            alert("AI Draft creation failed");
+            throw err;
+        }
+    };
+
+    if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
+
+    // Derive aiSettings from project config for TiptapEditor
+    const aiSettings = project?.config?.ai_settings || {};
 
     return (
         <div className="h-screen flex flex-col">
             <header className="p-4 bg-gray-100 border-b flex justify-between items-center">
-                <h1 className="font-bold">Project: {project?.filename}</h1>
+                <h1 className="font-bold text-lg text-gray-800 flex items-center gap-2">
+                    <span className="opacity-50">Project:</span> {project?.name || project?.filename}
+                </h1>
                 <div className="flex gap-2">
                     <button
+                        onClick={() => setShowConsole(!showConsole)}
+                        className={`p-2 rounded hover:bg-gray-200 transition-colors ${showConsole ? 'bg-gray-800 text-green-400' : 'text-gray-600'}`}
+                        title="Toggle Hacker Console"
+                    >
+                        <Terminal size={18} />
+                    </button>
+                    <button
+                        onClick={() => setShowDebug(!showDebug)}
+                        className={`p-2 rounded hover:bg-gray-200 transition-colors ${showDebug ? 'bg-red-100 text-red-600' : 'text-gray-400'}`}
+                        title="Toggle Debug Info"
+                    >
+                        <Bug size={18} />
+                    </button>
+                    <div className="w-px h-6 bg-gray-300 mx-1 self-center"></div>
+
+                    <button
                         onClick={() => setShowSettings(true)}
-                        className="bg-gray-200 text-gray-700 px-3 py-2 rounded hover:bg-gray-300"
+                        className="bg-gray-200 text-gray-700 px-3 py-2 rounded hover:bg-gray-300 flex items-center gap-2"
                         title="Project Settings"
                     >
                         ⚙️ Settings
                     </button>
+                    {/* ... Export button ... */}
                     <button
                         onClick={handleExport}
-                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium shadow-sm transition-colors"
+                    >
                         Export DOCX
                     </button>
                 </div>
 
                 {/* Settings Modal */}
                 {showSettings && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                        <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl h-[80vh] flex flex-col">
-                            <h2 className="text-xl font-bold mb-4">Project Files</h2>
-
-                            <div className="flex-1 overflow-hidden grid grid-cols-3 gap-4">
-                                {/* Window 1: Source Files */}
-                                <div className="border rounded-lg bg-gray-50 flex flex-col">
-                                    <h3 className="p-3 bg-white border-b font-medium text-gray-700 flex items-center gap-2">
-                                        📄 Source Files
-                                    </h3>
-                                    <div className="p-3 overflow-y-auto flex-1 space-y-2">
-                                        {project.files && project.files.filter(f => f.category === 'source').length > 0 ? (
-                                            project.files.filter(f => f.category === 'source').map(f => (
-                                                <div key={f.id} className="text-sm bg-white p-2 rounded shadow-sm border border-gray-200 truncate" title={f.filename}>
-                                                    {f.filename}
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <p className="text-gray-400 text-sm italic">No source files</p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Window 2: Legal/Reference Files */}
-                                <div className="border rounded-lg bg-indigo-50 flex flex-col">
-                                    <h3 className="p-3 bg-white border-b font-medium text-indigo-700 flex items-center gap-2">
-                                        ⚖️ Legal / Reference
-                                    </h3>
-                                    <div className="p-3 overflow-y-auto flex-1 space-y-2">
-                                        {project.files && project.files.filter(f => f.category === 'legal').length > 0 ? (
-                                            project.files.filter(f => f.category === 'legal').map(f => (
-                                                <div key={f.id} className="text-sm bg-white p-2 rounded shadow-sm border border-indigo-100 truncate text-indigo-700" title={f.filename}>
-                                                    {f.filename}
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <p className="text-indigo-300 text-sm italic">No legal files</p>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Window 3: Background Files */}
-                                <div className="border rounded-lg bg-blue-50 flex flex-col">
-                                    <h3 className="p-3 bg-white border-b font-medium text-blue-700 flex items-center gap-2">
-                                        📚 Background / Context
-                                    </h3>
-                                    <div className="p-3 overflow-y-auto flex-1 space-y-2">
-                                        {project.files && project.files.filter(f => f.category === 'background').length > 0 ? (
-                                            project.files.filter(f => f.category === 'background').map(f => (
-                                                <div key={f.id} className="text-sm bg-white p-2 rounded shadow-sm border border-blue-100 truncate text-blue-700" title={f.filename}>
-                                                    {f.filename}
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <p className="text-blue-300 text-sm italic">No background files</p>
-                                        )}
-                                    </div>
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden">
+                            <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                                <h2 className="text-xl font-bold text-gray-800">Project Settings</h2>
+                                <div className="flex gap-1 bg-gray-200 p-1 rounded-lg">
+                                    <button
+                                        onClick={() => setActiveSettingsTab('files')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'files' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        Files
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveSettingsTab('ai')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        AI & RAG
+                                    </button>
                                 </div>
                             </div>
 
-                            <div className="border-t pt-4 mt-4 flex justify-between items-center">
+                            <div className="flex-1 overflow-hidden p-6 bg-white">
+                                {activeSettingsTab === 'files' ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-full">
+                                        {/* Window 1: Source Files */}
+                                        <div className="border border-gray-200 rounded-xl bg-gray-50/50 flex flex-col overflow-hidden">
+                                            <h3 className="p-3 bg-white border-b border-gray-100 font-medium text-gray-700 flex items-center gap-2 text-sm uppercase tracking-wide">
+                                                📄 Source Files
+                                            </h3>
+                                            <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                                                {project.files && project.files.filter(f => f.category === 'source').length > 0 ? (
+                                                    project.files.filter(f => f.category === 'source').map(f => (
+                                                        <div key={f.id} className="text-sm bg-white p-2.5 rounded border border-gray-200 shadow-sm truncate text-gray-700 font-mono" title={f.filename}>
+                                                            {f.filename}
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <p className="text-gray-400 text-sm italic p-2">No source files</p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Window 2: Legal/Reference Files */}
+                                        <div className="border border-indigo-100 rounded-xl bg-indigo-50/30 flex flex-col overflow-hidden">
+                                            <h3 className="p-3 bg-white border-b border-indigo-50 font-medium text-indigo-700 flex items-center gap-2 text-sm uppercase tracking-wide">
+                                                ⚖️ Legal / Reference
+                                            </h3>
+                                            <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                                                {project.files && project.files.filter(f => f.category === 'legal').length > 0 ? (
+                                                    project.files.filter(f => f.category === 'legal').map(f => (
+                                                        <div key={f.id} className="text-sm bg-white p-2.5 rounded border border-indigo-100 shadow-sm truncate text-indigo-700 font-mono" title={f.filename}>
+                                                            {f.filename}
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <p className="text-indigo-300 text-sm italic p-2">No legal files</p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Window 3: Background Files */}
+                                        <div className="border border-blue-100 rounded-xl bg-blue-50/30 flex flex-col overflow-hidden">
+                                            <h3 className="p-3 bg-white border-b border-blue-50 font-medium text-blue-700 flex items-center gap-2 text-sm uppercase tracking-wide">
+                                                📚 Background
+                                            </h3>
+                                            <div className="p-3 overflow-y-auto flex-1 space-y-2">
+                                                {project.files && project.files.filter(f => f.category === 'background').length > 0 ? (
+                                                    project.files.filter(f => f.category === 'background').map(f => (
+                                                        <div key={f.id} className="text-sm bg-white p-2.5 rounded border border-blue-100 shadow-sm truncate text-blue-700 font-mono" title={f.filename}>
+                                                            {f.filename}
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <p className="text-blue-300 text-sm italic p-2">No background files</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="h-full overflow-y-auto">
+                                        <AISettingsTab project={project} onUpdate={setProject} />
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
                                 <button
                                     onClick={handleDeleteProject}
-                                    className="text-red-500 text-sm hover:underline"
+                                    className="text-red-500 text-sm hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50 transition-colors"
                                 >
                                     🗑️ Delete Project
                                 </button>
                                 <button
                                     onClick={() => setShowSettings(false)}
-                                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                                    className="bg-gray-800 text-white px-6 py-2 rounded-lg hover:bg-black transition-all shadow-sm font-medium"
                                 >
                                     Close
                                 </button>
@@ -481,21 +582,25 @@ export function SplitView({ projectId }) {
                 )}
             </header>
 
-            <div className="flex-1 overflow-auto p-4">
-                <div className="max-w-6xl mx-auto space-y-4">
+            <div className="flex-1 overflow-auto p-4 bg-gray-50/50">
+                <div className="max-w-7xl mx-auto space-y-4">
                     {segments.map((seg) => {
                         const comments = getSegmentComments(seg.tags);
+                        const hasContext = (seg.context_matches?.length > 0 || seg.metadata?.context_matches?.length > 0);
+
                         return (
-                            <div key={seg.id} className="grid grid-cols-2 gap-4 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                            <div key={seg.id} className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
                                 {/* Source Column */}
-                                <div className="w-1/2 p-4 bg-gray-50 rounded text-sm leading-relaxed border-r border-gray-100 flex flex-col">
+                                <div className="p-5 bg-gray-50/80 rounded-l-xl text-sm leading-relaxed border-r border-gray-100 flex flex-col relative">
+                                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">#{seg.index + 1}</div>
+
                                     {/* Source Text */}
-                                    <div className="flex-grow" dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content, seg.tags) }} />
+                                    <div className="flex-grow font-source" dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content, seg.tags) }} />
 
                                     {/* Comments Section */}
                                     {comments.length > 0 && (
-                                        <div className="mt-4 pt-3 border-t border-gray-200 text-xs text-gray-600 bg-yellow-50 -mx-4 -mb-4 p-4">
-                                            <div className="font-semibold mb-1 flex items-center gap-2">
+                                        <div className="mt-4 pt-3 border-t border-gray-200 text-xs text-gray-600 bg-yellow-50 -mx-5 -mb-5 p-4">
+                                            <div className="font-semibold mb-1 flex items-center gap-2 text-yellow-700">
                                                 <span>💬 Comments ({comments.length})</span>
                                             </div>
                                             <ul className="space-y-1 list-disc list-inside">
@@ -507,89 +612,104 @@ export function SplitView({ projectId }) {
                                     )}
 
                                     {/* DEBUG: Show raw source content */}
-                                    {SHOW_DEBUG && (
-                                        <div className="mt-4 p-1 bg-red-50 text-[10px] font-mono text-red-500 border border-red-200 rounded break-all">
-                                            DEBUG Source-DB: {seg.source_content}
+                                    {showDebug && (
+                                        <div className="mt-4 p-1 bg-red-50 text-[10px] font-mono text-red-500 border border-red-200 rounded break-all opacity-50 hover:opacity-100 transition-opacity">
+                                            DEBUG Source-DB: {seg.metadata_json?.tags ? "HAS TAGS" : "NO TAGS"}
                                         </div>
                                     )}
 
-                                    {/* Context Panel (New) */}
-                                    {/* Check metadata for matches if schema/api provides it */}
-                                    {(seg.context_matches || (seg.metadata && seg.metadata.context_matches)) && (
-                                        <div className="mt-6 border-t pt-4">
-                                            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Context / References</h4>
+                                    {/* Context Panel (Matches) */}
+                                    {hasContext && (
+                                        <div className="mt-6 border-t border-gray-200 pt-4">
+                                            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                                <span className="w-1 h-1 bg-gray-400 rounded-full"></span> AI Context / References
+                                            </h4>
                                             <div className="space-y-3">
-                                                {(seg.context_matches || seg.metadata.context_matches).map((match, idx) => (
-                                                    <div
-                                                        key={idx}
-                                                        className={`p-3 rounded text-sm border-l-4 ${match.type === 'mandatory'
-                                                            ? 'border-red-500 bg-red-50'
-                                                            : 'border-blue-400 bg-blue-50'
-                                                            }`}
-                                                    >
-                                                        <div className="flex justify-between items-start mb-1">
-                                                            <span className={`text-xs font-bold uppercase ${match.type === 'mandatory' ? 'text-red-700' : 'text-blue-700'
-                                                                }`}>
-                                                                [{match.type === 'mandatory' ? 'Mandatory' : 'Optional'}] {idx + 1}
-                                                            </span>
-                                                            <span className="text-[10px] text-gray-500 truncate max-w-[120px]" title={match.filename}>
-                                                                {match.filename}
-                                                            </span>
+                                                {(seg.context_matches || seg.metadata.context_matches).map((match, idx) => {
+                                                    // Determine styles based on match type
+                                                    let borderClass = 'border-l-4 border-gray-300';
+                                                    let bgClass = 'bg-gray-50';
+                                                    let textClass = 'text-gray-600';
+                                                    let label = 'Optional';
+
+                                                    if (match.type === 'mandatory') {
+                                                        borderClass = 'border-l-4 border-red-500';
+                                                        bgClass = 'bg-red-50/50';
+                                                        textClass = 'text-red-700';
+                                                        label = 'Mandatory';
+                                                    } else if (match.type === 'internal') {
+                                                        borderClass = 'border-l-4 border-teal-500';
+                                                        bgClass = 'bg-teal-50/50';
+                                                        textClass = 'text-teal-700';
+                                                        label = 'Internal Match';
+                                                    } else {
+                                                        borderClass = 'border-l-4 border-blue-400';
+                                                        bgClass = 'bg-blue-50/50';
+                                                        textClass = 'text-blue-700';
+                                                        label = 'Optional';
+                                                    }
+
+                                                    return (
+                                                        <div key={idx} className={`p-3 rounded-r-lg text-sm ${borderClass} ${bgClass} transition-colors`}>
+                                                            <div className="flex justify-between items-start mb-1.5">
+                                                                <span className={`text-[10px] font-bold uppercase tracking-wider ${textClass}`}>
+                                                                    {label}
+                                                                </span>
+                                                                <span className="text-[10px] text-gray-400 truncate max-w-[120px] font-mono" title={match.filename}>
+                                                                    {match.filename}
+                                                                </span>
+                                                            </div>
+                                                            <div className="text-gray-800 leading-snug text-[13px]">
+                                                                {match.content}
+                                                            </div>
                                                         </div>
-                                                        <div className="text-gray-800 leading-snug">
-                                                            {match.content}
-                                                        </div>
-                                                    </div>
-                                                ))}
+                                                    )
+                                                })}
                                             </div>
                                         </div>
                                     )}
                                 </div>
 
                                 {/* Target Column */}
-                                <div className="p-4 bg-white relative group">
-                                    <div className="text-xs text-gray-400 font-mono mb-1 uppercase tracking-wider flex justify-between items-center">
+                                <div className="p-5 bg-white rounded-r-xl flex flex-col relative group">
+                                    <div className="text-xs text-gray-400 font-mono mb-2 uppercase tracking-wider flex justify-between items-center select-none">
                                         <div className="flex items-center gap-2">
-                                            <span>Target (DE)</span>
+                                            <span className="font-bold text-gray-300 group-hover:text-indigo-400 transition-colors">Target (DE)</span>
                                             {/* Context Badges */}
                                             {seg.metadata && (
-                                                <>
+                                                <div className="flex gap-1">
                                                     {seg.metadata.type === 'header' && (
-                                                        <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-purple-200">
-                                                            HEADER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index} ` : ''}
-                                                        </span>
-                                                    )}
-                                                    {seg.metadata.type === 'footer' && (
-                                                        <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-purple-200">
-                                                            FOOTER {seg.metadata.section_index !== undefined ? `#${seg.metadata.section_index} ` : ''}
-                                                        </span>
+                                                        <span className="bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded text-[9px] font-bold border border-purple-100">H</span>
                                                     )}
                                                     {(seg.metadata.type === 'table' || seg.metadata.child_type === 'table_cell') && (
-                                                        <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-blue-200">
-                                                            TABLE [{seg.metadata.table_index},{seg.metadata.row_index},{seg.metadata.cell_index}]
-                                                        </span>
+                                                        <span className="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded text-[9px] font-bold border border-blue-100">Tb</span>
                                                     )}
-                                                </>
+                                                </div>
                                             )}
                                         </div>
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] ${seg.status === 'draft' ? 'bg-yellow-100 text-yellow-700' :
-                                            seg.status === 'translated' ? 'bg-green-100 text-green-700' : 'bg-gray-100'
+                                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${seg.status === 'draft' ? 'bg-yellow-50 text-yellow-600 border-yellow-100' :
+                                            seg.status === 'translated' ? 'bg-green-50 text-green-600 border-green-100' : 'bg-gray-50 border-gray-100'
                                             }`}>
                                             {seg.status}
                                         </span>
                                     </div>
-                                    <TiptapEditor
-                                        content={hydrateContent(seg.target_content, seg.tags)}
-                                        segmentId={seg.id}
-                                        availableTags={seg.tags}
-                                        contextMatches={seg.context_matches || (seg.metadata && seg.metadata.context_matches)}
-                                        onSave={handleSave}
-                                    />
+
+                                    <div className="flex-grow">
+                                        <TiptapEditor
+                                            content={hydrateContent(seg.target_content, seg.tags)}
+                                            segmentId={seg.id}
+                                            availableTags={seg.tags}
+                                            contextMatches={seg.context_matches || (seg.metadata && seg.metadata.context_matches)}
+                                            onSave={handleSave}
+                                            aiSettings={aiSettings}
+                                            onAiDraft={handleAiDraft}
+                                        />
+                                    </div>
 
                                     {/* DEBUG: Show raw target content sent to backend */}
-                                    {SHOW_DEBUG && (
-                                        <div className="mt-1 p-1 bg-slate-100 text-[10px] font-mono text-slate-500 border border-slate-200 rounded break-all">
-                                            DEBUG Target-DB: {seg.target_content}
+                                    {showDebug && (
+                                        <div className="mt-2 text-[9px] text-gray-300 font-mono break-all opacity-0 group-hover:opacity-50 transition-opacity">
+                                            DB: {seg.target_content || '(empty)'}
                                         </div>
                                     )}
                                 </div>
@@ -598,6 +718,14 @@ export function SplitView({ projectId }) {
                     })}
                 </div>
             </div>
+
+            {/* Hacker Console */}
+            <LogConsole
+                logs={logs}
+                isOpen={showConsole}
+                onClose={() => setShowConsole(false)}
+                onClear={() => setLogs([])}
+            />
         </div>
     );
 }

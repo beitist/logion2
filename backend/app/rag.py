@@ -13,17 +13,13 @@ load_dotenv()
 # Configure Gemini
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Helper for basic docx text extraction (simplified, no need for full parser overhead for RAG)
 def extract_text_from_docx(docx_path):
     try:
         text_content = []
         with zipfile.ZipFile(docx_path) as z:
             xml_content = z.read("word/document.xml")
             tree = ElementTree.fromstring(xml_content)
-            # Namespace map usually needed
             NS = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-            
-            # Iterate paragraphs
             for p in tree.iter(f"{NS}p"):
                 texts = [node.text for node in p.iter(f"{NS}t") if node.text]
                 if texts:
@@ -34,15 +30,9 @@ def extract_text_from_docx(docx_path):
         return ""
 
 def clean_text(text):
-    # Remove excessive whitespace
     return re.sub(r'\s+', ' ', text).strip()
 
 def chunk_text(text, chunk_size=500, overlap=50):
-    """
-    Simple sliding window chunker.
-    Ideally we'd split by sentences, but for now fixed char/token count approx.
-    Using characters for simplicity (approx 4 chars/token).
-    """
     chunks = []
     if not text:
         return chunks
@@ -50,7 +40,6 @@ def chunk_text(text, chunk_size=500, overlap=50):
     start = 0
     text_len = len(text)
     
-    # Approx 2000 chars ~ 500 tokens
     CHAR_CHUNK = chunk_size * 4 
     CHAR_OVERLAP = overlap * 4
     
@@ -58,68 +47,108 @@ def chunk_text(text, chunk_size=500, overlap=50):
         end = min(start + CHAR_CHUNK, text_len)
         chunk = text[start:end]
         
-        # Try to break at a period or newline to be cleaner
-        last_period = chunk.rfind('.')
-        if last_period > CHAR_CHUNK * 0.5: # Only if period is in second half
-            end = start + last_period + 1
-            chunk = text[start:end]
+        if end < text_len:
+            last_period = chunk.rfind('.')
+            if last_period > CHAR_CHUNK * 0.5:
+                end = start + last_period + 1
+                chunk = text[start:end]
             
         chunks.append(chunk)
-        start = end - CHAR_OVERLAP 
+
+        if end >= text_len:
+            break
+            
+        step = end - CHAR_OVERLAP
+        if step <= start:
+             start = start + 1
+        else:
+             start = step
         
     return chunks
 
 from .database import SessionLocal
 
+def reingest_project(project_id: str):
+    """
+    Clears existing RAG vectors and re-runs ingestion.
+    """
+    db = SessionLocal()
+    try:
+        # 1. Clear existing chunks
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return
+            
+        # Delete chunks for this project's files
+        # Find all file IDs
+        file_ids = db.query(ProjectFile.id).filter(ProjectFile.project_id == project_id).all()
+        file_ids = [f[0] for f in file_ids]
+        
+        if file_ids:
+            db.query(ContextChunk).filter(ContextChunk.file_id.in_(file_ids)).delete(synchronize_session=False)
+            db.commit()
+            
+        # 2. Reset log
+        project.ingestion_logs = []
+        project.rag_status = "created"
+        db.commit()
+        db.close()
+        
+        # 3. Call Ingest
+        ingest_project_files(project_id)
+        
+    except Exception as e:
+        print(f"Re-Ingest Error: {e}")
+
 def ingest_project_files(project_id: str):
     """
     Task to be run in background.
-    1. Fetch all 'legal' and 'background' files for the project.
-    2. Extract text -> Chunk -> Embed -> Store.
-    3. Update Project rag_status.
     """
     db = SessionLocal()
     
     def log_msg(msg: str):
         print(msg)
         try:
-             # Refresh log list and append
-             # Note: Postgres JSON append is tricky with SQLAlchemy if not using specific ops.
-             # Easiest: read, append, write. (Race condition possible but unlikely for single writer)
              p = db.query(Project).filter(Project.id == project_id).first()
              current_logs = list(p.ingestion_logs) if p.ingestion_logs else []
+             from datetime import datetime
              current_logs.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] {msg}")
              p.ingestion_logs = current_logs
              db.commit()
         except Exception as e:
              print(f"Log error: {e}")
 
-    from datetime import datetime
-    
     try:
         log_msg(f"Starting analysis for project {project_id}")
         
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
-            print(f"Project {project_id} not found")
             return
 
         project.rag_status = "ingesting"
         db.commit()
     
-        # Get files that are NOT source
+        # Determine strict defaults
+        categories_to_ingest = [ProjectFileCategory.legal.value, ProjectFileCategory.background.value]
+        
+        # Check Project Config for 'include_source_rag'
+        # Default: True? Plan said Internal Fuzzy Match is useful.
+        # But let's check config if present, or existing setting.
+        # Assuming user defaulted to Yes for now based on prompt.
+        categories_to_ingest.append(ProjectFileCategory.source.value)
+        
         target_files = db.query(ProjectFile).filter(
             ProjectFile.project_id == project_id,
-            ProjectFile.category.in_([ProjectFileCategory.legal.value, ProjectFileCategory.background.value])
+            ProjectFile.category.in_(categories_to_ingest)
         ).all()
         
-        log_msg(f"Found {len(target_files)} reference files to process.")
+        log_msg(f"Found {len(target_files)} files to process (Source/Legal/Background).")
 
         total_chunks = 0
         BATCH_SIZE = 100
         
         for file_record in target_files:
-            log_msg(f"Processing file: {file_record.filename}...")
+            log_msg(f"Processing file: {file_record.filename} ({file_record.category})...")
             
             # 1. Download
             temp_path = f"temp_rag_{file_record.id}_{file_record.filename}"
@@ -150,29 +179,35 @@ def ingest_project_files(project_id: str):
                 # 4. Embed & Store in batches
                 for i in range(0, len(chunks), BATCH_SIZE):
                     batch = chunks[i : i + BATCH_SIZE]
+                    # log_msg(f"Embedding batch {i}...")
                     
-                    # Google Embed Call
-                    result = genai.embed_content(
-                        model='models/text-embedding-004',
-                        content=batch,
-                        task_type="retrieval_document",
-                        title=file_record.filename
-                    )
-                    
-                    embeddings = result['embedding']
-                    
-                    db_chunks = []
-                    for content, vector in zip(batch, embeddings):
-                        db_chunks.append(ContextChunk(
-                            file_id=file_record.id,
-                            content=content,
-                            embedding=vector
-                        ))
-                    
-                    db.add_all(db_chunks)
-                    db.commit() 
-                    total_chunks += len(batch)
-                    log_msg(f"Embedded batch {i // BATCH_SIZE + 1} ({len(batch)} vectors stored).")
+                    try:
+                        result = genai.embed_content(
+                            model='models/text-embedding-004',
+                            content=batch,
+                            task_type="retrieval_document",
+                            title=file_record.filename
+                        )
+                        
+                        embeddings = result['embedding']
+                        
+                        db_chunks = []
+                        for content, vector in zip(batch, embeddings):
+                            db_chunks.append(ContextChunk(
+                                file_id=file_record.id,
+                                content=content,
+                                embedding=vector
+                            ))
+                        
+                        db.add_all(db_chunks)
+                        db.commit() 
+                        total_chunks += len(batch)
+                        log_msg(f"Stored batch {i // BATCH_SIZE + 1} ({len(batch)} vectors).")
+                        
+                    except Exception as api_err:
+                        log_msg(f"GOOGLE API ERROR: {str(api_err)}")
+                        # Don't crash entire process, try next batch?
+                        continue
 
             except Exception as e:
                 log_msg(f"ERROR processing {file_record.filename}: {e}")
@@ -181,19 +216,11 @@ def ingest_project_files(project_id: str):
                     os.remove(temp_path)
 
         project.rag_status = "ready"
-        log_msg(f"RAG READY. Total knowledge base: {total_chunks} vectors.")
+        log_msg(f"RAG READY. Knowledge base refreshed: {total_chunks} vectors.")
         db.commit()
 
     except Exception as e:
         log_msg(f"FATAL ERROR: {e}")
-        try:
-             project.rag_status = "error"
-             db.commit()
-        except:
-             pass
-
-    except Exception as e:
-        print(f"Fatal RAG error: {e}")
         try:
              project.rag_status = "error"
              db.commit()
@@ -204,9 +231,14 @@ def ingest_project_files(project_id: str):
 
 # --- Search Logic ---
 
-def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=3):
+def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=5, threshold=0.4):
     """
     Retrieves chunks relevant to the segment.
+    Filters by similarity (1 - cosine_distance).
+    0.0 = no similarity, 1.0 = identical.
+    Wait: pgvector cosine_distance is 0 for identical, 1 for opposite?
+    pgvector: <=> operator is Cosine Distance. (1 - Cosine Similarity).
+    So if user wants threshold 0.8 Similarity, that means Distance < 0.2.
     """
     if not segment_text or len(segment_text) < 5:
         return []
@@ -221,10 +253,16 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     except Exception as e:
         print(f"Embedding error: {e}")
         return []
+        
+    # Convert 'Similarity Threshold' (0.0-1.0) to 'Distance Limit' (0.0-2.0)
+    # Higher similarity = Lower distance.
+    # threshold 0.8 means distance must be < 0.2
+    distance_limit = 1.0 - threshold
     
     # 2. Search
     results = db.query(ContextChunk, ProjectFile).join(ProjectFile)\
         .filter(ProjectFile.project_id == project_id)\
+        .filter(ContextChunk.embedding.cosine_distance(query_vector) < distance_limit)\
         .order_by(ContextChunk.embedding.cosine_distance(query_vector))\
         .limit(limit)\
         .all()
@@ -232,7 +270,8 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     structured_results = []
     for chunk, file in results:
         # Determine strictness based on category
-        match_type = "mandatory" if file.category == "legal" else "optional"
+        match_type = "mandatory" if file.category == "legal" else \
+                     "internal" if file.category == "source" else "optional"
         
         structured_results.append({
             "id": chunk.id,
@@ -244,21 +283,18 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         
     return structured_results
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-1.5-flash"):
     """
     Generates a draft translation using RAG context.
     Returns { target_text: str, context_matches: list }
     """
     
     # 1. Retrieve Context
-    matches = search_context_for_segment(segment_text, project_id, db)
+    matches = search_context_for_segment(segment_text, project_id, db, threshold=threshold)
     
     # 2. Construct Prompt
-    # We want to force usage of mandatory terms if applicable.
-    # Since we retrieve CHUNKS (paragraphs), we don't have exact term-to-term maps unless we extracted them.
-    # We pass the chunks as "Reference Material".
-    
     mandatory_context = "\n".join([f"- {m['content']} (Source: {m['filename']})" for m in matches if m['type'] == 'mandatory'])
+    internal_context = "\n".join([f"- {m['content']} (Source: {m['filename']})" for m in matches if m['type'] == 'internal']) # Source file self-matches
     optional_context = "\n".join([f"- {m['content']} (Source: {m['filename']})" for m in matches if m['type'] == 'optional'])
     
     prompt = f"""
@@ -270,6 +306,7 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     Instructions:
     - Maintain the tone and style of the input.
     - PREFER terminology found in the MANDATORY REFERENCES below.
+    - Check INTERNAL CONSISTENCY with other source segments if provided.
     - Use OPTIONAL REFERENCES for style/context inspiration.
     - Return ONLY the translated text, no explanations.
     - Preserve XML tags like <1>...</1> exactly if present.
@@ -279,17 +316,21 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     if mandatory_context:
         prompt += f"\nMANDATORY REFERENCES (Must follow terminology):\n{mandatory_context}\n"
         
+    if internal_context:
+        prompt += f"\nINTERNAL CONTEXT (Previous/Similar source segments):\n{internal_context}\n"
+
     if optional_context:
         prompt += f"\nOPTIONAL REFERENCES (Context/Inspiration):\n{optional_context}\n"
         
     # 3. Call Gemini
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # model_name passed from caller (config)
+        model = genai.GenerativeModel(model_name)
         response = model.generate_content(prompt)
         draft = response.text.strip()
     except Exception as e:
         print(f"Generation error: {e}")
-        draft = "" # Fail gracefully
+        draft = "" 
         
     return {
         "target_text": draft,

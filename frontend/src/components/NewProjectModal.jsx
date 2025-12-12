@@ -139,7 +139,14 @@ export function NewProjectModal({ onClose, onCreated }) {
                         </div>
                     </div>
 
-                    <div className="p-4 border-t border-gray-800 bg-gray-950 flex justify-end">
+                    <div className="p-4 border-t border-gray-800 bg-gray-950 flex justify-between">
+                        <button
+                            onClick={() => onCreated(createdProject)}
+                            className="px-4 py-2 text-xs font-mono text-gray-500 hover:text-gray-300 transition-colors"
+                        >
+                            [ ESCAPE / BACKGROUND ]
+                        </button>
+
                         <button
                             onClick={() => onCreated(createdProject)}
                             disabled={ragStatus !== 'ready' && ragStatus !== 'error'}

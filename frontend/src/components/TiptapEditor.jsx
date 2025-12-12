@@ -112,7 +112,15 @@ const MenuBar = ({ editor, availableTags }) => {
     )
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft }) {
+    const aiSettingsRef = React.useRef(aiSettings);
+    const onAiDraftRef = React.useRef(onAiDraft);
+
+    useEffect(() => {
+        aiSettingsRef.current = aiSettings;
+        onAiDraftRef.current = onAiDraft;
+    }, [aiSettings, onAiDraft]);
+
     const editor = useEditor({
         extensions: [
             StarterKit,
@@ -145,6 +153,19 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false
                         },
+                        'Mod-j': () => {
+                            const enabled = aiSettingsRef.current?.enable_shortcut;
+                            // console.log("Mod-J triggered. Enabled:", enabled);
+                            if (enabled && onAiDraftRef.current && segmentId) {
+                                onAiDraftRef.current(segmentId).then((newContent) => {
+                                    if (newContent) {
+                                        this.editor.commands.setContent(newContent);
+                                    }
+                                });
+                                return true;
+                            }
+                            return false;
+                        },
                         'Mod-Enter': () => {
                             if (onSave && segmentId) {
                                 onSave(segmentId, this.editor.getHTML())
@@ -162,10 +183,10 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onBlur: ({ editor }) => {
-            // Optional: Save on blur can be annoying if jumping between windows?
-            // User said Ctrl+Enter is safe.
+            // Optional: Save on blur
         },
     })
+
 
     // Update content if it changes externally
     // Note: 'content' passed here MUST be hydrated HTML with <span data-type="tag-node"> already!
