@@ -183,7 +183,9 @@ def get_project_segments(project_id: str, db: Session = Depends(get_db)):
             "target_content": s.target_content,
             "status": s.status,
             "project_id": s.project_id,
-            "tags": tags_data
+            "tags": tags_data,
+            "metadata": stored_meta.get("metadata"),
+            "context_matches": stored_meta.get("context_matches")
         }
         response_list.append(seg_dict)
         
@@ -430,7 +432,11 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     
     resp_dict = segment.__dict__.copy()
     resp_dict['context_matches'] = result["context_matches"]
-    resp_dict['metadata'] = segment.metadata_json # Alias for metadata_json if schema uses 'metadata'
+    
+    # helper to extract json fields
+    meta_json = segment.metadata_json or {}
+    resp_dict['metadata'] = meta_json.get("metadata")
+    resp_dict['tags'] = meta_json.get("tags")
     
     return resp_dict
 

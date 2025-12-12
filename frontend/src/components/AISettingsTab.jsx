@@ -87,8 +87,8 @@ export function AISettingsTab({ project, onUpdate }) {
                             onChange={(e) => setSettings({ ...settings, model: e.target.value })}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white focus:ring-indigo-500 focus:border-indigo-500"
                         >
-                            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Recommended)</option>
-                            <option value="gemini-1.5-pro">Gemini 1.5 Pro (Slower, Higher Quality)</option>
+                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
+                            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Higher Quality, Slower)</option>
                         </select>
                     </div>
 

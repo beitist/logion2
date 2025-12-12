@@ -220,14 +220,19 @@ export function SplitView({ projectId }) {
         const newStatus = isEmpty ? 'draft' : 'translated';
 
         try {
+            const start = performance.now();
             await updateSegment(id, serialized, newStatus);
+            const duration = Math.round(performance.now() - start);
 
             // Update local state to reflect status change immediately (e.g. for badges)
             setSegments(prev => prev.map(s =>
                 s.id === id ? { ...s, target_content: serialized, status: newStatus } : s
             ));
 
+            log(`Segment saved in ${duration}ms`, 'success');
+
         } catch (err) {
+            log(`Save failed: ${err.message}`, 'error');
             console.error("Save failed", err);
             alert("Save failed!");
         } finally {
@@ -614,7 +619,7 @@ export function SplitView({ projectId }) {
                                     {/* DEBUG: Show raw source content */}
                                     {showDebug && (
                                         <div className="mt-4 p-1 bg-red-50 text-[10px] font-mono text-red-500 border border-red-200 rounded break-all opacity-50 hover:opacity-100 transition-opacity">
-                                            DEBUG Source-DB: {seg.metadata_json?.tags ? "HAS TAGS" : "NO TAGS"}
+                                            DEBUG Source-DB: {seg.tags ? "HAS TAGS" : "NO TAGS"}
                                         </div>
                                     )}
 

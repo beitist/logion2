@@ -183,10 +183,11 @@ def ingest_project_files(project_id: str):
                     
                     try:
                         result = genai.embed_content(
-                            model='models/text-embedding-004',
+                            model='models/gemini-embedding-001',
                             content=batch,
                             task_type="retrieval_document",
-                            title=file_record.filename
+                            title=file_record.filename,
+                            output_dimensionality=1536
                         )
                         
                         embeddings = result['embedding']
@@ -246,9 +247,10 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # 1. Embed Query
     try:
         query_vector = genai.embed_content(
-            model='models/text-embedding-004',
+            model='models/gemini-embedding-001',
             content=segment_text,
-            task_type="retrieval_query"
+            task_type="retrieval_query",
+            output_dimensionality=1536
         )['embedding']
     except Exception as e:
         print(f"Embedding error: {e}")

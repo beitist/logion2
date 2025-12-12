@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 class SegmentUpdate(BaseModel):
     target_content: str
+    status: str | None = None
 
 router = APIRouter(prefix="/segment", tags=["segment"])
 
@@ -16,8 +17,13 @@ async def update_segment(segment_id: str, update: SegmentUpdate, db: Session = D
         raise HTTPException(status_code=404, detail="Segment not found")
     
     segment.target_content = update.target_content
-    # Ideally we track status. If it was "ai_pass", now it is "translated" or "reviewed"
-    segment.status = "translated" 
+    # Update status if provided, otherwise default/keep? 
+    # Frontend sends status.
+    if update.status:
+        segment.status = update.status
+    else:
+        # Fallback default if not provided (legacy)
+        segment.status = "translated"  
     
     db.commit()
     db.refresh(segment)
