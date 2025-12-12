@@ -392,7 +392,7 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     config = project.config if project.config else {}
     ai_settings = config.get("ai_settings", {})
     threshold = float(ai_settings.get("similarity_threshold", 0.40))
-    model_name = ai_settings.get("model", "gemini-1.5-flash") # Default to Flash
+    model_name = ai_settings.get("model", "gemini-2.0-flash") # Default to Flash
     
     from ..rag import generate_segment_draft
     

@@ -218,6 +218,12 @@ def ingest_project_files(project_id: str):
 
         project.rag_status = "ready"
         log_msg(f"RAG READY. Knowledge base refreshed: {total_chunks} vectors.")
+        
+        # Trigger Draft Generation for Segments
+        log_msg("Starting automatic draft generation for segments...")
+        generate_project_drafts(project_id)
+        log_msg("Draft generation complete.")
+        
         db.commit()
 
     except Exception as e:
@@ -285,7 +291,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         
     return structured_results
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-1.5-flash"):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-2.0-flash"):
     """
     Generates a draft translation using RAG context.
     Returns { target_text: str, context_matches: list }
@@ -338,3 +344,55 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
         "target_text": draft,
         "context_matches": matches
     }
+
+def generate_project_drafts(project_id: str):
+    """
+    Background task: Generates drafts and context matches for all segments in a project.
+    """
+    from .database import SessionLocal
+    from .models import Segment, Project
+    
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project: return
+        
+        segments = db.query(Segment).filter(Segment.project_id == project_id, Segment.target_content == None).all()
+        
+        # Determine config
+        config = project.config or {}
+        ai_settings = config.get("ai_settings", {})
+        threshold = float(ai_settings.get("similarity_threshold", 0.4))
+        # Default to 2.0-flash if not set
+        model = ai_settings.get("model", "gemini-2.0-flash")
+        
+        print(f"Generating drafts for project {project_id} ({len(segments)} segments)...")
+        
+        # We can parallelize or batch? For now sequential.
+        for seg in segments:
+            try:
+                res = generate_segment_draft(
+                    segment_text=seg.source_content,
+                    source_lang=project.source_lang,
+                    target_lang=project.target_lang,
+                    project_id=project_id,
+                    db=db,
+                    threshold=threshold,
+                    model_name=model
+                )
+                
+                seg.target_content = res["target_text"]
+                current_meta = seg.metadata_json or {}
+                current_meta['context_matches'] = res['context_matches']
+                seg.metadata_json = current_meta
+                # seg.status = 'draft' 
+            except Exception as se:
+                print(f"Error seg {seg.id}: {se}")
+        
+        db.commit()
+        print(f"Draft generation complete for {project_id}.")
+        
+    except Exception as e:
+        print(f"Error generating drafts: {e}")
+    finally:
+        db.close()

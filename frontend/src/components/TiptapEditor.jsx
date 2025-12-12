@@ -166,6 +166,19 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false;
                         },
+                        'Mod-Alt-m': () => {
+                            // Explicit MT shortcut "Get Machine Translation"
+                            // Always enabled or dependent on setting? Let's assume always enabled for now or same setting.
+                            if (onAiDraftRef.current && segmentId) {
+                                onAiDraftRef.current(segmentId).then((newContent) => {
+                                    if (newContent) {
+                                        this.editor.commands.setContent(newContent);
+                                    }
+                                });
+                                return true;
+                            }
+                            return false;
+                        },
                         'Mod-Enter': () => {
                             if (onSave && segmentId) {
                                 onSave(segmentId, this.editor.getHTML())

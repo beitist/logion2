@@ -7,8 +7,9 @@ import { TiptapEditor } from './TiptapEditor';
 
 import { AISettingsTab } from './AISettingsTab';
 
-import { Terminal, Bug } from 'lucide-react';
+import { Terminal, Bug, Keyboard } from 'lucide-react';
 import { LogConsole } from './LogConsole';
+import { ShortcutsPanel } from './ShortcutsPanel';
 
 export function SplitView({ projectId }) {
     // ... existing state ...
@@ -17,10 +18,15 @@ export function SplitView({ projectId }) {
     const [loading, setLoading] = useState(true);
     const [savingId, setSavingId] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
+    const [showShortcuts, setShowShortcuts] = useState(false);
     const [activeSettingsTab, setActiveSettingsTab] = useState('files'); // 'files' or 'ai'
 
     // Console & Debug State
     const [showConsole, setShowConsole] = useState(false);
+    // ... (rest of code)
+
+    // ... (rest of code)
+
     const [showDebug, setShowDebug] = useState(false); // Toggle for per-segment debug info
     const [logs, setLogs] = useState([]);
 
@@ -464,6 +470,14 @@ export function SplitView({ projectId }) {
                     >
                         <Bug size={18} />
                     </button>
+
+                    <button
+                        onClick={() => setShowShortcuts(!showShortcuts)}
+                        className={`p-2 rounded hover:bg-gray-200 transition-colors ${showShortcuts ? 'bg-indigo-100 text-indigo-600' : 'text-gray-600'}`}
+                        title="Keyboard Shortcuts"
+                    >
+                        <Keyboard size={18} />
+                    </button>
                     <div className="w-px h-6 bg-gray-300 mx-1 self-center"></div>
 
                     <button
@@ -731,6 +745,8 @@ export function SplitView({ projectId }) {
                 onClose={() => setShowConsole(false)}
                 onClear={() => setLogs([])}
             />
+
+            <ShortcutsPanel isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
         </div>
     );
 }
