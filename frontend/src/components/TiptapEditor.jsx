@@ -183,7 +183,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onBlur: ({ editor }) => {
-            // Optional: Save on blur
+            if (onSave && segmentId) {
+                onSave(segmentId, editor.getHTML())
+            }
         },
     })
 
