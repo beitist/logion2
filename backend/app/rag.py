@@ -1,3 +1,5 @@
+from .tmx import ingest_tmx, compute_hash, normalize_text
+from .models import TranslationUnit, TranslationOrigin
 import os
 import google.generativeai as genai
 from sqlalchemy.orm import Session
@@ -11,8 +13,6 @@ import torch
 import pysbd
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
 import numpy as np
-from .tmx import ingest_tmx, compute_hash, normalize_text
-from .models import TranslationUnit, TranslationOrigin
 
 load_dotenv()
 
@@ -162,73 +162,23 @@ def ingest_project_files(project_id: str):
                 
                 if file_record.filename.endswith(".docx"):
                     raw_text = extract_text_from_docx(temp_path)
-
-# ... (inside search_context_for_segment) ...
-
-def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=30, threshold=0.0):
-    """
-    Retrieves chunks using Hybrid Search (Hash Exact Match + LaBSE Vector).
-    """
-    if not segment_text or len(segment_text) < 2:
-        return []
-
-    # 0. Classic TMX Lookup (Exact Match) - The "Professional" Part
-    exact_matches = []
-    try:
-        s_hash = compute_hash(segment_text)
-        tm_results = db.query(TranslationUnit).filter(
-            TranslationUnit.project_id == project_id, # Scoped to project for now (Project TM)
-            TranslationUnit.source_hash == s_hash
-        ).all()
-        
-        # Sort Priority: Mandatory > User > Optional
-        # We can do this in Python since result set is tiny
-        def priority_key(tm):
-            if tm.origin_type == "mandatory": return 3
-            if tm.origin_type == "user": return 2
-            return 1
-            
-        tm_results.sort(key=priority_key, reverse=True)
-        
-        for tm in tm_results:
-            exact_matches.append({
-                "id": f"tm-{tm.id}",
-                "content": tm.target_text,
-                "filename": "Translation Memory", # Could be refined
-                "type": tm.origin_type, # 'mandatory', 'user', 'optional'
-                "category": "tm",
-                "score": 100
-            })
-    except Exception as e:
-        print(f"TM Lookup Error: {e}")
-
-    if not _bi_encoder:
-        return exact_matches
-
-    # 1. Bi-Encoder Retrieval (Recall)
-    try:
-        # Encode Query (Source English)
-        query_vector = _bi_encoder.encode(segment_text, normalize_embeddings=True).tolist()
-# ... (rest of vector search) ...
+                else: 
+                    raw_text = "" # Add PDF support later if needed
                     
                 if not raw_text:
                     log_msg(f"Skipping {file_record.filename} (empty or unsupported)")
                     continue
                 
-                # raw_text = clean_text(raw_text) # Removed to preserve newlines for paragraph splitting
-                
-                # 3. Sentence Splitting (TM-like) - USER APPROVED STRATEGY
+                # 3. Sentence Splitting (TM-like)
                 chunks = []
-                # Split by paragraphs to be safe
                 paragraphs = raw_text.split('\n')
                 for p in paragraphs:
                     p_clean = clean_text(p)
                     if p_clean:
-                        # Split paragraph into sentences
                         try:
                             sents = _segmenter.segment(p_clean)
                         except:
-                            sents = [p_clean] # Fallback
+                            sents = [p_clean]
                         
                         for s in sents:
                             if len(s.strip()) > 3:
@@ -245,7 +195,6 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
                     
                     db_chunks = []
                     for content, vector in zip(batch, embeddings):
-                        # Ensure vector matches DB dimension (768)
                         db_chunks.append(ContextChunk(
                             file_id=file_record.id,
                             content=content, 
@@ -336,8 +285,6 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         return []
     
     # Search for Top K (30) candidates
-    # Note: distance is Cosine Distance (1 - similarity)
-    # Using a loose threshold for initial recall
     results = db.query(ContextChunk, ProjectFile)\
         .join(ProjectFile)\
         .filter(ProjectFile.project_id == project_id)\
@@ -355,7 +302,6 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     
     try:
         # Get Cross-Encoder Logits
-        # This is where the magic happens: It sees source AND target
         scores = _cross_encoder.predict(pairs)
     except Exception as e:
         print(f"Reranking error: {e}")
@@ -370,11 +316,6 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     for idx, (chunk, file) in enumerate(results):
         base_score = float(scores[idx]) # Logit score (approx -10 to 10)
         
-        # Sigmoid-like normalization to 0-100 for UI?
-        # Typically Cross-Encoder > 0 is relevant. > 4 is very high.
-        # Let's map roughly: <0 -> 0-40%, 0-5 -> 50-90%, >5 -> 95%
-        # Or just use the penalty logic on the logit.
-        
         # Number Penalty
         chunk_numbers = extract_numbers(chunk.content)
         missing_numbers = query_numbers - chunk_numbers
@@ -386,7 +327,6 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         final_score_logit = base_score - penalty
         
         # Convert Logit to UI Score (0-100)
-        # Simple heuristic mapping
         import math
         if final_score_logit > 6.0:
             ui_score = 100
@@ -467,7 +407,6 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     }
 
 def generate_project_drafts(project_id: str):
-    # Same as before...
     from .database import SessionLocal
     from .models import Segment, Project
     
@@ -506,8 +445,6 @@ def generate_project_drafts(project_id: str):
                 # If exact match, fill target content directly!
                 if res.get('is_exact', False):
                      seg.target_content = res["target_text"]
-                     # Optional: Set status to 'translated' or specific badge?
-                     # seg.status = 'translated' 
                 
                 from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(seg, "metadata_json")
