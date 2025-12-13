@@ -11,6 +11,8 @@ import torch
 import pysbd
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
 import numpy as np
+from .tmx import ingest_tmx, compute_hash, normalize_text
+from .models import TranslationUnit, TranslationOrigin
 
 load_dotenv()
 
@@ -151,10 +153,63 @@ def ingest_project_files(project_id: str):
             try:
                 download_file(file_record.file_path, temp_path)
                 
+                # CHECK FOR TMX
+                if file_record.filename.lower().endswith('.tmx'):
+                    log_msg(f"Detected TMX file: {file_record.filename}")
+                    origin = TranslationOrigin.mandatory if file_record.category == "legal" else TranslationOrigin.optional
+                    ingest_tmx(temp_path, project_id, origin, db)
+                    continue # Skip vector embedding for TMX
+                
                 if file_record.filename.endswith(".docx"):
                     raw_text = extract_text_from_docx(temp_path)
-                else: 
-                    raw_text = "" # Add PDF support later if needed
+
+# ... (inside search_context_for_segment) ...
+
+def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=30, threshold=0.0):
+    """
+    Retrieves chunks using Hybrid Search (Hash Exact Match + LaBSE Vector).
+    """
+    if not segment_text or len(segment_text) < 2:
+        return []
+
+    # 0. Classic TMX Lookup (Exact Match) - The "Professional" Part
+    exact_matches = []
+    try:
+        s_hash = compute_hash(segment_text)
+        tm_results = db.query(TranslationUnit).filter(
+            TranslationUnit.project_id == project_id, # Scoped to project for now (Project TM)
+            TranslationUnit.source_hash == s_hash
+        ).all()
+        
+        # Sort Priority: Mandatory > User > Optional
+        # We can do this in Python since result set is tiny
+        def priority_key(tm):
+            if tm.origin_type == "mandatory": return 3
+            if tm.origin_type == "user": return 2
+            return 1
+            
+        tm_results.sort(key=priority_key, reverse=True)
+        
+        for tm in tm_results:
+            exact_matches.append({
+                "id": f"tm-{tm.id}",
+                "content": tm.target_text,
+                "filename": "Translation Memory", # Could be refined
+                "type": tm.origin_type, # 'mandatory', 'user', 'optional'
+                "category": "tm",
+                "score": 100
+            })
+    except Exception as e:
+        print(f"TM Lookup Error: {e}")
+
+    if not _bi_encoder:
+        return exact_matches
+
+    # 1. Bi-Encoder Retrieval (Recall)
+    try:
+        # Encode Query (Source English)
+        query_vector = _bi_encoder.encode(segment_text, normalize_embeddings=True).tolist()
+# ... (rest of vector search) ...
                     
                 if not raw_text:
                     log_msg(f"Skipping {file_record.filename} (empty or unsupported)")
@@ -235,10 +290,42 @@ def extract_numbers(text):
 
 def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=30, threshold=0.0):
     """
-    Retrieves chunks using LaBSE + Cross-Encoder Reranking + Number Penalty.
+    Retrieves chunks using Hybrid Search (Hash Exact Match + LaBSE Vector).
     """
-    if not segment_text or len(segment_text) < 2 or not _bi_encoder:
+    if not segment_text or len(segment_text) < 2:
         return []
+
+    # 0. Classic TMX Lookup (Exact Match) - The "Professional" Part
+    exact_matches = []
+    try:
+        s_hash = compute_hash(segment_text)
+        tm_results = db.query(TranslationUnit).filter(
+            TranslationUnit.project_id == project_id, # Scoped to project for now (Project TM)
+            TranslationUnit.source_hash == s_hash
+        ).all()
+        
+        # Sort Priority: Mandatory > User > Optional
+        def priority_key(tm):
+            if tm.origin_type == "mandatory": return 3
+            if tm.origin_type == "user": return 2
+            return 1
+            
+        tm_results.sort(key=priority_key, reverse=True)
+        
+        for tm in tm_results:
+            exact_matches.append({
+                "id": f"tm-{tm.id}",
+                "content": tm.target_text,
+                "filename": "Translation Memory", 
+                "type": tm.origin_type, # 'mandatory', 'user', 'optional'
+                "category": "tm",
+                "score": 100
+            })
+    except Exception as e:
+        print(f"TM Lookup Error: {e}")
+
+    if not _bi_encoder:
+        return exact_matches
 
     # 1. Bi-Encoder Retrieval (Recall)
     try:
@@ -335,9 +422,18 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     # 1. Retrieve Context (New Pipeline)
     matches = search_context_for_segment(segment_text, project_id, db)
     
-    # 2. HyDE / Machine Translation Feature
-    # User still wants the "MT" card.
-    
+    # 2. Check for Exact Match (Pre-Translation Optimization)
+    top_match = matches[0] if matches else None
+    if top_match and top_match.get('score', 0) >= 100:
+        # Pre-Translation Hit!
+        # Skip AI generation.
+        return {
+            "target_text": top_match['content'],
+            "context_matches": matches,
+            "is_exact": True
+        }
+
+    # 3. HyDE / Machine Translation Feature
     mt_draft = ""
     try:
         # Construct dynamic system instruction
@@ -362,17 +458,12 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
             })
     except:
         pass
-
-    # 3. Construct Prompt with context
-    context_str = "\n".join([f"- {m['content']}" for m in matches if m['type'] != 'mt'])
-    
-    # Note: Currently 'prompt' var below is unused/dead code as we just return MT draft.
-    # But for future "Context-Aware" generation, we would use it.
     
     # 4. Generate Final Draft
     return {
-        "target_text": mt_draft, # Use MT as the draft for now
-        "context_matches": matches
+        "target_text": mt_draft, 
+        "context_matches": matches,
+        "is_exact": False
     }
 
 def generate_project_drafts(project_id: str):
@@ -410,6 +501,13 @@ def generate_project_drafts(project_id: str):
                 current_meta['context_matches'] = res['context_matches']
                 current_meta['ai_draft'] = res["target_text"]
                 seg.metadata_json = current_meta
+                
+                # Pre-Translation Logic:
+                # If exact match, fill target content directly!
+                if res.get('is_exact', False):
+                     seg.target_content = res["target_text"]
+                     # Optional: Set status to 'translated' or specific badge?
+                     # seg.status = 'translated' 
                 
                 from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(seg, "metadata_json")

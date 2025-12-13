@@ -85,3 +85,32 @@ class ContextChunk(Base):
 # Update relationships in ProjectFile
 ProjectFile.chunks = relationship("ContextChunk", back_populates="file", cascade="all, delete-orphan")
 
+class TranslationOrigin(str, enum.Enum):
+    mandatory = "mandatory"
+    user = "user"
+    optional = "optional"
+
+class TranslationUnit(Base):
+    """Hybrid TMX / Exact Match Table"""
+    __tablename__ = "translation_units"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String, index=True, nullable=False)
+    
+    # Hashing for O(1) Lookup
+    source_hash = Column(String, index=True, nullable=False) # SHA-256
+    
+    # Content
+    source_text = Column(Text, nullable=False)
+    target_text = Column(Text, nullable=False)
+    
+    # Metadata
+    origin_type = Column(String, default=TranslationOrigin.user.value, index=True) # mandatory, user, optional
+    
+    # 101% Context
+    context_prev = Column(String, nullable=True) # Hash of previous sentence
+    context_next = Column(String, nullable=True) # Hash of next sentence
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    changed_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    creation_user = Column(String, nullable=True)
