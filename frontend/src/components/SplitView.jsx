@@ -645,11 +645,26 @@ export function SplitView({ projectId }) {
                                                 <span className="w-1 h-1 bg-gray-400 rounded-full"></span> Translation Memory / Context
                                             </h4>
                                             <div className="space-y-2">
-                                                {(seg.context_matches || seg.metadata.context_matches || [])
-                                                    .sort((a, b) => (b.score || 0) - (a.score || 0))
-                                                    .map((match, idx) => {
+                                                {(() => {
+                                                    const sortedMatches = (seg.context_matches || seg.metadata.context_matches || [])
+                                                        .sort((a, b) => (b.score || 0) - (a.score || 0));
+
+                                                    const tmMatches = sortedMatches.filter(m => m.type !== 'mt');
+
+                                                    return sortedMatches.map((match, idx) => {
                                                         const isMandatory = match.type === 'mandatory';
                                                         const isMT = match.type === 'mt';
+
+                                                        // Determine shortcut label index
+                                                        let shortcutLabel = '';
+                                                        if (isMT) {
+                                                            shortcutLabel = 'Cmd+Opt+0';
+                                                        } else {
+                                                            const tmIdx = tmMatches.indexOf(match);
+                                                            if (tmIdx === 0) shortcutLabel = 'Cmd+Opt+9';
+                                                            else if (tmIdx === 1) shortcutLabel = 'Cmd+Opt+8';
+                                                            else if (tmIdx === 2) shortcutLabel = 'Cmd+Opt+7';
+                                                        }
 
                                                         // Styles
                                                         let borderClass = isMandatory ? 'border-l-red-500' : 'border-l-blue-400';
@@ -678,7 +693,7 @@ export function SplitView({ projectId }) {
                                                                         )}
                                                                         {/* Shortcut Hint */}
                                                                         <span className="text-[9px] font-mono text-gray-400 bg-white/50 px-1 rounded border border-gray-100 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                            {isMT ? 'Cmd+Opt+0' : (idx === 0 ? 'Cmd+Opt+9' : idx === 1 ? 'Cmd+Opt+8' : idx === 2 ? 'Cmd+Opt+7' : '')}
+                                                                            {shortcutLabel}
                                                                         </span>
                                                                     </div>
                                                                     <div className="flex items-center gap-1 text-[9px] text-gray-400 font-mono" title={match.filename}>
@@ -692,7 +707,8 @@ export function SplitView({ projectId }) {
                                                                 </div>
                                                             </div>
                                                         )
-                                                    })}
+                                                    })
+                                                })()}
                                             </div>
                                         </div>
                                     )}

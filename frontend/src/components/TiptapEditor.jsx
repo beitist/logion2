@@ -221,15 +221,24 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onFocus: ({ editor }) => {
-            // Auto-Trigger AI Draft if empty (User Request)
-            if (editor.isEmpty && onAiDraftRef.current && segmentId) {
-                console.log("Auto-triggering AI Draft on focus...");
-                // Visual feedback? The Magic Wand button handles it nicely.
-                onAiDraftRef.current(segmentId).then((newContent) => {
-                    if (newContent && editor.isEmpty) { // Check empty again to be safe
-                        editor.commands.setContent(newContent);
-                    }
-                });
+            // Auto-Trigger AI Draft if empty
+            if (editor.isEmpty && segmentId) {
+                // 1. Check if we already have an MT match locally
+                const existingMT = contextMatchesRef.current?.find(m => m.type === 'mt');
+
+                if (existingMT) {
+                    console.log("Using cached MT draft on focus...");
+                    editor.commands.setContent(existingMT.content);
+                }
+                // 2. Otherwise trigger API
+                else if (onAiDraftRef.current) {
+                    console.log("Auto-triggering AI Draft on focus (No cache)...");
+                    onAiDraftRef.current(segmentId).then((newContent) => {
+                        if (newContent && editor.isEmpty) {
+                            editor.commands.setContent(newContent);
+                        }
+                    });
+                }
             }
         },
         onBlur: ({ editor }) => {
