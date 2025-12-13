@@ -304,7 +304,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         if final_score_logit > 6.0:
             ui_score = 100
         else:
-            ui_score = 1 / (1 + math.exp(-final_score_logit)) * 100 # Sigmoid
+            ui_score = 1 / (1 + math.exp(-(final_score_logit - 1.5))) * 100 # Sigmoid with bias to separate weak matches
         
         # Hard cut-off for "Bad Matches"
         if final_score_logit < -1.0: 

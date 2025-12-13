@@ -432,10 +432,11 @@ export function SplitView({ projectId }) {
                 matches: updated.context_matches?.length || 0
             });
 
+            // USER REQUEST: Do NOT auto-insert text. Only update Matches sidebar.
             setSegments(prev => prev.map(s =>
-                s.id === segmentId ? { ...s, ...updated } : s
+                s.id === segmentId ? { ...s, context_matches: updated.context_matches } : s
             ));
-            return updated.target_content;
+            return updated.context_matches; // Changed return to signify "done" but no text content flow
         } catch (err) {
             log("AI Draft failed", 'error', err.message);
             console.error("AI Draft failed", err);

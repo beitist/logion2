@@ -66,6 +66,7 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
             {onAiDraft && (
                 <>
                     <button
+                        tabIndex="-1"
                         onClick={onAiDraft}
                         className="px-3 py-1 text-xs font-bold rounded border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 flex items-center gap-1 mr-2"
                         title="Generate AI Draft (Ctrl+Space)"
@@ -81,6 +82,7 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
             {/* 1. Generic Tab Button (if any available) */}
             {availableTags && Object.values(availableTags).some(t => t.type === 'tab') && (
                 <button
+                    tabIndex="-1"
                     onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: 'TAB', label: 'TAB' } }).run()}
                     onMouseDown={(e) => e.preventDefault()}
                     className="px-2 py-1 text-xs font-mono rounded border bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200 active:bg-gray-300 min-w-[24px] font-bold"
@@ -107,6 +109,7 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
                 return (
                     <button
                         key={tid}
+                        tabIndex="-1"
                         onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: tid, label: label } }).run()}
                         onMouseDown={(e) => e.preventDefault()}
                         className="px-2 py-1 text-xs font-mono rounded border bg-white text-gray-600 border-gray-300 hover:bg-blue-50 active:bg-blue-100 min-w-[24px]"
@@ -221,23 +224,19 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onFocus: ({ editor }) => {
-            // Auto-Trigger AI Draft if empty
+            // Auto-Trigger AI Retrieval if empty (Fetcher only, no Insert)
             if (editor.isEmpty && segmentId) {
-                // 1. Check if we already have an MT match locally
-                const existingMT = contextMatchesRef.current?.find(m => m.type === 'mt');
+                // 1. Check if we already have data
+                const existingMatches = contextMatchesRef.current;
 
-                if (existingMT) {
-                    console.log("Using cached MT draft on focus...");
-                    editor.commands.setContent(existingMT.content);
+                if (existingMatches && existingMatches.length > 0) {
+                    // Already have matches, do nothing
+                    // console.log("Matches already loaded.");
                 }
-                // 2. Otherwise trigger API
+                // 2. Otherwise trigger retrieval (SplitView handles the state update)
                 else if (onAiDraftRef.current) {
-                    console.log("Auto-triggering AI Draft on focus (No cache)...");
-                    onAiDraftRef.current(segmentId).then((newContent) => {
-                        if (newContent && editor.isEmpty) {
-                            editor.commands.setContent(newContent);
-                        }
-                    });
+                    console.log("Fetching context on focus...");
+                    onAiDraftRef.current(segmentId);
                 }
             }
         },
