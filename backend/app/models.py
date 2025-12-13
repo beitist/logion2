@@ -76,8 +76,15 @@ class ContextChunk(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     file_id = Column(String, ForeignKey("project_files.id", ondelete="CASCADE"), nullable=False)
     
-    content = Column(Text, nullable=False) # The chunk text
+    content = Column(Text, nullable=False) # The chunk text (Plain for embedding)
+    rich_content = Column(Text, nullable=True) # The chunk text with Tags (<1>...</1>)
     embedding = Column(Vector(768)) # LaBSE Embeddings
+    
+    # Semantic Alignment Fields
+    source_segment = Column(Text, nullable=True) # Aligned Source (1 or 2 sent)
+    target_segment = Column(Text, nullable=True) # Aligned Target (1 or 2 sent)
+    alignment_score = Column(Integer, nullable=True) # 0-100 Confidence
+    alignment_type = Column(String, nullable=True) # '1:1', '2:1', '1:2'
     
     # We link back to the file, which links to the project.
     file = relationship("ProjectFile", back_populates="chunks")

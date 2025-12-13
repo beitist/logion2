@@ -26,92 +26,93 @@ def compute_hash(text: str) -> str:
     norm = normalize_text(text)
     return hashlib.sha256(norm.encode('utf-8')).hexdigest()
 
-def ingest_tmx(file_path: str, project_id: str, origin_type: TranslationOrigin, db: Session):
+def parse_tmx_units(file_path: str):
     """
-    Streams a TMX file and upserts translation units into the DB.
+    Generator that parses a TMX file and yields dicts:
+    { 'source_text': str, 'target_xml': str }
     """
-    print(f"Starting TMX Ingestion: {file_path} (Origin: {origin_type})")
+    print(f"Parsing TMX: {file_path}")
     
-    # 1. Setup Stream
-    # We look for <tu> elements
+    # helper to convert TMX node to string with tags
+    def extract_segment_content(seg_node):
+        if seg_node is None: return ""
+        out = []
+        if seg_node.text: out.append(seg_node.text)
+        for child in seg_node:
+            tag = child.tag
+            tag_name = tag.split('}')[-1] if '}' in tag else tag
+            tid = child.get('i') or child.get('id') or "0"
+            if tag_name == 'bpt': out.append(f"<{tid}>")
+            elif tag_name == 'ept': out.append(f"</{tid}>")
+            elif tag_name == 'ph': out.append(f"<{tid} />")
+            elif tag_name == 'it': out.append(f"<{tid} />")
+            if child.tail: out.append(child.tail)
+        return "".join(out)
+
     context = etree.iterparse(file_path, events=('end',), tag='tu')
-    
-    buffer = []
-    count = 0
     
     for event, elem in context:
         try:
-            # 2. Extract Source (EN) / Target (DE)
-            # This is simplified. TMX uses xml:lang.
-            # We assume SRCLANG=EN, TARGETLANG=DE for now or just grab the first two.
-            # Robust TMX parsing is complex, let's try a heuristic:
-            # Find <tuv xml:lang="en..."> -> <seg>Source</seg>
-            # Find <tuv xml:lang="de..."> -> <seg>Target</seg>
-            
             source_text = None
-            target_text = None
+            target_xml = None
             
             for tuv in elem.findall('tuv'):
                 lang = tuv.get('{http://www.w3.org/XML/1998/namespace}lang') or tuv.get('lang')
                 if not lang: continue
                 lang = lang.lower()
-                
                 seg = tuv.find('seg')
-                if seg is None or not seg.text: continue
-                
-                # Heuristic: EN vs DE
-                if 'en' in lang:
-                    source_text = seg.text
-                elif 'de' in lang:
-                    target_text = seg.text
+                if seg is None: continue
+                content = extract_segment_content(seg)
+                if 'en' in lang: source_text = normalize_text(content)
+                elif 'de' in lang: target_xml = content
             
-            # If we missed languages, maybe just take 1st as Source, 2nd as Target?
-            if not source_text and not target_text:
-                # Fallback for messy TMX
-                tuvs = elem.findall('tuv')
-                if len(tuvs) >= 2:
-                    s = tuvs[0].find('seg')
-                    t = tuvs[1].find('seg')
-                    if s is not None and t is not None:
-                        source_text = s.text
-                        target_text = t.text
+            # Fallback
+            if not source_text and not target_xml:
+                 tuvs = elem.findall('tuv')
+                 if len(tuvs) >= 2:
+                     s = tuvs[0].find('seg')
+                     t = tuvs[1].find('seg')
+                     if s is not None: source_text = normalize_text(extract_segment_content(s))
+                     if t is not None: target_xml = extract_segment_content(t)
 
-            if source_text and target_text:
-                # 3. Compute Hash
-                s_hash = compute_hash(source_text)
-                
-                # 4. Prepare Record
-                record = {
-                    "project_id": project_id,
-                    "source_hash": s_hash,
+            if source_text and target_xml:
+                yield {
                     "source_text": source_text,
-                    "target_text": target_text,
-                    "origin_type": origin_type.value,
-                    "created_at": datetime.utcnow(),
-                    "changed_at": datetime.utcnow()
+                    "target_text": target_xml
                 }
-                buffer.append(record)
-                count += 1
             
-            # 5. Batch Insert
-            if len(buffer) >= BATCH_SIZE:
-                _flush_buffer(buffer, db)
-                buffer = []
-                print(f"Processed {count} units...")
-
-            # Free memory
             elem.clear()
             while elem.getprevious() is not None:
                 del elem.getparent()[0]
                 
         except Exception as e:
             print(f"Error parsing TU: {e}")
-            
-    # Final flush
-    if buffer:
-        _flush_buffer(buffer, db)
 
-    print(f"TMX Ingestion Complete. Total: {count}")
+def ingest_tmx_direct(file_path: str, project_id: str, origin_type: TranslationOrigin, db: Session):
+    """
+    Legacy direct ingestion (without alignment/splitting).
+    Used if we want raw TMX import.
+    """
+    buffer = []
+    count = 0
+    for unit in parse_tmx_units(file_path):
+        s_hash = compute_hash(unit['source_text'])
+        buffer.append({
+            "project_id": project_id,
+            "source_hash": s_hash,
+            "source_text": unit['source_text'],
+            "target_text": unit['target_text'],
+            "origin_type": origin_type.value,
+            "created_at": datetime.utcnow(),
+            "changed_at": datetime.utcnow()
+        })
+        count += 1
+        if len(buffer) >= BATCH_SIZE:
+            _flush_buffer(buffer, db)
+            buffer = []
+            
+    if buffer: _flush_buffer(buffer, db)
+    print(f"TMX Direct Ingestion Complete: {count}")
 
 def _flush_buffer(buffer, db):
     """

@@ -615,6 +615,12 @@ export function SplitView({ projectId }) {
                         const comments = getSegmentComments(seg.tags);
                         const hasContext = (seg.context_matches?.length > 0 || seg.metadata?.context_matches?.length > 0);
 
+                        // Logic for UI Highlight:
+                        // User wants to see "light red" background if 100% Mandatory Match exists (and likely pre-filled).
+                        const allMatches = seg.context_matches || seg.metadata?.context_matches || [];
+                        const mandatoryMatch = allMatches.find(m => m.type === 'mandatory' && m.score >= 98);
+                        const isMandatoryContext = !!mandatoryMatch;
+
                         return (
                             <div key={seg.id} className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
                                 {/* Source Column */}
@@ -649,9 +655,18 @@ export function SplitView({ projectId }) {
                                     {/* Context Panel (Matches) */}
                                     {hasContext && (
                                         <div className="mt-6 border-t border-gray-200 pt-4">
-                                            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                                <span className="w-1 h-1 bg-gray-400 rounded-full"></span> Translation Memory / Context
-                                            </h4>
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                                    <span className="w-1 h-1 bg-gray-400 rounded-full"></span> Translation Memory / Context
+                                                </h4>
+                                                <button
+                                                    onClick={() => handleAiDraft(seg.id)}
+                                                    className="text-gray-400 hover:text-indigo-600 transition-colors"
+                                                    title="Refresh Context (Cmd+Alt+ß / Cmd+Alt+?)"
+                                                >
+                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                                </button>
+                                            </div>
                                             <div className="space-y-2">
                                                 {(() => {
                                                     const sortedMatches = (seg.context_matches || seg.metadata.context_matches || [])
@@ -738,10 +753,12 @@ export function SplitView({ projectId }) {
                                 </div>
 
                                 {/* Target Column */}
-                                <div className="p-5 bg-white rounded-r-xl flex flex-col relative group">
+                                <div className={`p-5 rounded-r-xl flex flex-col relative group ${isMandatoryContext ? 'bg-red-50/80 border-l border-red-200' : 'bg-white'}`}>
                                     <div className="text-xs text-gray-400 font-mono mb-2 uppercase tracking-wider flex justify-between items-center select-none">
                                         <div className="flex items-center gap-2">
-                                            <span className="font-bold text-gray-300 group-hover:text-indigo-400 transition-colors">Target (DE)</span>
+                                            <span className={`font-bold transition-colors ${isMandatoryContext ? 'text-red-800' : 'text-gray-300 group-hover:text-indigo-400'}`}>
+                                                {isMandatoryContext ? '⚠️ Mandatory Target' : 'Target (DE)'}
+                                            </span>
                                             {/* Context Badges */}
                                             {seg.metadata && (
                                                 <div className="flex gap-1">

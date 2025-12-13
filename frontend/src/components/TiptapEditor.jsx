@@ -129,12 +129,52 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
+    const availableTagsRef = React.useRef(availableTags);
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
         onAiDraftRef.current = onAiDraft;
         contextMatchesRef.current = contextMatches;
-    }, [aiSettings, onAiDraft, contextMatches]);
+        availableTagsRef.current = availableTags;
+    }, [aiSettings, onAiDraft, contextMatches, availableTags]);
+
+    // Internal Helper: Hydrate raw XML tags <1> into Tiptap TagNodes
+    // Duplicated simplified logic from SplitView to ensure self-contained editor behavior
+    const hydrateContent = (content, tags) => {
+        if (!content) return "";
+        let hydrated = content;
+
+        // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
+        hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
+            const tagInfo = tags ? tags[id] : null;
+            if (tagInfo && tagInfo.type === 'tab') {
+                return `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`;
+            }
+            return match;
+        });
+
+        // 2. Standard Match <(\d+)> OR </(\d+)>
+        hydrated = hydrated.replace(/<(\d+)>|<\/(\d+)>/g, (match, openId, closeId) => {
+            const id = openId || closeId;
+            const tagInfo = tags ? tags[id] : null;
+            let label = id;
+            let finalId = id;
+
+            if (tagInfo) {
+                if (tagInfo.type === 'tab') {
+                    label = 'TAB';
+                    finalId = 'TAB';
+                }
+                else if (tagInfo.type === 'comment') label = '💬';
+            }
+            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
+        });
+
+        // 3. Handle [TAB] (Legacy/Fallback)
+        hydrated = hydrated.replace(/\[TAB\]/g, `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`);
+
+        return hydrated;
+    };
 
     const editor = useEditor({
         extensions: [
@@ -154,16 +194,17 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const matches = contextMatchesRef.current;
                             const mtMatch = matches?.find(m => m.type === 'mt');
                             if (mtMatch) {
-                                return this.editor.commands.setContent(mtMatch.content)
+                                const hydrated = hydrateContent(mtMatch.content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated)
                             }
                             return false;
                         },
                         'Mod-Alt-9': () => {
                             const matches = contextMatchesRef.current;
-                            // Filter out MT for numeric shortcuts to keep 0 distinct
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[0]) {
-                                return this.editor.commands.setContent(refs[0].content)
+                                const hydrated = hydrateContent(refs[0].content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated)
                             }
                             return false
                         },
@@ -171,7 +212,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[1]) {
-                                return this.editor.commands.setContent(refs[1].content)
+                                const hydrated = hydrateContent(refs[1].content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated)
                             }
                             return false
                         },
@@ -179,28 +221,72 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[2]) {
-                                return this.editor.commands.setContent(refs[2].content)
+                                const hydrated = hydrateContent(refs[2].content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated)
                             }
                             return false
                         },
                         'Mod-Alt-ü': () => {
-                            // Explicit MT shortcut "Get AI Translation"
                             if (onAiDraftRef.current && segmentId) {
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
-                                        this.editor.commands.setContent(newContent);
+                                        const hydrated = hydrateContent(newContent, availableTagsRef.current);
+                                        this.editor.commands.setContent(hydrated);
                                     }
                                 });
                                 return true;
                             }
                             return false;
                         },
+                        // Context Refresh: Try multiple bindings for 'ß' to handle Mac/ISO behaviors
+                        // Mac German: Option+ß often produces '¿' or '\' depending on layout versions.
+                        'Mod-Alt-ß': () => {
+                            console.log("Shortcut triggered: Mod-Alt-ß");
+                            if (onAiDraftRef.current && segmentId) {
+                                onAiDraftRef.current(segmentId);
+                                return true;
+                            }
+                            return false;
+                        },
+                        'Mod-Alt-¿': () => {
+                            console.log("Shortcut triggered: Mod-Alt-¿");
+                            if (onAiDraftRef.current && segmentId) {
+                                onAiDraftRef.current(segmentId);
+                                return true;
+                            }
+                            return false;
+                        },
+                        'Mod-Alt-\\': () => {
+                            console.log("Shortcut triggered: Mod-Alt-\\");
+                            if (onAiDraftRef.current && segmentId) {
+                                onAiDraftRef.current(segmentId);
+                                return true;
+                            }
+                            return false;
+                        },
+                        // Case: User holds Shift (Cmd+Alt+Shift+ß -> ?)
+                        'Mod-Alt-?': () => {
+                            console.log("Shortcut triggered: Mod-Alt-?");
+                            if (onAiDraftRef.current && segmentId) {
+                                onAiDraftRef.current(segmentId);
+                                return true;
+                            }
+                            return false;
+                        },
+                        'Mod-Alt-Shift-ß': () => {
+                            console.log("Shortcut triggered: Mod-Alt-Shift-ß");
+                            if (onAiDraftRef.current && segmentId) {
+                                onAiDraftRef.current(segmentId);
+                                return true;
+                            }
+                            return false;
+                        },
                         'Control-Space': () => {
-                            // Easier shortcut for AI Draft
                             if (onAiDraftRef.current && segmentId) {
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
-                                        this.editor.commands.setContent(newContent);
+                                        const hydrated = hydrateContent(newContent, availableTagsRef.current);
+                                        this.editor.commands.setContent(hydrated);
                                     }
                                 });
                                 return true;
@@ -216,7 +302,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                         }
                     }
                 }
-            })
+            }),
         ],
         content: content || "",
         editable: !isReadOnly,

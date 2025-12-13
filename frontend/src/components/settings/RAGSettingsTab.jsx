@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { updateProject } from '../../api/client';
-import { Database, Sliders, Save } from 'lucide-react';
+import { updateProject, reingestProject } from '../../api/client';
+import { Database, Sliders, Save, RefreshCw } from 'lucide-react';
 
 export function RAGSettingsTab({ project, onUpdate }) {
     const [settings, setSettings] = useState({
@@ -8,6 +8,7 @@ export function RAGSettingsTab({ project, onUpdate }) {
         threshold_optional: 40,
         threshold_tm: 60
     });
+    const [isReingesting, setIsReingesting] = useState(false);
 
     useEffect(() => {
         if (project && project.config) {
@@ -36,6 +37,20 @@ export function RAGSettingsTab({ project, onUpdate }) {
             alert("RAG Settings saved!");
         } catch (e) {
             alert("Error saving settings: " + e.message);
+        }
+    };
+
+    const handleReingest = async () => {
+        if (!confirm("This will clear all existing context vectors and re-process all files. Continue?")) return;
+
+        setIsReingesting(true);
+        try {
+            await reingestProject(project.id);
+            alert("Re-ingestion started in background. Check logs or wait a few minutes.");
+        } catch (e) {
+            alert("Failed to trigger re-ingest: " + e.message);
+        } finally {
+            setIsReingesting(false);
         }
     };
 
@@ -102,7 +117,17 @@ export function RAGSettingsTab({ project, onUpdate }) {
                 </div>
             </div>
 
-            <div className="pt-4 border-t border-gray-100 flex justify-end">
+            <div className="pt-4 border-t border-gray-100 flex justify-between items-center">
+                <button
+                    onClick={handleReingest}
+                    disabled={isReingesting}
+                    className="flex items-center gap-2 px-4 py-2 text-yellow-700 bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 rounded transition-colors text-sm font-medium"
+                    title="Reloads all files into the Vector Database"
+                >
+                    <RefreshCw size={16} className={isReingesting ? "animate-spin" : ""} />
+                    {isReingesting ? "Processing..." : "Re-ingest Context"}
+                </button>
+
                 <button
                     onClick={handleSave}
                     className="flex items-center gap-2 px-6 py-2 bg-gray-900 text-white rounded hover:bg-black transition-colors shadow-sm font-medium"

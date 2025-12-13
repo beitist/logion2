@@ -1,4 +1,4 @@
-from .tmx import ingest_tmx, compute_hash, normalize_text
+from .tmx import compute_hash, normalize_text
 from .models import TranslationUnit, TranslationOrigin
 import os
 import google.generativeai as genai
@@ -8,6 +8,8 @@ from .storage import download_file
 from dotenv import load_dotenv
 import zipfile
 import re
+from datetime import datetime
+import asyncio
 from xml.etree import ElementTree
 import torch
 import pysbd
@@ -35,10 +37,16 @@ try:
     _cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1', device=device)
     
     print("✅ Models Loaded Successfully.")
+    
+    # 3. Semantic Aligner (SpaCy + Vectors)
+    from .aligner import SemanticAligner
+    _aligner = SemanticAligner(_bi_encoder)
+    
 except Exception as e:
     print(f"❌ Error loading models: {e}")
     _bi_encoder = None
     _cross_encoder = None
+    _aligner = None
 
 def extract_text_from_docx(docx_path):
     try:
@@ -156,9 +164,93 @@ def ingest_project_files(project_id: str):
                 # CHECK FOR TMX
                 if file_record.filename.lower().endswith('.tmx'):
                     log_msg(f"Detected TMX file: {file_record.filename}")
-                    origin = TranslationOrigin.mandatory if file_record.category == "legal" else TranslationOrigin.optional
-                    ingest_tmx(temp_path, project_id, origin, db)
-                    continue # Skip vector embedding for TMX
+                    
+                    if not _aligner:
+                         log_msg("WARNING: Aligner not loaded. Using fallback direct ingestion.")
+                         origin = TranslationOrigin.mandatory if file_record.category == "legal" else TranslationOrigin.optional
+                         from .tmx import ingest_tmx_direct
+                         ingest_tmx_direct(temp_path, project_id, origin, db)
+                         continue
+                        
+                    log_msg("Aligning TMX segments with SpaCy...")
+                    from .tmx import parse_tmx_units, compute_hash
+                    
+                    origin_type = TranslationOrigin.mandatory if file_record.category == "legal" else TranslationOrigin.optional
+                    
+                    tm_buffer = []
+                    chunk_buffer = []
+                    aligned_count = 0
+                    
+                    for unit in parse_tmx_units(temp_path):
+                        # unit = {source_text, target_text} (Target is XML-tagged)
+                        # Aligner expects plain text generally, but our aligner preserves tags via protect_tags!
+                        # So we pass the tagged XML to aligner.
+                        
+                        pairs = _aligner.align(unit['source_text'], unit['target_text'])
+                        
+                        for p in pairs:
+                             # p = {source, target, score, type}
+                             # 1. Translation Unit (Exact Match)
+                             s_hash = compute_hash(p['source'])
+                             tm_buffer.append({
+                                "project_id": project_id,
+                                "source_hash": s_hash,
+                                "source_text": p['source'],
+                                "target_text": p['target'],
+                                "origin_type": origin_type.value,
+                                "created_at": datetime.utcnow(),
+                                "changed_at": datetime.utcnow()
+                             })
+                             
+                             # 2. Context Chunk (Vector)
+                             # Embed source for search
+                             # Note: Aligner already computed vectors but we can't easily retrieve them here 
+                             # without refactoring aligner to return them.
+                             # For now, we re-embed or modify aligner. 
+                             # Optimization: Let's accept re-embedding for now (simpler).
+                             # Or better: `_bi_encoder.encode` is fast.
+                             
+                             # Store pair in Chunk
+                             chunk_buffer.append({
+                                 "text": p['source'],
+                                 "rich": p['target'],
+                                 "src_seg": p['source'],
+                                 "tgt_seg": p['target'],
+                                 "score": p['score'],
+                                 "type": p['type']
+                             })
+                             aligned_count += 1
+                    
+                    # Flush TM
+                    if tm_buffer:
+                         from .tmx import _flush_buffer
+                         _flush_buffer(tm_buffer, db)
+                    
+                    # Flush and Embed Chunks
+                    log_msg(f"Aligned {aligned_count} segments. Generating vectors...")
+                    
+                    for i in range(0, len(chunk_buffer), BATCH_SIZE):
+                        batch = chunk_buffer[i : i + BATCH_SIZE]
+                        texts = [b['text'] for b in batch]
+                        embeddings = _bi_encoder.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+                        
+                        db_chunks = []
+                        for b, vec in zip(batch, embeddings):
+                            db_chunks.append(ContextChunk(
+                                file_id=file_record.id,
+                                content=b['text'],
+                                rich_content=b['rich'],
+                                embedding=vec.tolist(),
+                                source_segment=b['src_seg'],
+                                target_segment=b['tgt_seg'],
+                                alignment_score=b['score'],
+                                alignment_type=b['type']
+                            ))
+                        db.add_all(db_chunks)
+                        db.commit()
+                        total_chunks += len(batch)
+                        
+                    continue
                 
                 if file_record.filename.endswith(".docx"):
                     raw_text = extract_text_from_docx(temp_path)
@@ -327,21 +419,37 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         final_score_logit = base_score - penalty
         
         # Convert Logit to UI Score (0-100)
-        import math
-        if final_score_logit > 6.0:
-            ui_score = 100
-        else:
-            ui_score = 1 / (1 + math.exp(-(final_score_logit - 1.5))) * 100 # Sigmoid with bias to separate weak matches
+        # Calibration (Phase 7):
+        # We want strong semantic matches (Logit > 2.5) to appear green (> 90%).
+        # Old formula: offset 1.5 -> Logit 3.0 = 81%. Too low.
+        # New formula: offset 0.5 -> Logit 3.0 = 92%.
+        # Boost: If Logit > 4.0 -> 98-99%.
         
-        # Hard cut-off for "Bad Matches"
-        if final_score_logit < -1.0: 
+        import math
+        
+        if final_score_logit > 4.0:
+            ui_score = 99 # Near perfect interaction
+        elif final_score_logit > 2.5:
+             # Aggressive sigmoid for good matches
+             # Logit 2.5 -> 1 / (1 + exp(-(2.5))) = 92%
+             ui_score = 1 / (1 + math.exp(-(final_score_logit - 0.0))) * 100
+        else:
+             # Standard curve for weaker matches
+             # Logit 0.0 -> 50%
+             # Logit 1.8 (our case) -> 86%
+             ui_score = 1 / (1 + math.exp(-(final_score_logit - 0.0))) * 100
+        
+        if final_score_logit < -2.0: 
             continue # Filter out completely
             
         match_type = "mandatory" if file.category == "legal" else "optional"
         
+        # Use Rich Content (with Tags) if available, else plain content
+        display_content = chunk.rich_content if chunk.rich_content else chunk.content
+        
         final_matches.append({
             "id": chunk.id,
-            "content": chunk.content,
+            "content": display_content,
             "filename": file.filename,
             "type": match_type,
             "category": file.category,
