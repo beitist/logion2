@@ -5,7 +5,8 @@ import { TiptapEditor } from './TiptapEditor';
 // GLOBAL DEBUG FLAG
 // GLOBAL DEBUG FLAG REMOVED - now strict state controlled
 
-import { AISettingsTab } from './AISettingsTab';
+import { RAGSettingsTab } from './settings/RAGSettingsTab';
+import { AISettingsTab } from './settings/AISettingsTab';
 
 import { Terminal, Bug, Keyboard } from 'lucide-react';
 import { LogConsole } from './LogConsole';
@@ -511,10 +512,16 @@ export function SplitView({ projectId }) {
                                         Files
                                     </button>
                                     <button
-                                        onClick={() => setActiveSettingsTab('ai')}
-                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'ai' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                        onClick={() => setActiveSettingsTab('rag')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'rag' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
                                     >
-                                        AI & RAG
+                                        RAG & Context
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveSettingsTab('ai')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'ai' ? 'bg-white shadow text-purple-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        AI & Model
                                     </button>
                                 </div>
                             </div>
@@ -576,10 +583,10 @@ export function SplitView({ projectId }) {
                                             </div>
                                         </div>
                                     </div>
+                                ) : activeSettingsTab === 'rag' ? (
+                                    <RAGSettingsTab project={project} onUpdate={setProject} />
                                 ) : (
-                                    <div className="h-full overflow-y-auto">
-                                        <AISettingsTab project={project} onUpdate={setProject} />
-                                    </div>
+                                    <AISettingsTab project={project} onUpdate={setProject} />
                                 )}
                             </div>
 
@@ -655,6 +662,21 @@ export function SplitView({ projectId }) {
                                                     return sortedMatches.map((match, idx) => {
                                                         const isMandatory = match.type === 'mandatory';
                                                         const isMT = match.type === 'mt';
+
+                                                        // FILTERING: Check Thresholds
+                                                        const aiConfig = project?.config?.ai_settings || {};
+                                                        const tMandatory = aiConfig.threshold_mandatory !== undefined ? aiConfig.threshold_mandatory : 60;
+                                                        const tOptional = aiConfig.threshold_optional !== undefined ? aiConfig.threshold_optional : 40;
+
+                                                        const score = match.score || 0;
+
+                                                        // Apply Filter
+                                                        if (isMandatory) {
+                                                            if (score < tMandatory) return null;
+                                                        } else if (!isMT) {
+                                                            // Optional / Archive
+                                                            if (score < tOptional) return null;
+                                                        }
 
                                                         // Determine shortcut label index
                                                         let shortcutLabel = '';

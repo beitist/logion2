@@ -328,7 +328,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # Return Top 5 for Display
     return final_matches[:5]
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-2.0-flash"):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-2.0-flash", custom_prompt=""):
     """
     Generates a draft translation using aligned context.
     """
@@ -337,12 +337,18 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     
     # 2. HyDE / Machine Translation Feature
     # User still wants the "MT" card.
-    # We can generate it fresh or treat the draft as MT.
     
     mt_draft = ""
     try:
+        # Construct dynamic system instruction
+        system_instruction = f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text. No preamble, no markdown formatting, no 'Translation:'."
+        
+        # Inject Custom Prompt (Technical/Style)
+        if custom_prompt and custom_prompt.strip():
+            system_instruction += f"\n\nStyle Guide / User Instructions:\n{custom_prompt}"
+            
         draft_model = genai.GenerativeModel(model_name)
-        res = draft_model.generate_content(f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text. No preamble, no markdown formatting, no 'Translation:'.\nSource: {segment_text}")
+        res = draft_model.generate_content(f"{system_instruction}\n\nSource: {segment_text}")
         mt_draft = res.text.strip()
         # Add MT match to list
         if mt_draft:
@@ -360,16 +366,8 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     # 3. Construct Prompt with context
     context_str = "\n".join([f"- {m['content']}" for m in matches if m['type'] != 'mt'])
     
-    prompt = f"""
-    Translate source to target.
-    
-    Source ({source_lang}): "{segment_text}"
-    
-    Reference Material (Use if relevant):
-    {context_str}
-    
-    Target ({target_lang}):
-    """
+    # Note: Currently 'prompt' var below is unused/dead code as we just return MT draft.
+    # But for future "Context-Aware" generation, we would use it.
     
     # 4. Generate Final Draft
     return {
@@ -391,8 +389,9 @@ def generate_project_drafts(project_id: str):
         config = project.config or {}
         ai_settings = config.get("ai_settings", {})
         model = ai_settings.get("model", "gemini-2.0-flash")
+        custom_prompt = ai_settings.get("custom_prompt", "")
         
-        print(f"Generating drafts for project {project_id}...")
+        print(f"Generating drafts for project {project_id} (Model: {model})...")
         
         for seg in segments:
             try:
@@ -403,7 +402,8 @@ def generate_project_drafts(project_id: str):
                     target_lang=project.target_lang,
                     project_id=project_id,
                     db=db,
-                    model_name=model
+                    model_name=model,
+                    custom_prompt=custom_prompt
                 )
                 
                 current_meta = dict(seg.metadata_json or {})

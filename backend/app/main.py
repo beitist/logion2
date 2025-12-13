@@ -30,3 +30,15 @@ app.include_router(segment.router)
 @app.get("/")
 def read_root():
     return {"message": "Logion 2 Backend Running"}
+
+@app.get("/config/models")
+def get_ai_models():
+    """Returns the list of available AI models from ai_models.json"""
+    try:
+        import json
+        with open("ai_models.json", "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading models: {e}")
+        # Fallback if file missing
+        return {"models": [{"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash (Fallback)", "provider": "google"}]}
