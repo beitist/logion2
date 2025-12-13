@@ -1,5 +1,5 @@
 import os
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from .memory import TranslationMemory
@@ -8,14 +8,13 @@ class AITranslator:
     def __init__(self):
         self.memory = TranslationMemory()
         
-        # User requested LangChain as "pass" / placeholder for now.
-        # We prepare the client but don't force it to be used yet if no key.
+        # Switched to Gemini (User Request)
         self.llm = None
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("GOOGLE_API_KEY")
         if api_key:
-            self.llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)
+            self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3, google_api_key=api_key)
         else:
-            print("WARN: No OPENAI_API_KEY found. AI Translation will fall back to dummy mode.")
+            print("WARN: No GOOGLE_API_KEY found. AI Translation will fall back to dummy mode.")
 
     def translate_segment(self, source_text: str, target_lang: str = "de") -> str:
         """

@@ -423,9 +423,12 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     segment.target_content = result["target_text"]
     
     # Let's use metadata_json for now.
-    current_meta = segment.metadata_json or {}
+    current_meta = dict(segment.metadata_json or {})
     current_meta['context_matches'] = result["context_matches"]
     segment.metadata_json = current_meta
+    
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(segment, "metadata_json")
     
     db.commit()
     db.refresh(segment)

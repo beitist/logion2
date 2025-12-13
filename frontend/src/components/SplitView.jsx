@@ -638,52 +638,61 @@ export function SplitView({ projectId }) {
                                     )}
 
                                     {/* Context Panel (Matches) */}
+                                    {/* Context Panel (Matches) */}
                                     {hasContext && (
                                         <div className="mt-6 border-t border-gray-200 pt-4">
                                             <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                                <span className="w-1 h-1 bg-gray-400 rounded-full"></span> AI Context / References
+                                                <span className="w-1 h-1 bg-gray-400 rounded-full"></span> Translation Memory / Context
                                             </h4>
-                                            <div className="space-y-3">
-                                                {(seg.context_matches || seg.metadata.context_matches).map((match, idx) => {
-                                                    // Determine styles based on match type
-                                                    let borderClass = 'border-l-4 border-gray-300';
-                                                    let bgClass = 'bg-gray-50';
-                                                    let textClass = 'text-gray-600';
-                                                    let label = 'Optional';
+                                            <div className="space-y-2">
+                                                {(seg.context_matches || seg.metadata.context_matches || [])
+                                                    .sort((a, b) => (b.score || 0) - (a.score || 0))
+                                                    .map((match, idx) => {
+                                                        const isMandatory = match.type === 'mandatory';
+                                                        const isMT = match.type === 'mt';
 
-                                                    if (match.type === 'mandatory') {
-                                                        borderClass = 'border-l-4 border-red-500';
-                                                        bgClass = 'bg-red-50/50';
-                                                        textClass = 'text-red-700';
-                                                        label = 'Mandatory';
-                                                    } else if (match.type === 'internal') {
-                                                        borderClass = 'border-l-4 border-teal-500';
-                                                        bgClass = 'bg-teal-50/50';
-                                                        textClass = 'text-teal-700';
-                                                        label = 'Internal Match';
-                                                    } else {
-                                                        borderClass = 'border-l-4 border-blue-400';
-                                                        bgClass = 'bg-blue-50/50';
-                                                        textClass = 'text-blue-700';
-                                                        label = 'Optional';
-                                                    }
+                                                        // Styles
+                                                        let borderClass = isMandatory ? 'border-l-red-500' : 'border-l-blue-400';
+                                                        let bgClass = 'bg-white';
+                                                        let textClass = isMandatory ? 'text-red-700' : 'text-blue-700';
+                                                        let label = isMandatory ? '⚖️ Vorgabe' : '💡 Vorschlag aus Archiv';
 
-                                                    return (
-                                                        <div key={idx} className={`p-3 rounded-r-lg text-sm ${borderClass} ${bgClass} transition-colors`}>
-                                                            <div className="flex justify-between items-start mb-1.5">
-                                                                <span className={`text-[10px] font-bold uppercase tracking-wider ${textClass}`}>
-                                                                    {label}
-                                                                </span>
-                                                                <span className="text-[10px] text-gray-400 truncate max-w-[120px] font-mono" title={match.filename}>
-                                                                    {match.filename}
-                                                                </span>
+                                                        if (isMT) {
+                                                            borderClass = 'border-l-purple-500';
+                                                            bgClass = 'bg-purple-50';
+                                                            textClass = 'text-purple-700';
+                                                            label = '🤖 Machine Translation';
+                                                        }
+
+                                                        return (
+                                                            <div key={idx} className={`p-2.5 rounded border transition-all hover:shadow-sm ${bgClass} ${borderClass} border-gray-200`}>
+                                                                <div className="flex justify-between items-start mb-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${textClass}`}>
+                                                                            {label}
+                                                                        </span>
+                                                                        {match.score !== undefined && !isMT && (
+                                                                            <span className={`text-[9px] font-bold px-1.5 rounded-full ${match.score > 85 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                                                {match.score}%
+                                                                            </span>
+                                                                        )}
+                                                                        {/* Shortcut Hint */}
+                                                                        <span className="text-[9px] font-mono text-gray-400 bg-white/50 px-1 rounded border border-gray-100 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                            {isMT ? 'Cmd+Opt+0' : (idx === 0 ? 'Cmd+Opt+9' : idx === 1 ? 'Cmd+Opt+8' : idx === 2 ? 'Cmd+Opt+7' : '')}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1 text-[9px] text-gray-400 font-mono" title={match.filename}>
+                                                                        <span className="truncate max-w-[100px]">{match.filename}</span>
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Content - Smart Sentence Display */}
+                                                                <div className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100">
+                                                                    {match.content}
+                                                                </div>
                                                             </div>
-                                                            <div className="text-gray-800 leading-snug text-[13px]">
-                                                                {match.content}
-                                                            </div>
-                                                        </div>
-                                                    )
-                                                })}
+                                                        )
+                                                    })}
                                             </div>
                                         </div>
                                     )}

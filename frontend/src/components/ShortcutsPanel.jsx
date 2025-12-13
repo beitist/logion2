@@ -6,8 +6,7 @@ export function ShortcutsPanel({ isOpen, onClose }) {
 
     const shortcuts = [
         { keys: ["Cmd", "Enter"], desc: "Save Segment", category: "Editor" },
-        { keys: ["Cmd", "J"], desc: "Generate AI Draft (MT)", category: "AI" },
-        { keys: ["Cmd", "Alt", "M"], desc: "Get Machine Translation", category: "AI" },
+        { keys: ["Cmd", "Alt", "N"], desc: "Get AI Translation", category: "AI" },
         { keys: ["Cmd", "Alt", "1"], desc: "Insert Mandatory Match", category: "Context" },
         { keys: ["Cmd", "Alt", "2"], desc: "Insert Internal Match", category: "Context" },
         { keys: ["Cmd", "Alt", "3"], desc: "Insert Optional Match", category: "Context" },

@@ -77,7 +77,7 @@ class ContextChunk(Base):
     file_id = Column(String, ForeignKey("project_files.id", ondelete="CASCADE"), nullable=False)
     
     content = Column(Text, nullable=False) # The chunk text
-    embedding = Column(Vector(1536)) # Google gemini-embedding-001
+    embedding = Column(Vector(768)) # LaBSE Embeddings
     
     # We link back to the file, which links to the project.
     file = relationship("ProjectFile", back_populates="chunks")

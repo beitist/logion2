@@ -55,17 +55,27 @@ const TagNode = Node.create({
     },
 })
 
-const MenuBar = ({ editor, availableTags }) => {
+const MenuBar = ({ editor, availableTags, onAiDraft }) => {
     if (!editor) {
         return null
     }
 
     return (
         <div className="flex flex-wrap items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 rounded-t-md">
-            {console.log("MenuBar Tags:", availableTags)}
-            {/* Standard Formatting Buttons Removed per User Request ("Lieber Chips") */}
-
-            {/* Tag Buttons: INSERT NODE */}
+            {/* AI Action Button */}
+            {onAiDraft && (
+                <>
+                    <button
+                        onClick={onAiDraft}
+                        className="px-3 py-1 text-xs font-bold rounded border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 flex items-center gap-1 mr-2"
+                        title="Generate AI Draft (Ctrl+Space)"
+                    >
+                        <span>🪄</span>
+                        <span>AI Draft</span>
+                    </button>
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                </>
+            )}
 
             {/* Tag Buttons: INSERT NODE */}
             {/* 1. Generic Tab Button (if any available) */}
@@ -115,11 +125,13 @@ const MenuBar = ({ editor, availableTags }) => {
 export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
+    const contextMatchesRef = React.useRef(contextMatches);
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
         onAiDraftRef.current = onAiDraft;
-    }, [aiSettings, onAiDraft]);
+        contextMatchesRef.current = contextMatches;
+    }, [aiSettings, onAiDraft, contextMatches]);
 
     const editor = useEditor({
         extensions: [
@@ -135,28 +147,42 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             Extension.create({
                 addKeyboardShortcuts() {
                     return {
-                        'Alt-1': () => {
-                            if (contextMatches && contextMatches[0]) {
-                                return this.editor.commands.insertContent(contextMatches[0].content + " ")
+                        'Mod-Alt-0': () => {
+                            const matches = contextMatchesRef.current;
+                            const mtMatch = matches?.find(m => m.type === 'mt');
+                            if (mtMatch) {
+                                return this.editor.commands.setContent(mtMatch.content)
+                            }
+                            return false;
+                        },
+                        'Mod-Alt-9': () => {
+                            const matches = contextMatchesRef.current;
+                            // Filter out MT for numeric shortcuts to keep 0 distinct
+                            const refs = matches?.filter(m => m.type !== 'mt') || [];
+                            if (refs[0]) {
+                                return this.editor.commands.setContent(refs[0].content)
                             }
                             return false
                         },
-                        'Alt-2': () => {
-                            if (contextMatches && contextMatches[1]) {
-                                return this.editor.commands.insertContent(contextMatches[1].content + " ")
+                        'Mod-Alt-8': () => {
+                            const matches = contextMatchesRef.current;
+                            const refs = matches?.filter(m => m.type !== 'mt') || [];
+                            if (refs[1]) {
+                                return this.editor.commands.setContent(refs[1].content)
                             }
                             return false
                         },
-                        'Alt-3': () => {
-                            if (contextMatches && contextMatches[2]) {
-                                return this.editor.commands.insertContent(contextMatches[2].content + " ")
+                        'Mod-Alt-7': () => {
+                            const matches = contextMatchesRef.current;
+                            const refs = matches?.filter(m => m.type !== 'mt') || [];
+                            if (refs[2]) {
+                                return this.editor.commands.setContent(refs[2].content)
                             }
                             return false
                         },
-                        'Mod-j': () => {
-                            const enabled = aiSettingsRef.current?.enable_shortcut;
-                            // console.log("Mod-J triggered. Enabled:", enabled);
-                            if (enabled && onAiDraftRef.current && segmentId) {
+                        'Mod-Alt-ü': () => {
+                            // Explicit MT shortcut "Get AI Translation"
+                            if (onAiDraftRef.current && segmentId) {
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
                                         this.editor.commands.setContent(newContent);
@@ -166,9 +192,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false;
                         },
-                        'Mod-Alt-m': () => {
-                            // Explicit MT shortcut "Get Machine Translation"
-                            // Always enabled or dependent on setting? Let's assume always enabled for now or same setting.
+                        'Control-Space': () => {
+                            // Easier shortcut for AI Draft
                             if (onAiDraftRef.current && segmentId) {
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
@@ -195,6 +220,18 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         onUpdate: ({ editor }) => {
             if (onUpdate) onUpdate(editor.getHTML());
         },
+        onFocus: ({ editor }) => {
+            // Auto-Trigger AI Draft if empty (User Request)
+            if (editor.isEmpty && onAiDraftRef.current && segmentId) {
+                console.log("Auto-triggering AI Draft on focus...");
+                // Visual feedback? The Magic Wand button handles it nicely.
+                onAiDraftRef.current(segmentId).then((newContent) => {
+                    if (newContent && editor.isEmpty) { // Check empty again to be safe
+                        editor.commands.setContent(newContent);
+                    }
+                });
+            }
+        },
         onBlur: ({ editor }) => {
             if (onSave && segmentId) {
                 onSave(segmentId, editor.getHTML())
@@ -220,7 +257,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             ? 'bg-gray-50 text-gray-700 border-gray-200'
             : 'bg-white border-gray-300 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm'
             }`}>
-            {!isReadOnly && <MenuBar editor={editor} availableTags={availableTags} />}
+            {!isReadOnly && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={() => onAiDraft && segmentId ? onAiDraft(segmentId) : null} />}
             <EditorContent editor={editor} className="min-h-[100px] outline-none p-4" />
         </div>
     )

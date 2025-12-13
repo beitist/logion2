@@ -7,11 +7,36 @@ from dotenv import load_dotenv
 import zipfile
 import re
 from xml.etree import ElementTree
+import torch
+import pysbd
+from sentence_transformers import SentenceTransformer, CrossEncoder, util
+import numpy as np
 
 load_dotenv()
 
-# Configure Gemini
+# Configure Gemini (Still used for generative tasks)
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# --- LOAD LOCAL MODELS ---
+# We load them once at startup.
+# Check for MPS (Apple Silicon)
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"Loading Models on {device}...")
+
+try:
+    # 1. Bi-Encoder (LaBSE) - 768 Dimensions
+    # Using 'sentence-transformers/LaBSE'
+    _bi_encoder = SentenceTransformer('sentence-transformers/LaBSE', device=device)
+    
+    # 2. Cross-Encoder (Reranking)
+    # Using 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1'
+    _cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1', device=device)
+    
+    print("✅ Models Loaded Successfully.")
+except Exception as e:
+    print(f"❌ Error loading models: {e}")
+    _bi_encoder = None
+    _cross_encoder = None
 
 def extract_text_from_docx(docx_path):
     try:
@@ -32,39 +57,11 @@ def extract_text_from_docx(docx_path):
 def clean_text(text):
     return re.sub(r'\s+', ' ', text).strip()
 
-def chunk_text(text, chunk_size=500, overlap=50):
-    chunks = []
-    if not text:
-        return chunks
-        
-    start = 0
-    text_len = len(text)
-    
-    CHAR_CHUNK = chunk_size * 4 
-    CHAR_OVERLAP = overlap * 4
-    
-    while start < text_len:
-        end = min(start + CHAR_CHUNK, text_len)
-        chunk = text[start:end]
-        
-        if end < text_len:
-            last_period = chunk.rfind('.')
-            if last_period > CHAR_CHUNK * 0.5:
-                end = start + last_period + 1
-                chunk = text[start:end]
-            
-        chunks.append(chunk)
+# Initialize Segmenter
+_segmenter = pysbd.Segmenter(language="en", clean=False)
 
-        if end >= text_len:
-            break
-            
-        step = end - CHAR_OVERLAP
-        if step <= start:
-             start = start + 1
-        else:
-             start = step
-        
-    return chunks
+
+# --- Ingestion ---
 
 from .database import SessionLocal
 
@@ -80,7 +77,6 @@ def reingest_project(project_id: str):
             return
             
         # Delete chunks for this project's files
-        # Find all file IDs
         file_ids = db.query(ProjectFile.id).filter(ProjectFile.project_id == project_id).all()
         file_ids = [f[0] for f in file_ids]
         
@@ -119,7 +115,11 @@ def ingest_project_files(project_id: str):
              print(f"Log error: {e}")
 
     try:
-        log_msg(f"Starting analysis for project {project_id}")
+        if not _bi_encoder:
+            log_msg("FATAL: Encoder models not loaded.")
+            return
+
+        log_msg(f"Starting Cross-Lingual Ingestion for project {project_id}")
         
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
@@ -128,101 +128,93 @@ def ingest_project_files(project_id: str):
         project.rag_status = "ingesting"
         db.commit()
     
-        # Determine strict defaults
-        categories_to_ingest = [ProjectFileCategory.legal.value, ProjectFileCategory.background.value]
-        
-        # Check Project Config for 'include_source_rag'
-        # Default: True? Plan said Internal Fuzzy Match is useful.
-        # But let's check config if present, or existing setting.
-        # Assuming user defaulted to Yes for now based on prompt.
-        categories_to_ingest.append(ProjectFileCategory.source.value)
+        # Categories to ingest (excluding Source)
+        categories_to_ingest = [
+            ProjectFileCategory.legal.value, 
+            ProjectFileCategory.background.value
+        ]
         
         target_files = db.query(ProjectFile).filter(
             ProjectFile.project_id == project_id,
             ProjectFile.category.in_(categories_to_ingest)
         ).all()
         
-        log_msg(f"Found {len(target_files)} files to process (Source/Legal/Background).")
+        log_msg(f"Found {len(target_files)} files to process (Legal/Background).")
 
         total_chunks = 0
-        BATCH_SIZE = 100
+        BATCH_SIZE = 32
         
         for file_record in target_files:
             log_msg(f"Processing file: {file_record.filename} ({file_record.category})...")
             
-            # 1. Download
             temp_path = f"temp_rag_{file_record.id}_{file_record.filename}"
             try:
                 download_file(file_record.file_path, temp_path)
                 
-                # 2. Extract
                 if file_record.filename.endswith(".docx"):
                     raw_text = extract_text_from_docx(temp_path)
-                elif file_record.filename.endswith(".xlsx"):
-                    # TODO: Implement XLSX support if needed
-                    raw_text = ""
                 else: 
-                    # Try text? 
-                    raw_text = ""
+                    raw_text = "" # Add PDF support later if needed
                     
                 if not raw_text:
-                    log_msg(f"Skipping {file_record.filename} (empty or unsupported format)")
+                    log_msg(f"Skipping {file_record.filename} (empty or unsupported)")
                     continue
                 
-                log_msg(f"Extracted {len(raw_text)} chars. Cleaning & Chunking...")
-                text = clean_text(raw_text)
+                # raw_text = clean_text(raw_text) # Removed to preserve newlines for paragraph splitting
                 
-                # 3. Chunk
-                chunks = chunk_text(text)
-                log_msg(f"Generated {len(chunks)} chunks. Vektorizing...")
+                # 3. Sentence Splitting (TM-like) - USER APPROVED STRATEGY
+                chunks = []
+                # Split by paragraphs to be safe
+                paragraphs = raw_text.split('\n')
+                for p in paragraphs:
+                    p_clean = clean_text(p)
+                    if p_clean:
+                        # Split paragraph into sentences
+                        try:
+                            sents = _segmenter.segment(p_clean)
+                        except:
+                            sents = [p_clean] # Fallback
+                        
+                        for s in sents:
+                            if len(s.strip()) > 3:
+                                chunks.append(s.strip())
                 
-                # 4. Embed & Store in batches
+                log_msg(f"Generated {len(chunks)} sentence segments (Granular). Encoding...")
+                
+                # 4. Embed & Store
                 for i in range(0, len(chunks), BATCH_SIZE):
                     batch = chunks[i : i + BATCH_SIZE]
-                    # log_msg(f"Embedding batch {i}...")
                     
-                    try:
-                        result = genai.embed_content(
-                            model='models/gemini-embedding-001',
-                            content=batch,
-                            task_type="retrieval_document",
-                            title=file_record.filename,
-                            output_dimensionality=1536
-                        )
+                    # LaBSE Encoding
+                    embeddings = _bi_encoder.encode(batch, convert_to_numpy=True, normalize_embeddings=True)
+                    
+                    db_chunks = []
+                    for content, vector in zip(batch, embeddings):
+                        # Ensure vector matches DB dimension (768)
+                        db_chunks.append(ContextChunk(
+                            file_id=file_record.id,
+                            content=content, 
+                            embedding=vector.tolist()
+                        ))
+                    
+                    db.add_all(db_chunks)
+                    db.commit() 
+                    total_chunks += len(batch)
+                    log_msg(f"Stored batch {i // BATCH_SIZE + 1}.")
                         
-                        embeddings = result['embedding']
-                        
-                        db_chunks = []
-                        for content, vector in zip(batch, embeddings):
-                            db_chunks.append(ContextChunk(
-                                file_id=file_record.id,
-                                content=content,
-                                embedding=vector
-                            ))
-                        
-                        db.add_all(db_chunks)
-                        db.commit() 
-                        total_chunks += len(batch)
-                        log_msg(f"Stored batch {i // BATCH_SIZE + 1} ({len(batch)} vectors).")
-                        
-                    except Exception as api_err:
-                        log_msg(f"GOOGLE API ERROR: {str(api_err)}")
-                        # Don't crash entire process, try next batch?
-                        continue
-
             except Exception as e:
                 log_msg(f"ERROR processing {file_record.filename}: {e}")
             finally:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
 
+
         project.rag_status = "ready"
-        log_msg(f"RAG READY. Knowledge base refreshed: {total_chunks} vectors.")
+        log_msg(f"RAG READY. Knowledge base refreshed: {total_chunks} alignment vectors.")
         
-        # Trigger Draft Generation for Segments
-        log_msg("Starting automatic draft generation for segments...")
+        # Trigger Auto-Draft
+        log_msg("Starting automatic draft generation...")
         generate_project_drafts(project_id)
-        log_msg("Draft generation complete.")
         
         db.commit()
 
@@ -238,117 +230,155 @@ def ingest_project_files(project_id: str):
 
 # --- Search Logic ---
 
-def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=5, threshold=0.4):
+def extract_numbers(text):
+    return set(re.findall(r'\d+', text))
+
+def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=30, threshold=0.0):
     """
-    Retrieves chunks relevant to the segment.
-    Filters by similarity (1 - cosine_distance).
-    0.0 = no similarity, 1.0 = identical.
-    Wait: pgvector cosine_distance is 0 for identical, 1 for opposite?
-    pgvector: <=> operator is Cosine Distance. (1 - Cosine Similarity).
-    So if user wants threshold 0.8 Similarity, that means Distance < 0.2.
+    Retrieves chunks using LaBSE + Cross-Encoder Reranking + Number Penalty.
     """
-    if not segment_text or len(segment_text) < 5:
+    if not segment_text or len(segment_text) < 2 or not _bi_encoder:
         return []
 
-    # 1. Embed Query
+    # 1. Bi-Encoder Retrieval (Recall)
     try:
-        query_vector = genai.embed_content(
-            model='models/gemini-embedding-001',
-            content=segment_text,
-            task_type="retrieval_query",
-            output_dimensionality=1536
-        )['embedding']
+        # Encode Query (Source English)
+        query_vector = _bi_encoder.encode(segment_text, normalize_embeddings=True).tolist()
     except Exception as e:
         print(f"Embedding error: {e}")
         return []
-        
-    # Convert 'Similarity Threshold' (0.0-1.0) to 'Distance Limit' (0.0-2.0)
-    # Higher similarity = Lower distance.
-    # threshold 0.8 means distance must be < 0.2
-    distance_limit = 1.0 - threshold
     
-    # 2. Search
-    results = db.query(ContextChunk, ProjectFile).join(ProjectFile)\
+    # Search for Top K (30) candidates
+    # Note: distance is Cosine Distance (1 - similarity)
+    # Using a loose threshold for initial recall
+    results = db.query(ContextChunk, ProjectFile)\
+        .join(ProjectFile)\
         .filter(ProjectFile.project_id == project_id)\
-        .filter(ContextChunk.embedding.cosine_distance(query_vector) < distance_limit)\
         .order_by(ContextChunk.embedding.cosine_distance(query_vector))\
         .limit(limit)\
         .all()
         
-    structured_results = []
-    for chunk, file in results:
-        # Determine strictness based on category
-        match_type = "mandatory" if file.category == "legal" else \
-                     "internal" if file.category == "source" else "optional"
+    if not results:
+        return []
+
+    # 2. Reranking (Precision)
+    # Prepare pairs: [Query, German Candidate]
+    candidates = [r[0].content for r in results]
+    pairs = [[segment_text, doc] for doc in candidates]
+    
+    try:
+        # Get Cross-Encoder Logits
+        # This is where the magic happens: It sees source AND target
+        scores = _cross_encoder.predict(pairs)
+    except Exception as e:
+        print(f"Reranking error: {e}")
+        import numpy as np
+        scores = np.zeros(len(candidates)) # Fallback
+    
+    # 3. Heuristics & Number Penalty
+    final_matches = []
+    
+    query_numbers = extract_numbers(segment_text)
+    
+    for idx, (chunk, file) in enumerate(results):
+        base_score = float(scores[idx]) # Logit score (approx -10 to 10)
         
-        structured_results.append({
+        # Sigmoid-like normalization to 0-100 for UI?
+        # Typically Cross-Encoder > 0 is relevant. > 4 is very high.
+        # Let's map roughly: <0 -> 0-40%, 0-5 -> 50-90%, >5 -> 95%
+        # Or just use the penalty logic on the logit.
+        
+        # Number Penalty
+        chunk_numbers = extract_numbers(chunk.content)
+        missing_numbers = query_numbers - chunk_numbers
+        
+        penalty = 0.0
+        if missing_numbers:
+             penalty = 5.0 # Massive penalty for missing numbers
+             
+        final_score_logit = base_score - penalty
+        
+        # Convert Logit to UI Score (0-100)
+        # Simple heuristic mapping
+        import math
+        if final_score_logit > 6.0:
+            ui_score = 100
+        else:
+            ui_score = 1 / (1 + math.exp(-final_score_logit)) * 100 # Sigmoid
+        
+        # Hard cut-off for "Bad Matches"
+        if final_score_logit < -1.0: 
+            continue # Filter out completely
+            
+        match_type = "mandatory" if file.category == "legal" else "optional"
+        
+        final_matches.append({
             "id": chunk.id,
             "content": chunk.content,
             "filename": file.filename,
             "type": match_type,
-            "category": file.category
+            "category": file.category,
+            "score": int(ui_score), # Integer format
+            "raw_logit": final_score_logit
         })
-        
-    return structured_results
+
+    # Sort by Final UI Score
+    final_matches.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Return Top 5 for Display
+    return final_matches[:5]
 
 def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-2.0-flash"):
     """
-    Generates a draft translation using RAG context.
-    Returns { target_text: str, context_matches: list }
+    Generates a draft translation using aligned context.
     """
+    # 1. Retrieve Context (New Pipeline)
+    matches = search_context_for_segment(segment_text, project_id, db)
     
-    # 1. Retrieve Context
-    matches = search_context_for_segment(segment_text, project_id, db, threshold=threshold)
+    # 2. HyDE / Machine Translation Feature
+    # User still wants the "MT" card.
+    # We can generate it fresh or treat the draft as MT.
     
-    # 2. Construct Prompt
-    mandatory_context = "\n".join([f"- {m['content']} (Source: {m['filename']})" for m in matches if m['type'] == 'mandatory'])
-    internal_context = "\n".join([f"- {m['content']} (Source: {m['filename']})" for m in matches if m['type'] == 'internal']) # Source file self-matches
-    optional_context = "\n".join([f"- {m['content']} (Source: {m['filename']})" for m in matches if m['type'] == 'optional'])
+    mt_draft = ""
+    try:
+        draft_model = genai.GenerativeModel(model_name)
+        res = draft_model.generate_content(f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text. No preamble, no markdown formatting, no 'Translation:'.\nSource: {segment_text}")
+        mt_draft = res.text.strip()
+        # Add MT match to list
+        if mt_draft:
+            matches.insert(0, {
+                 "id": "mt-draft",
+                 "content": mt_draft,
+                 "filename": "Machine Translation", 
+                 "type": "mt",
+                 "category": "ai",
+                 "score": 101 # Always top
+            })
+    except:
+        pass
+
+    # 3. Construct Prompt with context
+    context_str = "\n".join([f"- {m['content']}" for m in matches if m['type'] != 'mt'])
     
     prompt = f"""
-    You are a professional translator for technical and development cooperation texts.
-    Translate the following text from {source_lang} to {target_lang}.
+    Translate source to target.
     
-    Input Text: "{segment_text}"
+    Source ({source_lang}): "{segment_text}"
     
-    Instructions:
-    - Maintain the tone and style of the input.
-    - PREFER terminology found in the MANDATORY REFERENCES below.
-    - Check INTERNAL CONSISTENCY with other source segments if provided.
-    - Use OPTIONAL REFERENCES for style/context inspiration.
-    - Return ONLY the translated text, no explanations.
-    - Preserve XML tags like <1>...</1> exactly if present.
+    Reference Material (Use if relevant):
+    {context_str}
     
+    Target ({target_lang}):
     """
     
-    if mandatory_context:
-        prompt += f"\nMANDATORY REFERENCES (Must follow terminology):\n{mandatory_context}\n"
-        
-    if internal_context:
-        prompt += f"\nINTERNAL CONTEXT (Previous/Similar source segments):\n{internal_context}\n"
-
-    if optional_context:
-        prompt += f"\nOPTIONAL REFERENCES (Context/Inspiration):\n{optional_context}\n"
-        
-    # 3. Call Gemini
-    try:
-        # model_name passed from caller (config)
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
-        draft = response.text.strip()
-    except Exception as e:
-        print(f"Generation error: {e}")
-        draft = "" 
-        
+    # 4. Generate Final Draft
     return {
-        "target_text": draft,
+        "target_text": mt_draft, # Use MT as the draft for now
         "context_matches": matches
     }
 
 def generate_project_drafts(project_id: str):
-    """
-    Background task: Generates drafts and context matches for all segments in a project.
-    """
+    # Same as before...
     from .database import SessionLocal
     from .models import Segment, Project
     
@@ -357,42 +387,40 @@ def generate_project_drafts(project_id: str):
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project: return
         
-        segments = db.query(Segment).filter(Segment.project_id == project_id, Segment.target_content == None).all()
-        
-        # Determine config
+        segments = db.query(Segment).filter(Segment.project_id == project_id).all()
         config = project.config or {}
         ai_settings = config.get("ai_settings", {})
-        threshold = float(ai_settings.get("similarity_threshold", 0.4))
-        # Default to 2.0-flash if not set
         model = ai_settings.get("model", "gemini-2.0-flash")
         
-        print(f"Generating drafts for project {project_id} ({len(segments)} segments)...")
+        print(f"Generating drafts for project {project_id}...")
         
-        # We can parallelize or batch? For now sequential.
         for seg in segments:
             try:
+                # Updated Pipeline Call
                 res = generate_segment_draft(
                     segment_text=seg.source_content,
                     source_lang=project.source_lang,
                     target_lang=project.target_lang,
                     project_id=project_id,
                     db=db,
-                    threshold=threshold,
                     model_name=model
                 )
                 
-                seg.target_content = res["target_text"]
-                current_meta = seg.metadata_json or {}
+                current_meta = dict(seg.metadata_json or {})
                 current_meta['context_matches'] = res['context_matches']
+                current_meta['ai_draft'] = res["target_text"]
                 seg.metadata_json = current_meta
-                # seg.status = 'draft' 
+                
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(seg, "metadata_json")
+
             except Exception as se:
                 print(f"Error seg {seg.id}: {se}")
         
         db.commit()
-        print(f"Draft generation complete for {project_id}.")
+        print(f"Draft generation complete.")
         
     except Exception as e:
-        print(f"Error generating drafts: {e}")
+        print(f"Error drafts: {e}")
     finally:
         db.close()
