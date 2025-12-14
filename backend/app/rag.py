@@ -448,8 +448,26 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         missing_numbers = query_numbers - chunk_numbers
         
         penalty = 0.0
+        
+        # 1. Number Penalty
         if missing_numbers:
-             penalty = 5.0 # Massive penalty for missing numbers
+             penalty += 5.0 # Massive penalty for missing numbers
+
+        # 2. Length Ratio Penalty (Cross-Lingual Guardrail)
+        # Avoid matching short queries to very long paragraphs just because of entity overlap.
+        try:
+            l_query = len(segment_text)
+            l_chunk = len(chunk.content) # Content is Source Text
+            
+            # If chunk is much longer than query (e.g. 2x)
+            if l_chunk > l_query * 2.0:
+                ratio = l_chunk / max(l_query, 1)
+                # penalty += log(ratio) * 2.0
+                # Ratio 2 -> log(2)=0.69 -> 1.4
+                # Ratio 5 -> log(1.6)=1.6 -> 3.2
+                penalty += math.log(ratio) * 2.0
+        except:
+             pass
              
         final_score_logit = base_score - penalty
         
