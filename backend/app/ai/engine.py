@@ -2,7 +2,7 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from .memory import TranslationMemory
 
@@ -13,29 +13,33 @@ class TranslationResponse(BaseModel):
     alternatives: List[str] = Field(description="1-2 alternative translations if impactful differences exist, or empty list.")
 
 class AITranslator:
-    def __init__(self, model_name: str = "gemini-2.0-pro-exp-02-05"):
+    def __init__(self, default_model: str = "gemini-2.5-pro"):
         self.memory = TranslationMemory()
+        self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.default_model = default_model
+        self.parser = JsonOutputParser(pydantic_object=TranslationResponse)
         
-        # Switched to Gemini (User Request)
-        self.llm = None
-        api_key = os.getenv("GOOGLE_API_KEY")
+        # Cache specific LLM instances by model_name to avoid re-init overhead
+        self._llm_cache = {}
+
+    def _get_llm(self, model_name: str):
+        if not self.api_key: return None
         
-        # User requested specific models. Default: gemini-2.5-pro (mapped to actual ID if known, else pass through)
-        # Note: "gemini-2.5-pro" is likely "gemini-1.5-pro" or a future preview. 
-        # For now, we allow passing the model_name.
-        
-        if api_key:
-            # We use a high context model by default
-            self.llm = ChatGoogleGenerativeAI(
+        # Check cache
+        if model_name in self._llm_cache:
+            return self._llm_cache[model_name]
+            
+        try:
+            llm = ChatGoogleGenerativeAI(
                 model=model_name, 
                 temperature=0.3, 
-                google_api_key=api_key
+                google_api_key=self.api_key
             )
-            
-            # Setup Parser
-            self.parser = JsonOutputParser(pydantic_object=TranslationResponse)
-        else:
-            print("WARN: No GOOGLE_API_KEY found. AI Translation will fall back to dummy mode.")
+            self._llm_cache[model_name] = llm
+            return llm
+        except Exception as e:
+            print(f"Error init LLM {model_name}: {e}")
+            return None
 
     def translate_segment(self, 
                           current_text: str, 
@@ -46,19 +50,25 @@ class AITranslator:
                           ) -> dict:
         """
         Translates a single segment with Smart Context.
-        Returns a dict: {'translation_text': str, 'reasoning': str, ...}
         """
+        # Determine Model
+        model_name = self.default_model
+        custom_prompt = ""
+        
+        if project_config:
+            custom_prompt = project_config.get("custom_prompt", "")
+            # Allow overriding model in config
+            if project_config.get("ai_model"):
+                model_name = project_config.get("ai_model")
+
+        llm = self._get_llm(model_name)
+        
         # 1. Dummy Fallback
-        if not self.llm:
-            return {"translation_text": f"AI_PASS: {current_text}", "reasoning": "No API Key"}
+        if not llm:
+            return {"translation_text": f"AI_PASS: {current_text}", "reasoning": "No API Key or Model Error"}
 
         try:
             # 2. Prepare Context Strings
-            custom_prompt = ""
-            if project_config:
-                # Extract custom prompt from config (assuming structure)
-                # config might be {"custom_prompt": "..."} or raw dict
-                custom_prompt = project_config.get("custom_prompt", "")
                 
             prev_context_str = "\n".join([
                 f"[Seg {s.get('index', '?')}] Source: {s.get('source')}\n[Seg {s.get('index', '?')}] Target: {s.get('target')}"
@@ -107,7 +117,7 @@ class AITranslator:
             ])
             
             # 5. Invoke Chain
-            chain = prompt | self.llm | self.parser
+            chain = prompt | llm | self.parser
             
             result = chain.invoke({
                 "custom_prompt": custom_prompt,
