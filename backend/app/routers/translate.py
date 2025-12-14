@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Segment
+from ..models import Segment, Project
 from ..ai.engine import AITranslator
 
 router = APIRouter(prefix="/translate", tags=["translate"])

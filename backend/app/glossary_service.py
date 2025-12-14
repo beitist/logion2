@@ -56,7 +56,8 @@ class GlossaryMatcher:
         # So we add one by one with ID.
         for entry in entries:
              # Create a Doc from the source term with FULL pipelne (lemmatizer)
-            doc = self.nlp(entry.source_term)
+            # Force lowercase for robust lemma matching (SpaCy proper nouns keep case otherwise)
+            doc = self.nlp(entry.source_term.lower())
             self.matcher.add(entry.id, [doc])
 
     def find_matches(self, text: str) -> List[Dict]:
@@ -66,35 +67,42 @@ class GlossaryMatcher:
         """
         if not text: return []
         
-        doc = self.nlp(text)
+        # Strip XML tags <...> to ensure contiguous matching (e.g. <1>Final</1> <2>Report</2>)
+        import re
+        clean_text = re.sub(r'<[^>]+>', '', text)
+        # Normalize whitespace (replace multiple spaces/newlines with single space)
+        # Also LOWERCASE to ensure lemma matching works against our lowercase patterns
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip().lower()
+        
+        doc = self.nlp(clean_text)
         matches = self.matcher(doc)
         
         results = []
         seen_ids = set()
         
         for match_id, start, end in matches:
-            entry_id = self.nlp.vocab.strings[match_id]
+            # match_id is the hash, we need the string ID
+            # In add_term, we used entry.id (string) as match_id
+            # SpaCy stores string IDs in vocab
+            string_id = self.nlp.vocab.strings[match_id]
+            entry = self.entries_map.get(string_id)
             
-            if entry_id in seen_ids:
-                continue
-                
-            entry = self.entries_map.get(str(entry_id)) # match_id might be hash int? No, we add string ID. 
-            # Wait, matcher.add takes string ID. But returns hash in loop.
-            # So match_id is int hash. string_id = vocab.strings[match_id]
-            
-            # Actually, `match_id` in the loop is the int hash.
-            eid_str = self.nlp.vocab.strings[match_id]
-            
-            if eid_str in self.entries_map:
-                entry = self.entries_map[eid_str]
+            if entry:
                 results.append({
                     "source": entry.source_term,
                     "target": entry.target_term,
                     "note": entry.context_note
                 })
-                seen_ids.add(eid_str)
+        
+        # Dedup based on source term
+        deduped = []
+        seen = set()
+        for r in results:
+            if r['source'] not in seen:
+                deduped.append(r)
+                seen.add(r['source'])
                 
-        return results
+        return deduped
 
     def add_term(self, source: str, target: str, note: str = None) -> GlossaryEntry:
         """

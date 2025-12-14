@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import project, translate, segment
+from .routers import project, translate, segment, glossary
 from .database import engine, Base
 
 # Create DB tables on startup
