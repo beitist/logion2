@@ -93,7 +93,8 @@ class AITranslator:
                 "2. Preserve <n>[COMMENT]</n> tags.\n"
                 "3. Preserve <n>LinkText</n> tags.\n"
                 "4. Use GLOSSARY terms strictly if they appear in the source.\n"
-                "5. Output must be valid JSON.\n"
+                "5. Do NOT add tags if the source text does not contain any. Only preserve existing ones.\n"
+                "6. Output must be valid JSON.\n"
             )
             
             # User Prompt

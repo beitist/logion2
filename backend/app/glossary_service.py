@@ -108,6 +108,10 @@ class GlossaryMatcher:
         """
         Adds a term to DB and computes lemma.
         """
+        # Sanitize Input
+        source = source.strip()
+        target = target.strip()
+        
         doc = self.nlp(source)
         lemma = " ".join([t.lemma_ for t in doc])
         

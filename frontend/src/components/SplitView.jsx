@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft } from "../api/client";
+import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft, getGlossaryTerms } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
 
 // GLOBAL DEBUG FLAG
@@ -27,6 +27,13 @@ export function SplitView({ projectId }) {
     // Glossary Modal State
     const [showGlossaryModal, setShowGlossaryModal] = useState(false);
     const [glossarySelection, setGlossarySelection] = useState("");
+    const [glossaryTerms, setGlossaryTerms] = useState([]); // Cache for display
+
+    useEffect(() => {
+        if (projectId) {
+            getGlossaryTerms(projectId).then(setGlossaryTerms).catch(err => console.warn("Glossary load failed", err));
+        }
+    }, [projectId, showGlossaryModal]); // Reload if modal closes (term added)
 
     // Console & Debug State
     const [showConsole, setShowConsole] = useState(false);

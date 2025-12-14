@@ -1,6 +1,7 @@
 from .tmx import compute_hash, normalize_text
 from .models import TranslationUnit, TranslationOrigin
 import os
+import math
 import google.generativeai as genai
 from sqlalchemy.orm import Session
 from .models import Project, ProjectFile, ContextChunk, ProjectFileCategory
@@ -573,8 +574,6 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         # Old formula: offset 1.5 -> Logit 3.0 = 81%. Too low.
         # New formula: offset 0.5 -> Logit 3.0 = 92%.
         # Boost: If Logit > 4.0 -> 98-99%.
-        
-        import math
         
         if final_score_logit > 4.0:
             ui_score = 99 # Near perfect interaction

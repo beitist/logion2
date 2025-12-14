@@ -13,7 +13,7 @@ from datetime import datetime
 from ..database import get_db, SessionLocal, engine
 from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse, ProjectFileSchema
 from ..parser import parse_docx
-from ..models import Project, Segment, ProjectFile, ProjectFileCategory
+from ..models import Project, Segment, ProjectFile, ProjectFileCategory, GlossaryEntry
 
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
@@ -372,6 +372,9 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
 
     # Delete segments manually to ensure cleanup
     db.query(Segment).filter(Segment.project_id == project_id).delete()
+    # Delete glossary entries manually (no cascade relationship)
+    db.query(GlossaryEntry).filter(GlossaryEntry.project_id == project_id).delete()
+    
     db.delete(project)
     db.commit()
     return {"message": "Project deleted successfully"}
