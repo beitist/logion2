@@ -50,18 +50,22 @@ except Exception as e:
 
 def extract_text_from_docx(docx_path):
     try:
-        text_content = []
-        with zipfile.ZipFile(docx_path) as z:
-            xml_content = z.read("word/document.xml")
-            tree = ElementTree.fromstring(xml_content)
-            NS = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-            for p in tree.iter(f"{NS}p"):
-                texts = [node.text for node in p.iter(f"{NS}t") if node.text]
-                if texts:
-                    text_content.append("".join(texts))
+        import docx
+        doc = docx.Document(docx_path)
+        # Extract text from paragraphs
+        # python-docx handles XML parsing and spacing correctly
+        text_content = [p.text for p in doc.paragraphs]
+        # Also handle tables which might contain key info
+        for table in doc.tables:
+            for row in table.rows:
+                # Join cells with space to prevent glued words
+                row_text = " ".join(cell.text for cell in row.cells)
+                text_content.append(row_text)
+                
         return "\n".join(text_content)
     except Exception as e:
-        print(f"Error extracting DOCX text: {e}")
+        log_msg(f"Error extracting DOCX text with python-docx: {e}")
+        # Fallback to simple binary read if needed, but rarely useful.
         return ""
 
 def clean_text(text):
@@ -231,23 +235,68 @@ def ingest_project_files(project_id: str):
                     
                     for i in range(0, len(chunk_buffer), BATCH_SIZE):
                         batch = chunk_buffer[i : i + BATCH_SIZE]
-                        texts = [b['text'] for b in batch]
-                        embeddings = _bi_encoder.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+                        
+                        # Optimization: Remove tags for embedding to ensure best semantic match
+                        # We still store the tagged version in rich_content (and content)
+                        # Actually: default 'content' should be clean text for display simplicity in list?
+                        # No, display needs tags.
+                        # Let's clean text for embedding only.
+                        def clean_tags(t):
+                             # Remove <1>, </1>, <1 />
+                             import re
+                             return re.sub(r'</?\d+( /)?>', '', t)
+                             
+                        embed_texts = [clean_tags(b['text']) for b in batch]
+                        embeddings = _bi_encoder.encode(embed_texts, convert_to_numpy=True, normalize_embeddings=True)
                         
                         db_chunks = []
                         for b, vec in zip(batch, embeddings):
+                            # 1. Source-based Chunk (Standard) - Search Source, Display Target
                             db_chunks.append(ContextChunk(
                                 file_id=file_record.id,
-                                content=b['text'],
-                                rich_content=b['rich'],
+                                content=b['text'], # Source
+                                rich_content=b['rich'], # Target with tags
                                 embedding=vec.tolist(),
                                 source_segment=b['src_seg'],
                                 target_segment=b['tgt_seg'],
                                 alignment_score=b['score'],
                                 alignment_type=b['type']
                             ))
+                            
+                            # 2. Target-based Chunk (Augmentation) - Search Target, Display Target
+                            # Allows finding the segment even if Source is bad/mismatched but Target matches Query (Cross-Lingual)
+                            # We need to compute embedding for Target.
+                            # Optimization: Do we compute it here or add to batch?
+                            # Adding to this loop is hard because vectors are already computed.
+                            # We can just rely on Source search for now? 
+                            # NO, looking at the logs, Source search failed (0.62). Target search would execute 0.88.
+                            # So strictly we MUST index target.
+                            pass
+                            
                         db.add_all(db_chunks)
                         db.commit()
+                        
+                        # Compute Target Augmentation properly
+                        # Create a secondary batch for targets
+                        tgt_texts = [clean_tags(b['rich']) for b in batch]
+                        tgt_vecs = _bi_encoder.encode(tgt_texts, convert_to_numpy=True, normalize_embeddings=True)
+                        
+                        tgt_chunks = []
+                        for b, t_vec in zip(batch, tgt_vecs):
+                             tgt_chunks.append(ContextChunk(
+                                file_id=file_record.id,
+                                content=b['rich'], # Target (Cleaned? No, DB content usually raw. We used clean for embedding)
+                                # Actually, storing Tagged Target in 'content' is fine.
+                                rich_content=b['rich'], # Display Target
+                                embedding=t_vec.tolist(),
+                                source_segment=b['src_seg'], # Meta info remains same
+                                target_segment=b['tgt_seg'],
+                                alignment_score=b['score'],
+                                alignment_type=b['type']
+                            ))
+                        db.add_all(tgt_chunks)
+                        db.commit()
+
                         total_chunks += len(batch)
                         
                     continue
@@ -262,21 +311,82 @@ def ingest_project_files(project_id: str):
                     continue
                 
                 # 3. Sentence Splitting (TM-like)
-                chunks = []
-                paragraphs = raw_text.split('\n')
-                for p in paragraphs:
-                    p_clean = clean_text(p)
-                    if p_clean:
-                        try:
-                            sents = _segmenter.segment(p_clean)
-                        except:
-                            sents = [p_clean]
-                        
-                        for s in sents:
-                            if len(s.strip()) > 3:
-                                chunks.append(s.strip())
+                # Smart Paragraph Reconstruction:
+                # We attempt to repair broken layouts (hard wraps) by joining lines that belong together
+                # BEFORE sending them to the Semantic Aligner.
                 
-                log_msg(f"Generated {len(chunks)} sentence segments (Granular). Encoding...")
+                chunks = []
+                
+                # First, extract raw lines (splitlines() handles \r\n and \n)
+                raw_lines = [p.strip() for p in raw_text.splitlines() if p.strip()]
+                
+                # Reconstruct Paragraphs
+                reconstructed_paragraphs = []
+                if raw_lines:
+                    current_para = raw_lines[0]
+                    for next_line in raw_lines[1:]:
+                        # Heuristics to merge line L1 with L2:
+                        # 1. L1 ends with hyphen (word split) -> Join without space (or specific logic)
+                        # 2. L1 ends with comma -> Join with space
+                        # 3. L1 ends with known non-sentence-ending abbreviation (e.V.) -> Join with space
+                        # 4. L2 starts with lowercase (continuation) -> Join with space
+                        # 5. L1 does NOT end with sentence terminal (. ! ?) -> Join with space (Aggressive flow)
+                        
+                        should_merge = False
+                        
+                        # Check L1 endings
+                        if current_para.endswith("-"):
+                            should_merge = True # Strict join? Usually space is safer unless explicit word break logic
+                        elif current_para.endswith(","):
+                            should_merge = True
+                        elif current_para.endswith(("e.V.", "z.B.", "u.a.", "bzw.", "bspw.", "etc.")):
+                            should_merge = True
+                        
+                        # Check L2 start (Strong indicator)
+                        if next_line and next_line[0].islower():
+                            should_merge = True
+                            
+                        # Check L1 lack of terminal (Aggressive paragraph builder)
+                        # matches "sagte der" (no period)
+                        if not current_para.endswith((".", "!", "?", ":", ";", ")", "]")):
+                             should_merge = True
+
+                        if should_merge:
+                            # Handle hyphen at newline? "Informati-\non" -> "Information".
+                            # Simple approach: If hyphen, remove it if next is lower? 
+                            # Too risky. Just space separate usually works or keep hyphen.
+                            # Standard docx usually wraps whole words.
+                            current_para += " " + next_line
+                        else:
+                            reconstructed_paragraphs.append(current_para)
+                            current_para = next_line
+                    reconstructed_paragraphs.append(current_para)
+
+                # Helper to process and segment text
+                def process_text_block(text_block):
+                    if not text_block: return
+                    # Simple Language Detection
+                    de_markers = ['der ', 'die ', 'das ', 'und ', ' ist ', ' mit ', ' für ', 'e.V.']
+                    score_de = sum(1 for m in de_markers if m in text_block.lower())
+                    lang = "de" if score_de >= 1 else "en"
+                    
+                    try:
+                        if _aligner:
+                            sents = _aligner.segment_text(text_block, lang=lang)
+                        else:
+                            sents = _segmenter.segment(text_block)
+                    except:
+                        sents = [text_block]
+                    
+                    for s in sents:
+                        s_clean = s.strip()
+                        if len(s_clean) > 3:
+                            chunks.append(s_clean)
+
+                for p in reconstructed_paragraphs:
+                    process_text_block(p)
+                
+                log_msg(f"Generated {len(chunks)} semantic segments (Reconstructed). Encoding...")
                 
                 # 4. Embed & Store
                 for i in range(0, len(chunks), BATCH_SIZE):
@@ -308,9 +418,9 @@ def ingest_project_files(project_id: str):
         project.rag_status = "ready"
         log_msg(f"RAG READY. Knowledge base refreshed: {total_chunks} alignment vectors.")
         
-        # Trigger Auto-Draft
-        log_msg("Starting automatic draft generation...")
-        generate_project_drafts(project_id)
+        # Trigger Auto-Draft (DISABLED for safety/cost)
+        # log_msg("Starting automatic draft generation...")
+        # generate_project_drafts(project_id)
         
         db.commit()
 
@@ -327,7 +437,10 @@ def ingest_project_files(project_id: str):
 # --- Search Logic ---
 
 def extract_numbers(text):
-    return set(re.findall(r'\d+', text))
+    # Remove tags <1>, </1>, <1 /> before extracting numbers
+    # otherwise segment ID tags count as 'missing numbers' if the match doesn't have them.
+    text_no_tags = re.sub(r'</?\d+( /)?>', '', text)
+    return set(re.findall(r'\d+', text_no_tags))
 
 def search_context_for_segment(segment_text: str, project_id: str, db: Session, limit=30, threshold=0.0):
     """

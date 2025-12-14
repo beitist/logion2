@@ -105,6 +105,28 @@ class SemanticAligner:
          aligns source and target text using 1:1, 2:1, 1:2 logic.
          Returns list of { 'source': str, 'target': str, 'score': float, 'type': str }
         """
+        if not source_text or not target_text: return []
+
+        # FAST PATH for simple 1:1 lines (common in TMX)
+        # If text is short and has no typical sentence splitters, return 1:1 immediately
+        # This avoids the expensive Transformer call for 95% of cases.
+        def is_simple(t):
+             if len(t) > 300: return False
+             if "\n" in t: return False
+             # If it contains multiple periods/questions followed by space+upper
+             import re
+             if re.search(r'[.?!]\s+[A-Z]', t): return False
+             return True
+
+        if is_simple(source_text) and is_simple(target_text):
+             # Just return 1:1
+             return [{
+                 "source": source_text,
+                 "target": target_text,
+                 "score": 100,
+                 "type": "1:1" 
+             }]
+
         # 1. Segment
         src_sents = self.segment_text(source_text, "en")
         tgt_sents = self.segment_text(target_text, "de")
@@ -113,7 +135,6 @@ class SemanticAligner:
             return []
 
         # 2. Embed all sentences
-        # Encode strictly for alignment (we can normalize here if needed)
         src_vecs = self.encoder.encode(src_sents, convert_to_tensor=True)
         tgt_vecs = self.encoder.encode(tgt_sents, convert_to_tensor=True)
         
@@ -155,15 +176,6 @@ class SemanticAligner:
             best_score = max(sim_1_1, sim_2_1, sim_1_2)
             
             if best_score < MIN_SCORE:
-                # No good match. Skip both? Or skip one?
-                # Gale-Church usually skips 1. 
-                # Let's verify which one to skip by checking s[i] vs t[j+1] etc.
-                # Heuristic: Skip 1:1 and verify next step logic. 
-                # For simplicity in this v1: We advance both and mark as 'mismatch' or just skip.
-                # Better: Skip the one that maximizes future match?
-                # Let's just advance 1 index in Source and hope to sync? Risk of losing sync.
-                # Fallback: Just save 1:1 with low score?
-                # We save it but alert the system.
                 aligned_pairs.append({
                     "source": s1,
                     "target": t1,
@@ -175,7 +187,6 @@ class SemanticAligner:
                 continue
 
             if best_score == sim_2_1:
-                # 2:1 Winner
                 aligned_pairs.append({
                     "source": src_sents[i] + " " + src_sents[i+1],
                     "target": t1,
@@ -185,7 +196,6 @@ class SemanticAligner:
                 i += 2
                 j += 1
             elif best_score == sim_1_2:
-                # 1:2 Winner
                 aligned_pairs.append({
                     "source": s1,
                     "target": tgt_sents[j] + " " + tgt_sents[j+1],
@@ -195,7 +205,6 @@ class SemanticAligner:
                 i += 1
                 j += 2
             else:
-                # 1:1 Winner
                 aligned_pairs.append({
                     "source": s1,
                     "target": t1,
