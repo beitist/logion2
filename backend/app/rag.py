@@ -400,6 +400,45 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     except Exception as e:
         print(f"TM Lookup Error: {e}")
 
+    # 0.5 Fuzzy (Trigram) Match - The "Almost Exact" Part
+    # User requested tolerance for ~75% match (3/4 words)
+    # Using Postgres pg_trgm operator <-> (distance)
+    try:
+        from sqlalchemy import text
+        # Threshold: 0.4 distance = 60% similarity. Adjust as needed.
+        # Strict enough to avoid noise, loose enough for typos/minor changes.
+        sql = text("""
+            SELECT id, target_text, origin_type, (source_text <-> :query) as dist
+            FROM translation_units
+            WHERE project_id = :pid AND (source_text <-> :query) < 0.4
+            ORDER BY dist ASC
+            LIMIT 5;
+        """)
+        
+        fuzzy_results = db.execute(sql, {"query": segment_text, "pid": project_id}).fetchall()
+        
+        for row in fuzzy_results:
+            # row: (id, target, origin, dist)
+            dist = row[3]
+            score = int((1.0 - dist) * 100)
+            
+            # De-duplicate against exact_matches
+            if any(em['id'] == f"tm-{row[0]}" for em in exact_matches):
+                continue
+                
+            exact_matches.append({
+                "id": f"tm-{row[0]}",
+                "content": row[1],
+                "filename": "Translation Memory (Fuzzy)", 
+                "type": row[2], 
+                "category": "tm",
+                "score": score
+            })
+            
+    except Exception as e:
+        # Fallback if extension missing or error
+        pass # print(f"Fuzzy lookup error: {e}")
+
     if not _bi_encoder:
         return exact_matches
 
