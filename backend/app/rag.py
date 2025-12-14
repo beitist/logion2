@@ -16,6 +16,9 @@ import pysbd
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
 import numpy as np
 
+# Use shared parser
+from .parser import parse_docx
+
 load_dotenv()
 
 # Configure Gemini (Still used for generative tasks)
@@ -48,31 +51,7 @@ except Exception as e:
     _cross_encoder = None
     _aligner = None
 
-def extract_text_from_docx(docx_path):
-    try:
-        import docx
-        doc = docx.Document(docx_path)
-        # Extract text from paragraphs
-        # python-docx handles XML parsing and spacing correctly
-        text_content = [p.text for p in doc.paragraphs]
-        # Also handle tables which might contain key info
-        for table in doc.tables:
-            for row in table.rows:
-                # Join cells with space to prevent glued words
-                row_text = " ".join(cell.text for cell in row.cells)
-                text_content.append(row_text)
-                
-        return "\n".join(text_content)
-    except Exception as e:
-        log_msg(f"Error extracting DOCX text with python-docx: {e}")
-        # Fallback to simple binary read if needed, but rarely useful.
-        return ""
 
-def clean_text(text):
-    return re.sub(r'\s+', ' ', text).strip()
-
-# Initialize Segmenter
-_segmenter = pysbd.Segmenter(language="en", clean=False)
 
 
 # --- Ingestion ---
@@ -301,112 +280,55 @@ def ingest_project_files(project_id: str):
                         
                     continue
                 
+                # Unified Ingestion via Parser
                 if file_record.filename.endswith(".docx"):
-                    raw_text = extract_text_from_docx(temp_path)
-                else: 
-                    raw_text = "" # Add PDF support later if needed
-                    
-                if not raw_text:
-                    log_msg(f"Skipping {file_record.filename} (empty or unsupported)")
-                    continue
-                
-                # 3. Sentence Splitting (TM-like)
-                # Smart Paragraph Reconstruction:
-                # We attempt to repair broken layouts (hard wraps) by joining lines that belong together
-                # BEFORE sending them to the Semantic Aligner.
-                
-                chunks = []
-                
-                # First, extract raw lines (splitlines() handles \r\n and \n)
-                raw_lines = [p.strip() for p in raw_text.splitlines() if p.strip()]
-                
-                # Reconstruct Paragraphs
-                reconstructed_paragraphs = []
-                if raw_lines:
-                    current_para = raw_lines[0]
-                    for next_line in raw_lines[1:]:
-                        # Heuristics to merge line L1 with L2:
-                        # 1. L1 ends with hyphen (word split) -> Join without space (or specific logic)
-                        # 2. L1 ends with comma -> Join with space
-                        # 3. L1 ends with known non-sentence-ending abbreviation (e.V.) -> Join with space
-                        # 4. L2 starts with lowercase (continuation) -> Join with space
-                        # 5. L1 does NOT end with sentence terminal (. ! ?) -> Join with space (Aggressive flow)
-                        
-                        should_merge = False
-                        
-                        # Check L1 endings
-                        if current_para.endswith("-"):
-                            should_merge = True # Strict join? Usually space is safer unless explicit word break logic
-                        elif current_para.endswith(","):
-                            should_merge = True
-                        elif current_para.endswith(("e.V.", "z.B.", "u.a.", "bzw.", "bspw.", "etc.")):
-                            should_merge = True
-                        
-                        # Check L2 start (Strong indicator)
-                        if next_line and next_line[0].islower():
-                            should_merge = True
-                            
-                        # Check L1 lack of terminal (Aggressive paragraph builder)
-                        # matches "sagte der" (no period)
-                        if not current_para.endswith((".", "!", "?", ":", ";", ")", "]")):
-                             should_merge = True
-
-                        if should_merge:
-                            # Handle hyphen at newline? "Informati-\non" -> "Information".
-                            # Simple approach: If hyphen, remove it if next is lower? 
-                            # Too risky. Just space separate usually works or keep hyphen.
-                            # Standard docx usually wraps whole words.
-                            current_para += " " + next_line
-                        else:
-                            reconstructed_paragraphs.append(current_para)
-                            current_para = next_line
-                    reconstructed_paragraphs.append(current_para)
-
-                # Helper to process and segment text
-                def process_text_block(text_block):
-                    if not text_block: return
-                    # Simple Language Detection
-                    de_markers = ['der ', 'die ', 'das ', 'und ', ' ist ', ' mit ', ' für ', 'e.V.']
-                    score_de = sum(1 for m in de_markers if m in text_block.lower())
-                    lang = "de" if score_de >= 1 else "en"
-                    
-                    try:
+                    # Define custom segmentation wrapper
+                    def custom_segmentation(text):
                         if _aligner:
-                            sents = _aligner.segment_text(text_block, lang=lang)
+                            # Language detection simple
+                            de_markers = ['der ', 'die ', 'das ', 'und ', ' ist ', ' mit ', ' für ', 'e.V.']
+                            score_de = sum(1 for m in de_markers if m in text.lower())
+                            lang = "de" if score_de >= 1 else "en"
+                            return _aligner.segment_text(text, lang=lang)
                         else:
-                            sents = _segmenter.segment(text_block)
-                    except:
-                        sents = [text_block]
-                    
-                    for s in sents:
-                        s_clean = s.strip()
-                        if len(s_clean) > 3:
-                            chunks.append(s_clean)
+                            # Fallback if aligner failed
+                             return [text]
 
-                for p in reconstructed_paragraphs:
-                    process_text_block(p)
+                    log_msg("Parsing DOCX with shared parser...")
+                    segments = parse_docx(temp_path, segmentation_func=custom_segmentation)
+                    
+                    # Extract chunks from segments
+                    chunks = []
+                    for seg in segments:
+                        txt = seg.source_text.strip()
+                        if txt and len(txt) > 3:
+                            chunks.append(txt)
+                            
+                    log_msg(f"Generated {len(chunks)} semantic segments (Parser). Encoding...")
+                    
+                    # 4. Embed & Store
+                    for i in range(0, len(chunks), BATCH_SIZE):
+                        batch = chunks[i : i + BATCH_SIZE]
+                        
+                        # LaBSE Encoding
+                        embeddings = _bi_encoder.encode(batch, convert_to_numpy=True, normalize_embeddings=True)
+                        
+                        db_chunks = []
+                        for content, vector in zip(batch, embeddings):
+                            db_chunks.append(ContextChunk(
+                                file_id=file_record.id,
+                                content=content, 
+                                embedding=vector.tolist()
+                            ))
+                        
+                        db.add_all(db_chunks)
+                        db.commit() 
+                        total_chunks += len(batch)
+                        log_msg(f"Stored batch {i // BATCH_SIZE + 1}.")
                 
-                log_msg(f"Generated {len(chunks)} semantic segments (Reconstructed). Encoding...")
-                
-                # 4. Embed & Store
-                for i in range(0, len(chunks), BATCH_SIZE):
-                    batch = chunks[i : i + BATCH_SIZE]
-                    
-                    # LaBSE Encoding
-                    embeddings = _bi_encoder.encode(batch, convert_to_numpy=True, normalize_embeddings=True)
-                    
-                    db_chunks = []
-                    for content, vector in zip(batch, embeddings):
-                        db_chunks.append(ContextChunk(
-                            file_id=file_record.id,
-                            content=content, 
-                            embedding=vector.tolist()
-                        ))
-                    
-                    db.add_all(db_chunks)
-                    db.commit() 
-                    total_chunks += len(batch)
-                    log_msg(f"Stored batch {i // BATCH_SIZE + 1}.")
+                else: 
+                     log_msg(f"Skipping {file_record.filename} (unsupported format)")
+                     continue
                         
             except Exception as e:
                 log_msg(f"ERROR processing {file_record.filename}: {e}")

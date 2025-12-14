@@ -8,7 +8,7 @@ from lxml import etree
 
 from .schemas import SegmentInternal, TagModel
 
-def parse_docx(file_path: str) -> List[SegmentInternal]:
+def parse_docx(file_path: str, segmentation_func=None) -> List[SegmentInternal]:
     """
     Parses a DOCX file and extracts segments with tags for formatting, hyperlinks, and comments.
     """
@@ -36,8 +36,11 @@ def parse_docx(file_path: str) -> List[SegmentInternal]:
     except Exception as e:
         print(f"Warning: Could not load comments: {e}")
 
-    # Helper context to pass comments_map
-    context = {"comments_map": comments_map}
+    # Helper context to pass comments_map, segmentation_func
+    context = {
+        "comments_map": comments_map,
+        "segmentation_func": segmentation_func
+    }
 
     # 1. Body
     segments.extend(_process_container(doc, {"type": "body"}, context))
@@ -279,7 +282,7 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
     
     if not tags:
         # Pure text, safe to split
-        sentences = _split_sentences(full_text)
+        sentences = _split_sentences(full_text, context.get("segmentation_func"))
         for idx, sentence in enumerate(sentences):
              segments_to_create.append((sentence, idx))
     else:
@@ -308,8 +311,10 @@ import pysbd
 
 _segmenter = pysbd.Segmenter(language="en", clean=False)
 
-def _split_sentences(text: str) -> List[str]:
-    # Use pysbd for robust splitting
+def _split_sentences(text: str, segmentation_func=None) -> List[str]:
+    # Use pysbd for robust splitting by default
+    if segmentation_func:
+        return segmentation_func(text)
     return _segmenter.segment(text)
 
 def _extract_tags(run) -> List[TagModel]:
