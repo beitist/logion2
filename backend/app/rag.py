@@ -358,6 +358,42 @@ def ingest_project_files(project_id: str):
 
 # --- Search Logic ---
 
+import difflib
+
+def calculate_hybrid_score(query: str, candidate: str):
+    """
+    Computes a hybrid similarity score (0-100) and details.
+    Strategies:
+    1. Levenshtein Ratio (Char based)
+    2. Token Jaccard (Word based) - handles reordering/stemming proxies
+    """
+    if not query or not candidate: return 0, ""
+    
+    q_norm = normalize_text(query).lower()
+    c_norm = normalize_text(candidate).lower()
+    
+    # 1. Levenshtein
+    lev_ratio = difflib.SequenceMatcher(None, q_norm, c_norm).ratio()
+    lev_score = int(lev_ratio * 100)
+    
+    # 2. Token Jaccard
+    # Simple tokenization
+    q_tokens = set(q_norm.split())
+    c_tokens = set(c_norm.split())
+    
+    if not q_tokens or not c_tokens:
+        tok_score = 0
+    else:
+        intersection = len(q_tokens & c_tokens)
+        union = len(q_tokens | c_tokens)
+        tok_score = int((intersection / union) * 100)
+        
+    # 3. Hybrid Max
+    final_score = max(lev_score, tok_score)
+    
+    details = f"Lev:{lev_score}, Tok:{tok_score}"
+    return final_score, details
+
 def extract_numbers(text):
     # Remove tags <1>, </1>, <1 /> before extracting numbers
     # otherwise segment ID tags count as 'missing numbers' if the match doesn't have them.
@@ -400,43 +436,64 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     except Exception as e:
         print(f"TM Lookup Error: {e}")
 
-    # 0.5 Fuzzy (Trigram) Match - The "Almost Exact" Part
+    # 0.5 Fuzzy (Hybrid) Match - The "Almost Exact" Part
     # User requested tolerance for ~75% match (3/4 words)
-    # Using Postgres pg_trgm operator <-> (distance)
+    # Combining Trigram Distance (<->) AND FTS (@@)
     try:
         from sqlalchemy import text
-        # Threshold: 0.4 distance = 60% similarity. Adjust as needed.
-        # Strict enough to avoid noise, loose enough for typos/minor changes.
+        
+        # We query for candidates that are EITHER:
+        # 1. Trigram close (< 0.4 distance = > 60% char similarity) to catch typos in long words
+        # 2. FTS Match (Stemming) to catch "sources" vs "source"
+        
+        # Note: FTS 'plainto_tsquery' converts "Information sources" -> "inform & sourc"
+        
         sql = text("""
-            SELECT id, target_text, origin_type, (source_text <-> :query) as dist
+            SELECT id, source_text, target_text, origin_type
             FROM translation_units
-            WHERE project_id = :pid AND (source_text <-> :query) < 0.4
-            ORDER BY dist ASC
-            LIMIT 5;
+            WHERE project_id = :pid 
+              AND (
+                  (source_text <-> :query) < 0.45 
+                  OR 
+                  (to_tsvector('english', source_text) @@ plainto_tsquery('english', :query))
+              )
+            LIMIT 10;
         """)
         
+        # We fetch up to 10 candidates to re-score in Python
         fuzzy_results = db.execute(sql, {"query": segment_text, "pid": project_id}).fetchall()
         
+        hybrid_candidates = []
+        
         for row in fuzzy_results:
-            # row: (id, target, origin, dist)
-            dist = row[3]
-            score = int((1.0 - dist) * 100)
+            # row: (id, source, target, origin)
+            cand_src = row[1]
             
-            # De-duplicate against exact_matches
-            if any(em['id'] == f"tm-{row[0]}" for em in exact_matches):
-                continue
-                
-            exact_matches.append({
+            # Python Re-Scoring
+            score, details = calculate_hybrid_score(segment_text, cand_src)
+            
+            # Apply Threshold (e.g. 60%) to filter out FTS noise
+            if score < 60: continue
+            
+            hybrid_candidates.append({
                 "id": f"tm-{row[0]}",
-                "content": row[1],
-                "filename": "Translation Memory (Fuzzy)", 
-                "type": row[2], 
+                "content": row[2], # Target
+                "filename": f"TM (Hybrid {details})", 
+                "type": row[3], 
                 "category": "tm",
                 "score": score
             })
             
+        # Sort by score desc
+        hybrid_candidates.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Add top 5 unique
+        for cand in hybrid_candidates[:5]:
+            if not any(em['id'] == cand['id'] for em in exact_matches):
+                exact_matches.append(cand)
+            
     except Exception as e:
-        # Fallback if extension missing or error
+        # Fallback
         pass # print(f"Fuzzy lookup error: {e}")
 
     if not _bi_encoder:
