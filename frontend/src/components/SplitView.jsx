@@ -7,6 +7,8 @@ import { TiptapEditor } from './TiptapEditor';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
 import { AISettingsTab } from './settings/AISettingsTab';
+import { GlossarySettingsTab } from './settings/GlossarySettingsTab';
+import { GlossaryAddModal } from './GlossaryAddModal';
 
 import { Terminal, Bug, Keyboard } from 'lucide-react';
 import { LogConsole } from './LogConsole';
@@ -20,7 +22,11 @@ export function SplitView({ projectId }) {
     const [savingId, setSavingId] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
     const [showShortcuts, setShowShortcuts] = useState(false);
-    const [activeSettingsTab, setActiveSettingsTab] = useState('files'); // 'files' or 'ai'
+    const [activeSettingsTab, setActiveSettingsTab] = useState('files'); // 'files', 'ai', 'glossary'
+
+    // Glossary Modal State
+    const [showGlossaryModal, setShowGlossaryModal] = useState(false);
+    const [glossarySelection, setGlossarySelection] = useState("");
 
     // Console & Debug State
     const [showConsole, setShowConsole] = useState(false);
@@ -419,6 +425,18 @@ export function SplitView({ projectId }) {
         return Array.from(uniqueComments.values());
     };
 
+    const handleContextMenu = (e) => {
+        // Check if text is selected
+        const selection = window.getSelection();
+        const selectedText = selection.toString().trim();
+
+        if (selectedText) {
+            e.preventDefault(); // Prevent browser menu
+            setGlossarySelection(selectedText);
+            setShowGlossaryModal(true);
+        }
+    };
+
     // Handler for manual AI Draft triggers
     const handleAiDraft = async (segmentId) => {
         const seg = segments.find(s => s.id === segmentId);
@@ -523,6 +541,12 @@ export function SplitView({ projectId }) {
                                     >
                                         AI & Model
                                     </button>
+                                    <button
+                                        onClick={() => setActiveSettingsTab('glossary')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'glossary' ? 'bg-white shadow text-green-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        📚 Glossary
+                                    </button>
                                 </div>
                             </div>
 
@@ -585,6 +609,8 @@ export function SplitView({ projectId }) {
                                     </div>
                                 ) : activeSettingsTab === 'rag' ? (
                                     <RAGSettingsTab project={project} onUpdate={setProject} />
+                                ) : activeSettingsTab === 'glossary' ? (
+                                    <GlossarySettingsTab project={project} />
                                 ) : (
                                     <AISettingsTab project={project} onUpdate={setProject} />
                                 )}
@@ -609,6 +635,19 @@ export function SplitView({ projectId }) {
                 )}
             </header>
 
+            {/* Glossary Add Modal */}
+            {showGlossaryModal && (
+                <GlossaryAddModal
+                    projectId={projectId}
+                    initialSource={glossarySelection}
+                    onClose={() => setShowGlossaryModal(false)}
+                    onSuccess={() => {
+                        // Optional: Show toast or just close
+                        // alert("Term added!");
+                    }}
+                />
+            )}
+
             <div className="flex-1 overflow-auto p-4 bg-gray-50/50">
                 <div className="max-w-7xl mx-auto space-y-4">
                     {segments.map((seg) => {
@@ -628,7 +667,11 @@ export function SplitView({ projectId }) {
                                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">#{seg.index + 1}</div>
 
                                     {/* Source Text */}
-                                    <div className="flex-grow font-source" dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content, seg.tags) }} />
+                                    <div
+                                        className="flex-grow font-source"
+                                        onContextMenu={handleContextMenu}
+                                        dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content, seg.tags) }}
+                                    />
 
                                     {/* Comments Section */}
                                     {comments.length > 0 && (

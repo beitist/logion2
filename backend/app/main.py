@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(project.router)
 app.include_router(translate.router)
 app.include_router(segment.router)
+app.include_router(glossary.router)
 
 @app.get("/")
 def read_root():

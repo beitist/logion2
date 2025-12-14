@@ -121,3 +121,20 @@ class TranslationUnit(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     changed_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     creation_user = Column(String, nullable=True)
+
+class GlossaryEntry(Base):
+    __tablename__ = "glossary_entries"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("projects.id"), index=True, nullable=False)
+    
+    source_term = Column(String, nullable=False) # e.g. "Final Reports"
+    target_term = Column(String, nullable=False) # e.g. "Verwendungsnachweise"
+    source_lemma = Column(String, index=True, nullable=False) # e.g. "final report" (SpaCy computed)
+    
+    context_note = Column(String, nullable=True) # e.g. "Bengo/BMZ specific"
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationship
+    project = relationship("Project")

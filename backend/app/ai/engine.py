@@ -46,10 +46,11 @@ class AITranslator:
                           target_lang: str = "de", 
                           project_config: Optional[dict] = None,
                           prev_context: List[dict] = [],
-                          next_context: List[dict] = []
+                          next_context: List[dict] = [],
+                          glossary_matches: List[dict] = []
                           ) -> dict:
         """
-        Translates a single segment with Smart Context.
+        Translates a single segment with Smart Context and Glossary.
         """
         # Determine Model
         model_name = self.default_model
@@ -57,51 +58,59 @@ class AITranslator:
         
         if project_config:
             custom_prompt = project_config.get("custom_prompt", "")
-            # Allow overriding model in config
             if project_config.get("ai_model"):
                 model_name = project_config.get("ai_model")
 
         llm = self._get_llm(model_name)
-        
-        # 1. Dummy Fallback
         if not llm:
-            return {"translation_text": f"AI_PASS: {current_text}", "reasoning": "No API Key or Model Error"}
+            return {"translation_text": f"AI_PASS: {current_text}", "reasoning": "No API Key"}
 
         try:
-            # 2. Prepare Context Strings
-                
+            # Prepare Context and Glossary
             prev_context_str = "\n".join([
                 f"[Seg {s.get('index', '?')}] Source: {s.get('source')}\n[Seg {s.get('index', '?')}] Target: {s.get('target')}"
                 for s in prev_context
-            ])
+            ]) or "None (Start)"
             
             next_context_str = "\n".join([
                 f"[Seg {s.get('index', '?')}] Source: {s.get('source')}"
                 for s in next_context
-            ])
+            ]) or "None (End)"
             
-            # 3. Construct System Prompt
+            glossary_str = "None"
+            if glossary_matches:
+                glossary_str = "\n".join([
+                    f"- {m['source']} -> {m['target']} ({m.get('note', '')})"
+                    for m in glossary_matches
+                ])
+
+            # System Prompt
             system_text = (
                 f"You are a professional translator translating from Source to {target_lang}.\n"
                 "Your goal is to produce a high-quality, context-aware translation that fits the document flow.\n\n"
                 "CRITICAL INSTRUCTIONS:\n"
-                "1. Preserve XML-like tags <n>...</n> EXACTLY. Do not translate them, do not reorder them unless grammar requires it.\n"
-                "2. Preserve <n>[COMMENT]</n> tags and do NOT translate the marker.\n"
-                "3. Preserve <n>LinkText</n> tags but translate the content inside if it is text.\n"
-                "4. Output must be valid JSON.\n"
+                "1. Preserve XML-like tags <n>...</n> EXACTLY.\n"
+                "2. Preserve <n>[COMMENT]</n> tags.\n"
+                "3. Preserve <n>LinkText</n> tags.\n"
+                "4. Use GLOSSARY terms strictly if they appear in the source.\n"
+                "5. Output must be valid JSON.\n"
             )
             
-            # 4. Construct Human Prompt with Context
+            # User Prompt
             user_template = """
             Project Settings / Instructions:
             {custom_prompt}
             
             ---
-            Previous Context (The story so far):
+            GLOSSARY (Mandatory Terminology):
+            {glossary_str}
+            
+            ---
+            Previous Context:
             {prev_context}
             
             ---
-            Following Context (Preview):
+            Following Context:
             {next_context}
             
             ---
@@ -116,13 +125,14 @@ class AITranslator:
                 ("user", user_template)
             ])
             
-            # 5. Invoke Chain
+            # Invoke Chain
             chain = prompt | llm | self.parser
             
             result = chain.invoke({
                 "custom_prompt": custom_prompt,
-                "prev_context": prev_context_str if prev_context else "None (Start of Document)",
-                "next_context": next_context_str if next_context else "None (End of Document)",
+                "prev_context": prev_context_str,
+                "next_context": next_context_str,
+                "glossary_str": glossary_str,
                 "current_text": current_text,
                 "format_instructions": self.parser.get_format_instructions()
             })
