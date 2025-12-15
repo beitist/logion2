@@ -54,6 +54,12 @@ def _inject_into_container(container, base_metadata, source_segments):
             full_text += text
             if s.tags:
                 combined_tags.update(s.tags)
+                
+        # Smart Merging Optimization
+        # Remove </N><N> patterns (redundant boundary from split)
+        # Regex: </(\d+)><\1>
+        full_text = re.sub(r'</(\d+)><\1>', '', full_text)
+        
         return full_text, combined_tags
 
     # 1. Build Grouped Segments from the flat list

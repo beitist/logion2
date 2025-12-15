@@ -285,19 +285,19 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
     if not full_text:
         return []
 
-    # Decision: Split or Keep Whole?
-    # MVP Strategy: Only split if NO TAGS are present to avoid breaking tag structure.
-    # Future: Parse <n>...</n> and split safely.
-    segments_to_create = []
+    # Decision: Smart Splitting
+    # Always split sentences, then repair tags across boundaries.
     
-    if not tags:
-        # Pure text, safe to split
-        sentences = _split_sentences(full_text, context.get("segmentation_func"), lang=context.get("source_lang", "en"))
-        for idx, sentence in enumerate(sentences):
-             segments_to_create.append((sentence, idx))
-    else:
-        # Has tags, keep whole
-        segments_to_create.append((full_text, 0))
+    segments_to_create = []
+
+    # 1. Split (using SemanticAligner which protects tags from breaking splitting logic)
+    sentences = _split_sentences(full_text, context.get("segmentation_func"), lang=context.get("source_lang", "en"))
+    
+    # 2. Repair Tags (Clone open tags across split boundaries)
+    repaired_sentences = _repair_tags(sentences)
+    
+    for idx, sentence in enumerate(repaired_sentences):
+         segments_to_create.append((sentence, idx))
 
     final_segments = []
     for content, sub_index in segments_to_create:
@@ -494,3 +494,43 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
             full_run_text += f"</{tid}>"
             
     return full_run_text
+
+import re
+from typing import List
+
+def _repair_tags(segments: List[str]) -> List[str]:
+    """
+    Ensures that if a segment ends with open tags, they are closed,
+    and reopened in the next segment.
+    """
+    repaired = []
+    stack = []
+    # Regex to find tags: <1>, </1>
+    pattern = re.compile(r'<(/?(\d+))>')
+    
+    for part in segments:
+        # 1. Prepend Open Tags from Stack (Re-Open)
+        prefix = "".join([f"<{tid}>" for tid in stack])
+        current_seg = prefix + part
+        
+        # 2. Update Stack based on tags in THIS part (Original content)
+        # We must scan 'part' to avoiding seeing the tags we just prepended
+        for m in pattern.finditer(part):
+            full_tag = m.group(1) # "1" or "/1"
+            tid = m.group(2)
+            is_close = full_tag.startswith("/")
+            
+            if is_close:
+                # Attempt to pop from stack
+                if stack and stack[-1] == tid:
+                    stack.pop()
+            else:
+                stack.append(tid)
+        
+        # 3. Append Close Tags for remaining Stack (Close)
+        suffix = "".join([f"</{tid}>" for tid in reversed(stack)])
+        current_seg = current_seg + suffix
+        
+        repaired.append(current_seg)
+        
+    return repaired

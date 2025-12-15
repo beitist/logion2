@@ -315,7 +315,7 @@ export function SplitView({ projectId }) {
     };
 
     // Helper to visualize tags as badges & apply smart hiding
-    const formatSourceContent = (htmlContent, tags) => {
+    const formatSourceContent = (htmlContent, tags, forTiptap = false) => {
         if (!htmlContent) return "";
 
         let contentToRender = htmlContent;
@@ -344,7 +344,11 @@ export function SplitView({ projectId }) {
                 if (tagInfo && tagInfo.type === 'comment') {
                     // COMMENT RANGE DETECTED!
                     // We unwrap it but apply a Highlight Style
-                    wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
+                    // For Tiptap, we can't easily apply wrapperStyle to the whole editor content unless we wrap it.
+                    // But Tiptap expects HTML string.
+                    if (!forTiptap) {
+                        wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
+                    }
                     contentToRender = innerText;
 
                     // Note: We strip the tag, so the "Start Tag" chip logic below won't fire for this ID.
@@ -358,13 +362,28 @@ export function SplitView({ projectId }) {
                 }
         }
 
-        // 2. Badge Replacement (Smart)
+        if (forTiptap) {
+            // For Tiptap, we stop here. We return the content with <1> tags intact.
+            // Tiptap's hydrateContent will convert <1> -> chips.
+            // And Tiptap handles the text rendering (and invisible chars!).
+
+            // Note: If we had a 'wrapperStyle' (e.g. comment highlight), we might need to wrap the whole thing?
+            // Tiptap content is inner.
+            // We can return `<span class="${wrapperStyle}">${contentToRender}</span>`?
+            // Tiptap supports spans? Yes.
+            if (wrapperStyle) {
+                return `<span class="${wrapperStyle}">${contentToRender}</span>`;
+            }
+            return contentToRender;
+        }
+
+        // 2. Badge Replacement (Smart) for Raw HTML View (Legacy/Fallback)
         // We use a callback to check tag type before rendering a Blue/Orange chip.
 
         // Start Tags <n>
         let formatted = contentToRender.replace(/<(\d+)>/g, (match, id) => {
             const t = tags ? tags[id] : null;
-            // If it's a TAB or COMMENT or LINK, we might want to hide the generic numeric chip 
+            // If it's a TAB or COMMENT or LINK, we might want to hide the generic numeric chip
             // because we render the content specially (or want to avoid double-visuals).
 
             // Tab: Logic change - We ALWAYS want to show [TAB] badge, but not the numeric wrapper.
@@ -396,7 +415,7 @@ export function SplitView({ projectId }) {
         // Regex for <br/> or <br> or <br />
         formatted = formatted.replace(/<br\s*\/?>/gi,
             '<span class="bg-purple-50 text-purple-400 text-[10px] px-1 rounded mx-0.5 select-none inline-block">↵</span><br/>');
-        // We append real <br/> so it breaks line visually too? 
+        // We append real <br/> so it breaks line visually too?
         // User said "nicht erahnen wo welche sind".
         // If I keep real <br/>, it breaks. If I remove it, it becomes one line with badges.
         // Usually keeping the break IS desired, but the badge makes it EXPLICIT.
@@ -703,12 +722,17 @@ export function SplitView({ projectId }) {
                                 <div className="p-5 bg-gray-50/80 rounded-l-xl text-sm leading-relaxed border-r border-gray-100 flex flex-col relative">
                                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">#{seg.index + 1}</div>
 
-                                    {/* Source Text */}
-                                    <div
-                                        className="flex-grow font-source"
-                                        onContextMenu={handleContextMenu}
-                                        dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content, seg.tags) }}
-                                    />
+                                    {/* Source Text (Tiptap ReadOnly with Invisible Chars) */}
+                                    <div className="flex-grow">
+                                        <TiptapEditor
+                                            content={formatSourceContent(seg.source_content, seg.tags, true)}
+                                            isReadOnly={true}
+                                            chromeless={true}
+                                            availableTags={seg.tags}
+                                            // Pass ID mostly for hydration or future keys
+                                            segmentId={`source-${seg.id}`}
+                                        />
+                                    </div>
 
                                     {/* Comments Section */}
                                     {comments.length > 0 && (

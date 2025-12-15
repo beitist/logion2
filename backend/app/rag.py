@@ -557,13 +557,23 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
             l_query = len(segment_text)
             l_chunk = len(chunk.content) # Content is Source Text
             
-            # If chunk is much longer than query (e.g. 2x)
-            if l_chunk > l_query * 2.0:
+            # Bidirectional Length Penalty
+            ratio = 1.0
+            if l_chunk > l_query:
                 ratio = l_chunk / max(l_query, 1)
-                # penalty += log(ratio) * 2.0
-                # Ratio 2 -> log(2)=0.69 -> 1.4
-                # Ratio 5 -> log(1.6)=1.6 -> 3.2
-                penalty += math.log(ratio) * 2.0
+            else:
+                ratio = l_query / max(l_chunk, 1)
+                
+            if ratio > 1.5:
+                # Apply penalty
+                penalty += math.log(ratio) * 2.5
+                
+            # Cap Score if ratio is extreme (Guardrail against "99% partial match")
+            if ratio > 2.5:
+                 # If length difference is > 2.5x, max possible Logit should yield ~90%
+                 # Current 99% is > 4.0.
+                 # We force a penalty to bring it down.
+                 penalty += 2.0 # Extra penalty
         except:
              pass
              

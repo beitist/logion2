@@ -3,6 +3,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
+import InvisibleCharacters, { SpaceCharacter, HardBreakNode, ParagraphNode } from '@tiptap/extension-invisible-characters'
 import { Node, Extension, mergeAttributes } from '@tiptap/core'
 
 import './TiptapStyles.css';
@@ -125,11 +126,9 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
     )
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, chromeless = false }) {
     const aiSettingsRef = React.useRef(aiSettings);
-    const onAiDraftRef = React.useRef(onAiDraft);
-    const contextMatchesRef = React.useRef(contextMatches);
-    const availableTagsRef = React.useRef(availableTags);
+    // ... refs ...
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
@@ -138,13 +137,11 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         availableTagsRef.current = availableTags;
     }, [aiSettings, onAiDraft, contextMatches, availableTags]);
 
-    // Internal Helper: Hydrate raw XML tags <1> into Tiptap TagNodes
-    // Duplicated simplified logic from SplitView to ensure self-contained editor behavior
-    const hydrateContent = (content, tags) => {
+    // ... hydrateContent ... (same)
+    const hydrateContent = (content, tags) => { // ... (same)
         if (!content) return "";
         let hydrated = content;
-
-        // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
+        // 1. Pre-Pass
         hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
             const tagInfo = tags ? tags[id] : null;
             if (tagInfo && tagInfo.type === 'tab') {
@@ -152,14 +149,12 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             }
             return match;
         });
-
-        // 2. Standard Match <(\d+)> OR </(\d+)>
+        // 2. Standard Match
         hydrated = hydrated.replace(/<(\d+)>|<\/(\d+)>/g, (match, openId, closeId) => {
             const id = openId || closeId;
             const tagInfo = tags ? tags[id] : null;
             let label = id;
             let finalId = id;
-
             if (tagInfo) {
                 if (tagInfo.type === 'tab') {
                     label = 'TAB';
@@ -169,10 +164,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             }
             return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
         });
-
-        // 3. Handle [TAB] (Legacy/Fallback)
+        // 3. Fallback
         hydrated = hydrated.replace(/\[TAB\]/g, `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`);
-
         return hydrated;
     };
 
@@ -186,9 +179,18 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                     class: 'text-blue-500 underline cursor-pointer',
                 },
             }),
+            InvisibleCharacters.configure({
+                injectCSS: true,
+                builders: [
+                    new SpaceCharacter(),
+                    new HardBreakNode(),
+                    new ParagraphNode(),
+                ]
+            }),
             TagNode,
             Extension.create({
                 addKeyboardShortcuts() {
+                    // ... (same shortcuts)
                     return {
                         'Mod-Alt-0': () => {
                             const matches = contextMatchesRef.current;
@@ -199,7 +201,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false;
                         },
+                        // ... (rest of shortcuts same) ...
                         'Mod-Alt-9': () => {
+                            // ...
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[0]) {
@@ -238,49 +242,11 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false;
                         },
-                        // Context Refresh: Try multiple bindings for 'ß' to handle Mac/ISO behaviors
-                        // Mac German: Option+ß often produces '¿' or '\' depending on layout versions.
-                        'Mod-Alt-ß': () => {
-                            console.log("Shortcut triggered: Mod-Alt-ß");
-                            if (onAiDraftRef.current && segmentId) {
-                                onAiDraftRef.current(segmentId);
-                                return true;
-                            }
-                            return false;
-                        },
-                        'Mod-Alt-¿': () => {
-                            console.log("Shortcut triggered: Mod-Alt-¿");
-                            if (onAiDraftRef.current && segmentId) {
-                                onAiDraftRef.current(segmentId);
-                                return true;
-                            }
-                            return false;
-                        },
-                        'Mod-Alt-\\': () => {
-                            console.log("Shortcut triggered: Mod-Alt-\\");
-                            if (onAiDraftRef.current && segmentId) {
-                                onAiDraftRef.current(segmentId);
-                                return true;
-                            }
-                            return false;
-                        },
-                        // Case: User holds Shift (Cmd+Alt+Shift+ß -> ?)
-                        'Mod-Alt-?': () => {
-                            console.log("Shortcut triggered: Mod-Alt-?");
-                            if (onAiDraftRef.current && segmentId) {
-                                onAiDraftRef.current(segmentId);
-                                return true;
-                            }
-                            return false;
-                        },
-                        'Mod-Alt-Shift-ß': () => {
-                            console.log("Shortcut triggered: Mod-Alt-Shift-ß");
-                            if (onAiDraftRef.current && segmentId) {
-                                onAiDraftRef.current(segmentId);
-                                return true;
-                            }
-                            return false;
-                        },
+                        'Mod-Alt-ß': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-¿': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-\\': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-?': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-Shift-ß': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
                         'Control-Space': () => {
                             if (onAiDraftRef.current && segmentId) {
                                 onAiDraftRef.current(segmentId).then((newContent) => {
@@ -306,23 +272,21 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         ],
         content: content || "",
         editable: !isReadOnly,
+        editorProps: {
+            attributes: {
+                // Ensure chromeless editor has no min-height using Tailwind !min-h-0
+                class: chromeless ? '!min-h-0' : '',
+            }
+        },
         onUpdate: ({ editor }) => {
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onFocus: ({ editor }) => {
             if (onFocus) onFocus();
-            // Auto-Trigger AI Retrieval if empty (Fetcher only, no Insert)
             if (editor.isEmpty && segmentId) {
-                // 1. Check if we already have data
                 const existingMatches = contextMatchesRef.current;
-
-                if (existingMatches && existingMatches.length > 0) {
-                    // Already have matches, do nothing
-                    // console.log("Matches already loaded.");
-                }
-                // 2. Otherwise trigger retrieval (SplitView handles the state update)
+                if (existingMatches && existingMatches.length > 0) { }
                 else if (onAiDraftRef.current) {
-                    console.log("Fetching context on focus...");
                     onAiDraftRef.current(segmentId);
                 }
             }
@@ -334,9 +298,6 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         },
     })
 
-
-    // Update content if it changes externally
-    // Note: 'content' passed here MUST be hydrated HTML with <span data-type="tag-node"> already!
     useEffect(() => {
         if (editor && content && content !== editor.getHTML()) {
             editor.commands.setContent(content)
@@ -347,13 +308,23 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         return null
     }
 
-    return (
-        <div className={`prose max-w-none border rounded-md transition-shadow relative group/editor ${isReadOnly
+    // Styles for Chromeless Mode
+    // If chromeless, we strip: border, shadow, background (inherit), padding
+    const containerClasses = chromeless
+        ? `prose max-w-none relative group/editor`
+        : `prose max-w-none border rounded-md transition-shadow relative group/editor ${isReadOnly
             ? 'bg-gray-50 text-gray-700 border-gray-200'
             : 'bg-white border-gray-300 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm'
-            }`}>
-            {!isReadOnly && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={() => onAiDraft && segmentId ? onAiDraft(segmentId) : null} />}
-            <EditorContent editor={editor} className="min-h-[100px] outline-none p-4" />
+        }`;
+
+    const editorContentClasses = chromeless
+        ? `outline-none` // No padding, no min-height (handled by editorProps !min-h-0)
+        : `min-h-[100px] outline-none p-4`;
+
+    return (
+        <div className={containerClasses}>
+            {!isReadOnly && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={() => onAiDraft && segmentId ? onAiDraft(segmentId) : null} />}
+            <EditorContent editor={editor} className={editorContentClasses} />
         </div>
     )
 }

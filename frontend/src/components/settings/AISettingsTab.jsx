@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { updateProject, getAiModels } from '../../api/client';
+import { updateProject, getAiModels, generateProjectDrafts } from '../../api/client';
 import { Zap, Command, RefreshCw, Save, Terminal } from 'lucide-react';
 
 export function AISettingsTab({ project, onUpdate }) {
@@ -148,7 +148,7 @@ export function AISettingsTab({ project, onUpdate }) {
                                 onClick={async () => {
                                     if (!confirm("Start batch generation for ALL segments? This may take time.")) return;
                                     try {
-                                        await fetch(`http://localhost:8000/projects/${project.id}/generate-drafts`, { method: 'POST' });
+                                        await generateProjectDrafts(project.id);
                                         alert("Batch job started! Drafts will appear as they are ready. Please refresh periodically.");
                                     } catch (e) {
                                         alert("Error: " + e.message);
