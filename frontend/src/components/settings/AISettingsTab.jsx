@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { updateProject } from '../../api/client';
+import { updateProject, getAiModels } from '../../api/client';
 import { Zap, Command, RefreshCw, Save, Terminal } from 'lucide-react';
 
 export function AISettingsTab({ project, onUpdate }) {
@@ -25,16 +25,11 @@ export function AISettingsTab({ project, onUpdate }) {
             });
         }
     }, [project]);
-
     // Load Available Models
     useEffect(() => {
         const fetchModels = async () => {
             try {
-                // Fetch from the backend endpoint we created
-                // Assuming client.js usually has the base URL, but here we might need to construct it or add a helper.
-                // Since updateProject uses a client, let's just use fetch for now or add getModels to client.
-                const res = await fetch('http://localhost:8000/config/models');
-                const data = await res.json();
+                const data = await getAiModels();
                 if (data.models) {
                     setAvailableModels(data.models);
                 }

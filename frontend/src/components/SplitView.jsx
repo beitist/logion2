@@ -8,6 +8,7 @@ import { TiptapEditor } from './TiptapEditor';
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
 import { AISettingsTab } from './settings/AISettingsTab';
 import { GlossarySettingsTab } from './settings/GlossarySettingsTab';
+import { StatisticsSettingsTab } from './settings/StatisticsSettingsTab';
 import { GlossaryAddModal } from './GlossaryAddModal';
 
 import { Terminal, Bug, Keyboard } from 'lucide-react';
@@ -551,9 +552,6 @@ export function SplitView({ projectId }) {
                             <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                                 <h2 className="text-xl font-bold text-gray-800">Project Settings</h2>
                                 <div className="flex gap-1 bg-gray-200 p-1 rounded-lg">
-                                    import {StatisticsSettingsTab} from './settings/StatisticsSettingsTab';
-
-                                    // ... (Inside render, settings modal)
                                     <button
                                         onClick={() => setActiveSettingsTab('files')}
                                         className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'files' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}

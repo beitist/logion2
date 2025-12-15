@@ -115,3 +115,9 @@ export async function uploadGlossary(projectId, file) {
     if (!res.ok) throw new Error("Failed to upload glossary");
     return res.json();
 }
+
+export async function getAiModels() {
+    const res = await fetch(`${API_BASE}/config/models`);
+    if (!res.ok) throw new Error("Failed to fetch models");
+    return res.json();
+}

@@ -5,6 +5,8 @@ from typing import List
 import shutil
 import re
 from docx.enum.text import WD_COLOR_INDEX
+from docx.oxml.ns import qn
+import copy
 from .schemas import SegmentInternal, TagModel
 
 def reassemble_docx(original_path: str, output_path: str, segments: List[SegmentInternal]):
@@ -141,29 +143,38 @@ def _inject_tagged_text(paragraph, text, tags_map):
     Parses 'text' which may contain:
     1. Custom Tags: <1>...</1> (mapped to properties via tags_map)
     2. HTML Tags: <b>, <strong>, <i>, <em>, <u>, <br/>
-    3. Custom Markers: [TAB], [COMMENT] (inside tags usually or standalone)
-    4. Raw HTML spans from frontend (e.g. for tabs/comments if not serialized clean)
+    3. Custom Markers: [TAB], [COMMENT], [SHAPE]
     
     Reconstructs the paragraph with appropriate runs and formatting.
+    Preserves w:drawing and w:pict elements.
     """
-    # Clear existing content
     p_element = paragraph._element
+    
+    # 1. Preserve Shapes (Drawings/Picts) before clearing
+    # We iterate descendants to find them in order.
+    preserved_shapes = []
+    # Note: element.iter() might return self? No, usually descendants.
+    # We check specific tags.
+    # Safest way to get in-order:
+    for child in p_element.iter():
+        if child.tag == qn('w:drawing') or child.tag == qn('w:pict'):
+            try:
+                # Deepcopy to detach and save
+                preserved_shapes.append(copy.deepcopy(child))
+            except Exception as e:
+                print(f"Warning: Failed to preserve shape: {e}")
+
+    # 2. Clear existing content
     p_element.clear_content()
 
     # DEBUG LOGGING
     with open("debug_reassembly.txt", "a") as f:
         f.write(f"\n--- Injecting Text ---\nText: {text[:50]}...\nTags Map Keys: {list(tags_map.keys())}\n")
-        if tags_map:
-             first_tag = list(tags_map.values())[0]
-             f.write(f"Sample Tag 1: Type={first_tag.type}\n")
+        f.write(f"Preserved Shapes: {len(preserved_shapes)}\n")
 
-    # Tokenize: Split by tags (Custom or embedded HTML)
-    # Regex: (<[^>]+>) captures any tag
+    # Tokenize
     tokens = re.split(r'(<[^>]+>)', text)
     
-    # Active formatting state (properties to apply to new runs)
-    # We use a dict to track active toggle states: {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': None}
-    # Counters allow for nesting.
     active_style = {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': False}
     
     for token in tokens:
@@ -183,7 +194,6 @@ def _inject_tagged_text(paragraph, text, tags_map):
                 tag = tags_map.get(tid)
                 if tag:
                     # Apply tag formatting
-                    # We map tag types to styles
                     if tag.type == 'bold':
                         active_style['bold'] += -1 if is_closing else 1
                     elif tag.type == 'italic':
@@ -191,7 +201,19 @@ def _inject_tagged_text(paragraph, text, tags_map):
                     elif tag.type == 'underline':
                         active_style['underline'] += -1 if is_closing else 1
                     elif tag.type == 'comment':
-                        active_style['highlight'] = not is_closing # Toggle highlight
+                        active_style['highlight'] = not is_closing
+                    elif tag.type == 'shape' and not is_closing:
+                        # Insert Shape
+                        if preserved_shapes:
+                            shape_el = preserved_shapes.pop(0)
+                            # Shape must be in a run
+                            run = paragraph.add_run()
+                            run._element.append(shape_el)
+                        else:
+                            # Shape missing/deleted?
+                            # Create a placeholder or ignore
+                            run = paragraph.add_run("[MISSING SHAPE]")
+                            run.font.color.rgb = docx.shared.RGBColor(255, 0, 0)
                         
             # Check HTML Tags
             else:
@@ -206,13 +228,8 @@ def _inject_tagged_text(paragraph, text, tags_map):
                 elif lower_tag == 'u':
                    active_style['underline'] += -1 if is_closing else 1
                 
-                # Ignore unknown tags (like generic spans)
-
         else:
-            # It is generic text.
-            # Convert [TAB] to actual tab if needed?
-            # User uses [TAB] marker. We can insert a tab character OR [TAB] text.
-            # Let's support [TAB] marker replacement for cleaner DOCX.
+            # Generic Text
             
             # Helper to add run
             def add_styled_run(content):
@@ -223,16 +240,21 @@ def _inject_tagged_text(paragraph, text, tags_map):
                 if active_style['highlight']: 
                     run.font.highlight_color = WD_COLOR_INDEX.YELLOW
             
-            # Handle [TAB] replacement in text
+            # Handle [TAB]
             if "[TAB]" in token:
                 parts = token.split("[TAB]")
                 for i, part in enumerate(parts):
                     if i > 0:
-                        # Add Tab
                         paragraph.add_run().add_tab()
                     if part:
                          add_styled_run(part)
             else:
                 add_styled_run(token)
+
+    # Append remaining shapes if any (user deleted tag?)
+    if preserved_shapes:
+        for shape_el in preserved_shapes:
+             run = paragraph.add_run()
+             run._element.append(shape_el)
 
 

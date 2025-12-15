@@ -8,7 +8,7 @@ from lxml import etree
 
 from .schemas import SegmentInternal, TagModel
 
-def parse_docx(file_path: str, segmentation_func=None) -> List[SegmentInternal]:
+def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List[SegmentInternal]:
     """
     Parses a DOCX file and extracts segments with tags for formatting, hyperlinks, and comments.
     """
@@ -36,10 +36,11 @@ def parse_docx(file_path: str, segmentation_func=None) -> List[SegmentInternal]:
     except Exception as e:
         print(f"Warning: Could not load comments: {e}")
 
-    # Helper context to pass comments_map, segmentation_func
+    # Helper context to pass comments_map, segmentation_func, source_lang
     context = {
         "comments_map": comments_map,
-        "segmentation_func": segmentation_func
+        "segmentation_func": segmentation_func,
+        "source_lang": source_lang
     }
 
     # 1. Body
@@ -291,7 +292,7 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
     
     if not tags:
         # Pure text, safe to split
-        sentences = _split_sentences(full_text, context.get("segmentation_func"))
+        sentences = _split_sentences(full_text, context.get("segmentation_func"), lang=context.get("source_lang", "en"))
         for idx, sentence in enumerate(sentences):
              segments_to_create.append((sentence, idx))
     else:
@@ -318,13 +319,24 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
 
 import pysbd
 
-_segmenter = pysbd.Segmenter(language="en", clean=False)
+_segmenter_cache = {}
 
-def _split_sentences(text: str, segmentation_func=None) -> List[str]:
-    # Use pysbd for robust splitting by default
+def _get_segmenter(lang: str):
+    if lang not in _segmenter_cache:
+        # Pysbd supports ISO codes. Fallback to en.
+        try:
+             _segmenter_cache[lang] = pysbd.Segmenter(language=lang, clean=False)
+        except:
+             _segmenter_cache[lang] = pysbd.Segmenter(language="en", clean=False)
+    return _segmenter_cache[lang]
+
+def _split_sentences(text: str, segmentation_func=None, lang="en") -> List[str]:
+    # Use pysbd for robust splitting
     if segmentation_func:
         return segmentation_func(text)
-    return _segmenter.segment(text)
+    
+    seg = _get_segmenter(lang)
+    return seg.segment(text)
 
 def _extract_tags(run) -> List[TagModel]:
     """
@@ -398,9 +410,16 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
             cid = child.get(qn('w:id'))
             if cid and context["comments_map"].get(cid):
                 ctext = context["comments_map"][cid]
-                com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
                 tid = add_tag_func(com_tag)
                 content_accum += f"<{tid}>[COMMENT]</{tid}>"
+
+        elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
+             # Handle Shapes/Images
+             # We create a placeholder tag.
+             # In reassembly, we will attempt to restore the shape from the original doc.
+             shape_tag = TagModel(type="shape", content="[SHAPE]")
+             tid = add_tag_func(shape_tag)
+             content_accum += f"<{tid}>[SHAPE]</{tid}>"
 
     # 4. Process Text for URLs (Regex)
     # URL detection works on text parts.

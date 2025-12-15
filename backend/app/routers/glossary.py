@@ -40,18 +40,46 @@ def list_glossary(project_id: str, db: Session = Depends(get_db)):
 @router.post("/upload")
 async def upload_glossary(project_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     content = await file.read()
-    decoded = content.decode('utf-8')
-    reader = csv.DictReader(io.StringIO(decoded))
+    decoded = content.decode('utf-8-sig') # Handle BOM automatically
+    
+    # content is bytes, decoded is str
+    # Use sniff to find delimiter
+    try:
+        # Sniff the first few lines
+        sample = decoded[:2048]
+        dialect = csv.Sniffer().sniff(sample, delimiters=[',', ';', '\t'])
+        delimiter = dialect.delimiter
+    except Exception as e:
+        print(f"CSV Sniff failed, defaulting to comma: {e}")
+        delimiter = ','
+        
+    reader = csv.DictReader(io.StringIO(decoded), delimiter=delimiter)
+    
+    # Normalize headers to lowercase to handle Source/source
+    # DictReader reads headers from first line.
+    # We can inspect fieldnames.
+    fieldnames = [f.lower().strip() for f in reader.fieldnames or []]
+    
+    # Mapping for case-insensitive lookup
+    # But DictReader rows use original keys.
+    # We need to normalize row keys or just try variations.
     
     matcher = GlossaryMatcher(project_id, db)
     count = 0
     
     for row in reader:
-        # Expect csv with 'source', 'target', optional 'note'
-        src = row.get("source") or row.get("Source")
-        tgt = row.get("target") or row.get("Target")
-        note = row.get("note") or row.get("Note")
+        # Robust access
+        src = None
+        tgt = None
+        note = None
         
+        for k, v in row.items():
+            if not k: continue
+            k_lower = k.lower().strip()
+            if k_lower == 'source': src = v
+            elif k_lower == 'target': tgt = v
+            elif k_lower == 'note': note = v
+            
         if src and tgt:
             matcher.add_term(src, tgt, note)
             count += 1

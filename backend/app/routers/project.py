@@ -121,7 +121,7 @@ async def create_project(
             # Download from MinIO
             download_file(source_record.file_path, temp_parse_path)
             
-            segments_internal = parse_docx(temp_parse_path)
+            segments_internal = parse_docx(temp_parse_path, source_lang=source_lang)
             
             for i, seg_int in enumerate(segments_internal):
                 seg_dump = seg_int.model_dump()

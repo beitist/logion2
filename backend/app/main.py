@@ -35,11 +35,32 @@ def read_root():
 @app.get("/config/models")
 def get_ai_models():
     """Returns the list of available AI models from ai_models.json"""
-    try:
-        import json
-        with open("ai_models.json", "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading models: {e}")
-        # Fallback if file missing
-        return {"models": [{"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash (Fallback)", "provider": "google"}]}
+    import os
+    import json
+    
+    # Debugging paths
+    base_dir = os.path.dirname(os.path.abspath(__file__)) # .../backend/app
+    backend_dir = os.path.dirname(base_dir) # .../backend
+    
+    candidates = [
+        os.path.join(backend_dir, "ai_models.json"), # Expected: .../backend/ai_models.json
+        "ai_models.json", # CWD
+        "/Users/beiti/prog/logion2/backend/ai_models.json" # Absolute fallback
+    ]
+    
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                    # Inject debug info? No, keep it clean.
+                    # data["_source"] = path 
+                    return data
+            except Exception as e:
+                print(f"Failed to read {path}: {e}")
+                
+    # Fallback
+    return {
+        "models": [{"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash (Fallback - File Not Found)", "provider": "google"}],
+        "debug_searched": candidates
+    }
