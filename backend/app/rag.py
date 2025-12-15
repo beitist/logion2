@@ -58,6 +58,7 @@ except Exception as e:
 # --- Ingestion ---
 
 from .database import SessionLocal
+from .glossary_service import GlossaryMatcher
 
 def reingest_project(project_id: str):
     """
@@ -617,14 +618,36 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     """
     # 1. Retrieve Context (New Pipeline)
     matches = search_context_for_segment(segment_text, project_id, db)
+
+    # 1.5 Glossary Matches
+    gloss_hits = []
+    try:
+        matcher = GlossaryMatcher(project_id, db)
+        gloss_hits = matcher.find_matches(segment_text)
+        
+        for g in gloss_hits:
+            # {source, target, note}
+            matches.insert(0, {
+                 "id": f"glossary-{compute_hash(g['source'])}",
+                 "content": f"{g['source']} -> {g['target']}", # Display format
+                 "filename": "Glossary", 
+                 "type": "glossary",
+                 "category": "term",
+                 "score": 100,
+                 "note": g.get("note")
+            })
+    except Exception as e:
+        print(f"Glossary lookup error: {e}")
     
     # 2. Check for Exact Match (Pre-Translation Optimization)
-    top_match = matches[0] if matches else None
-    if top_match and top_match.get('score', 0) >= 100:
+    # CRITICAL: Ignore glossary terms (they have score 100 but are not full translations)
+    best_tm = next((m for m in matches if m.get('type') != 'glossary'), None)
+    
+    if best_tm and best_tm.get('score', 0) >= 100:
         # Pre-Translation Hit!
         # Skip AI generation.
         return {
-            "target_text": top_match['content'],
+            "target_text": best_tm['content'],
             "context_matches": matches,
             "is_exact": True
         }
@@ -634,6 +657,12 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     try:
         # Construct dynamic system instruction
         system_instruction = f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text. No preamble, no markdown formatting, no 'Translation:'."
+        
+        # Inject Glossary
+        if gloss_hits:
+            system_instruction += "\n\nglossary terms (recommendation, see if they fit the context):"
+            for g in gloss_hits:
+                system_instruction += f"\n- {g['source']} -> {g['target']}"
         
         # Inject Custom Prompt (Technical/Style)
         if custom_prompt and custom_prompt.strip():

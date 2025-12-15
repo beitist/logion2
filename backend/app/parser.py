@@ -84,8 +84,17 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
 
     # 2. Tables
     for t_idx, table in enumerate(container.tables):
+        # Track processed cells to handle Merged Cells (vMerge)
+        # python-docx repeats the cell object for each covered row.
+        processed_tcs = set() 
+        
         for r_idx, row in enumerate(table.rows):
             for c_idx, cell in enumerate(row.cells):
+                # Check for duplication via XML element (tc)
+                if cell._tc in processed_tcs:
+                    continue
+                processed_tcs.add(cell._tc)
+
                 # Recursion! A cell is also a container (has paragraphs and tables)
                 # We need to construct the location correctly.
                 

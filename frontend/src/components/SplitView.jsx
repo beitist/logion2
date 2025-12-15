@@ -727,6 +727,7 @@ export function SplitView({ projectId }) {
                                                     return sortedMatches.map((match, idx) => {
                                                         const isMandatory = match.type === 'mandatory';
                                                         const isMT = match.type === 'mt';
+                                                        const isGlossary = match.type === 'glossary';
 
                                                         // FILTERING: Check Thresholds
                                                         const aiConfig = project?.config?.ai_settings || {};
@@ -736,7 +737,9 @@ export function SplitView({ projectId }) {
                                                         const score = match.score || 0;
 
                                                         // Apply Filter
-                                                        if (isMandatory) {
+                                                        if (isGlossary) {
+                                                            // Always show glossary
+                                                        } else if (isMandatory) {
                                                             if (score < tMandatory) return null;
                                                         } else if (!isMT) {
                                                             // Optional / Archive
@@ -747,6 +750,8 @@ export function SplitView({ projectId }) {
                                                         let shortcutLabel = '';
                                                         if (isMT) {
                                                             shortcutLabel = 'Cmd+Opt+0';
+                                                        } else if (isGlossary) {
+                                                            // Provide a shortcut? Maybe not for now, or use first slot
                                                         } else {
                                                             const tmIdx = tmMatches.indexOf(match);
                                                             if (tmIdx === 0) shortcutLabel = 'Cmd+Opt+9';
@@ -765,6 +770,11 @@ export function SplitView({ projectId }) {
                                                             bgClass = 'bg-purple-50';
                                                             textClass = 'text-purple-700';
                                                             label = '🤖 Machine Translation';
+                                                        } else if (isGlossary) {
+                                                            borderClass = 'border-l-teal-500';
+                                                            bgClass = 'bg-teal-50';
+                                                            textClass = 'text-teal-700';
+                                                            label = '📚 Glossary Term';
                                                         }
 
                                                         return (
@@ -793,6 +803,12 @@ export function SplitView({ projectId }) {
                                                                 <div className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100">
                                                                     {match.content}
                                                                 </div>
+                                                                {/* Note info */}
+                                                                {match.note && (
+                                                                    <div className="mt-1 text-[10px] text-gray-500 italic border-t border-gray-200/50 pt-1">
+                                                                        Note: {match.note}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         )
                                                     })
