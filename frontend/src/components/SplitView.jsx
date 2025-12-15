@@ -23,6 +23,7 @@ export function SplitView({ projectId }) {
     const [showSettings, setShowSettings] = useState(false);
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [activeSettingsTab, setActiveSettingsTab] = useState('files'); // 'files', 'ai', 'glossary'
+    const [activeSegmentId, setActiveSegmentId] = useState(null); // Track active segment for sidebar & AI logic
 
     // Glossary Modal State
     const [showGlossaryModal, setShowGlossaryModal] = useState(false);
@@ -471,6 +472,26 @@ export function SplitView({ projectId }) {
         }
     };
 
+    // Focus Handler
+    const handleSegmentFocus = async (id) => {
+        if (id === activeSegmentId) return;
+        setActiveSegmentId(id);
+
+        // Auto-Generate Draft on Focus (if configured)
+        const aiSettings = project?.config?.ai_settings || {};
+        const isPreloadMode = aiSettings.preload_mode === true;
+
+        const seg = segments.find(s => s.id === id);
+
+        if (!isPreloadMode && seg && !seg.target_content && !seg.locked) {
+            try {
+                handleAiDraft(id);
+            } catch (e) {
+                // ignore
+            }
+        }
+    };
+
     if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
 
     // Derive aiSettings from project config for TiptapEditor
@@ -530,6 +551,9 @@ export function SplitView({ projectId }) {
                             <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                                 <h2 className="text-xl font-bold text-gray-800">Project Settings</h2>
                                 <div className="flex gap-1 bg-gray-200 p-1 rounded-lg">
+                                    import {StatisticsSettingsTab} from './settings/StatisticsSettingsTab';
+
+                                    // ... (Inside render, settings modal)
                                     <button
                                         onClick={() => setActiveSettingsTab('files')}
                                         className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'files' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
@@ -553,6 +577,12 @@ export function SplitView({ projectId }) {
                                         className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'glossary' ? 'bg-white shadow text-green-600' : 'text-gray-500 hover:text-gray-700'}`}
                                     >
                                         📚 Glossary
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveSettingsTab('stats')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'stats' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        📊 Stats
                                     </button>
                                 </div>
                             </div>
@@ -616,11 +646,13 @@ export function SplitView({ projectId }) {
                                     </div>
                                 ) : activeSettingsTab === 'rag' ? (
                                     <RAGSettingsTab project={project} onUpdate={setProject} />
-                                ) : activeSettingsTab === 'glossary' ? (
-                                    <GlossarySettingsTab project={project} />
-                                ) : (
+                                ) : activeSettingsTab === 'ai' ? (
                                     <AISettingsTab project={project} onUpdate={setProject} />
-                                )}
+                                ) : activeSettingsTab === 'glossary' ? (
+                                    <GlossarySettingsTab project={project} onUpdate={setProject} />
+                                ) : activeSettingsTab === 'stats' ? (
+                                    <StatisticsSettingsTab project={{ ...project, segments: segments }} />
+                                ) : null}
                             </div>
 
                             <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
@@ -853,6 +885,7 @@ export function SplitView({ projectId }) {
                                             onSave={handleSave}
                                             aiSettings={aiSettings}
                                             onAiDraft={handleAiDraft}
+                                            onFocus={() => handleSegmentFocus(seg.id)}
                                         />
                                     </div>
 

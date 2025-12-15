@@ -125,7 +125,7 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
     )
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
@@ -310,6 +310,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onFocus: ({ editor }) => {
+            if (onFocus) onFocus();
             // Auto-Trigger AI Retrieval if empty (Fetcher only, no Insert)
             if (editor.isEmpty && segmentId) {
                 // 1. Check if we already have data

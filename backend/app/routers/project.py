@@ -460,6 +460,20 @@ async def reingest_project_endpoint(project_id: str, background_tasks: Backgroun
     
     return {"message": "Re-ingestion started"}
 
+@router.post("/{project_id}/generate-drafts")
+async def generate_drafts_endpoint(project_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Triggers batch AI draft generation for all segments in the project.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    from ..rag import generate_project_drafts
+    background_tasks.add_task(generate_project_drafts, project_id)
+    
+    return {"message": "Batch draft generation started. This may take a while."}
+
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)):
     """

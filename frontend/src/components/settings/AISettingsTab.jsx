@@ -6,7 +6,8 @@ export function AISettingsTab({ project, onUpdate }) {
     const [settings, setSettings] = useState({
         model: 'gemini-2.0-flash',
         custom_prompt: '',
-        pre_translate_count: 0
+        pre_translate_count: 0,
+        preload_mode: false
     });
 
     const [availableModels, setAvailableModels] = useState([]);
@@ -19,7 +20,8 @@ export function AISettingsTab({ project, onUpdate }) {
             setSettings({
                 model: ai.model || 'gemini-2.0-flash',
                 custom_prompt: ai.custom_prompt || '',
-                pre_translate_count: ai.pre_translate_count || 0
+                pre_translate_count: ai.pre_translate_count || 0,
+                preload_mode: ai.preload_mode || false
             });
         }
     }, [project]);
@@ -126,6 +128,43 @@ export function AISettingsTab({ project, onUpdate }) {
                         />
                         <span className="text-sm text-gray-600">segments on load</span>
                     </div>
+                </div>
+
+                {/* 4. Preload Mode (Batch Generation) */}
+                <div className="p-4 bg-blue-50 rounded-lg border border-blue-100 space-y-3">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <label className="block text-sm font-bold text-blue-900">Preload Mode</label>
+                            <p className="text-xs text-blue-700">Disable "On-Focus" AI generation. Use "Generate All" instead.</p>
+                        </div>
+                        <div className="flex items-center">
+                            <input
+                                type="checkbox"
+                                checked={settings.preload_mode || false}
+                                onChange={(e) => setSettings({ ...settings, preload_mode: e.target.checked })}
+                                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                            />
+                        </div>
+                    </div>
+
+                    {settings.preload_mode && (
+                        <div className="pt-2 border-t border-blue-200/50">
+                            <button
+                                onClick={async () => {
+                                    if (!confirm("Start batch generation for ALL segments? This may take time.")) return;
+                                    try {
+                                        await fetch(`http://localhost:8000/projects/${project.id}/generate-drafts`, { method: 'POST' });
+                                        alert("Batch job started! Drafts will appear as they are ready. Please refresh periodically.");
+                                    } catch (e) {
+                                        alert("Error: " + e.message);
+                                    }
+                                }}
+                                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium"
+                            >
+                                <RefreshCw size={14} /> Generate All Drafts Now
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 
