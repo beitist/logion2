@@ -113,16 +113,21 @@ export function SplitView({ projectId }) {
         if (!htmlContent) return "";
         let hydrated = htmlContent;
 
-        // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
-        // We replace the whole sequence with a real TAB character.
-        // User Request: "Keep tabs as tabs"
-        hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
-            const tagInfo = tags ? tags[id] : null;
-            if (tagInfo && tagInfo.type === 'tab') {
+        // 1. Pre-Pass: Iteratively Handle Wrapper Tags around TABs
+        // Example: <2><4>[TAB]</4></2> -> <2>\t</2> -> \t
+        // We do this in a loop to handle arbitrary nesting depth.
+        let changed = true;
+        while (changed) {
+            changed = false;
+            // Match <N> [TAB] or \t </N> with optional spaces
+            hydrated = hydrated.replace(/<(\d+)>\s*(?:\[TAB\]|\t)\s*<\/\1>/g, (match, id) => {
+                // We don't strictly care about tag type here. 
+                // If a tag wraps ONLY a tab, it's structurally irrelevant for the Editor view 
+                // and causes visual "Chips" (e.g. bold tabs). We strip the wrapper.
+                changed = true;
                 return "\t";
-            }
-            return match;
-        });
+            });
+        }
 
         // 2. Standard Match <(\d+)> OR </(\d+)>
         hydrated = hydrated.replace(/<(\d+)>|<\/(\d+)>/g, (match, openId, closeId) => {
@@ -133,20 +138,11 @@ export function SplitView({ projectId }) {
 
             if (tagInfo) {
                 if (tagInfo.type === 'tab') {
-                    // It's a tab tag. We want to convert it to a real TAB character.
-                    // If we return "", the content inside the tag (which is [TAB]) will remain.
-                    // But we want to ensure it is \t.
-                    // If the content was just [TAB], we can return \t and hope regex consumes the inner content?
-                    // NO. The regex matches `<(\d+)>` or `</(\d+)>`. It does NOT match content.
-                    // So if we have `<4>[TAB]</4>`, we get `[TAB]` appearing in the string.
-                    // Logic: Retuning "" removes the tag wrapper. Inner content persists.
-                    // Then `replace` loop below handles `[TAB]`.
-                    // So return "" is actually correct for the wrapper.
+                    // Start/End tag for a specific TAB (if not caught by pre-pass for some reason)
                     return "";
                 }
                 else if (tagInfo.type === 'comment') label = '💬';
             }
-
             return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
         });
 

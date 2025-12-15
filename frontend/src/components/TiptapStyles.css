@@ -109,14 +109,20 @@
 
 .Tiptap-invisible-character--space::before {
     content: '·';
-    color: #cbd5e1;
-    /* slate-300 */
+    color: #93c5fd;
+    /* blue-300 (Light Blue) */
     position: absolute;
     pointer-events: none;
     top: 50%;
-    transform: translateY(-50%);
+    /* Center anchor */
+    transform: translateY(-65%);
+    /* Move up slightly more than half to counter baseline bias */
     left: 0;
     width: 100%;
     text-align: center;
-    font-weight: normal;
+    font-weight: bold;
+    /* Bold for better visibility of the dot */
+    font-size: 1.2em;
+    /* Slightly larger */
+    line-height: 1;
 }
