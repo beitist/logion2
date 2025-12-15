@@ -76,9 +76,16 @@ async def upload_glossary(project_id: str, file: UploadFile = File(...), db: Ses
         for k, v in row.items():
             if not k: continue
             k_lower = k.lower().strip()
-            if k_lower == 'source': src = v
-            elif k_lower == 'target': tgt = v
-            elif k_lower == 'note': note = v
+            
+            # Source variations
+            if k_lower in ['source', 'source_term', 'term', 'original', 'lemma', 'de', 'deutsch', 'german']: 
+                src = v
+            # Target variations
+            elif k_lower in ['target', 'target_term', 'translation', 'en', 'english', 'englisch']: 
+                tgt = v
+            # Note variations
+            elif k_lower in ['note', 'notes', 'comment', 'comments', 'context', 'description']: 
+                note = v
             
         if src and tgt:
             matcher.add_term(src, tgt, note)
