@@ -3,7 +3,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
-import InvisibleCharacters, { SpaceCharacter, HardBreakNode, ParagraphNode } from '@tiptap/extension-invisible-characters'
+import InvisibleCharacters, { InvisibleCharacter, SpaceCharacter, HardBreakNode, ParagraphNode } from '@tiptap/extension-invisible-characters'
 import { Node, Extension, mergeAttributes } from '@tiptap/core'
 
 import './TiptapStyles.css';
@@ -126,26 +126,48 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
     )
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, chromeless = false }) {
+
+// Custom Invisible Character for Tabs
+class TabCharacter extends InvisibleCharacter {
+    constructor() {
+        super({
+            type: 'tab',
+            predicate: char => char === '\t',
+        })
+    }
+
+    render() {
+        const span = document.createElement('span')
+        span.classList.add('Tiptap-invisible-character', 'Tiptap-invisible-character--tab')
+        // Allow selection/cursor interaction quirks if needed
+        return span
+    }
+}
+
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, chromeless = false }) {
     const aiSettingsRef = React.useRef(aiSettings);
-    // ... refs ...
+    const onAiDraftRef = React.useRef(onAiDraft);
+    const contextMatchesRef = React.useRef(contextMatches);
+    const availableTagsRef = React.useRef(availableTags);
+    const onNavigateRef = React.useRef(onNavigate);
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
         onAiDraftRef.current = onAiDraft;
         contextMatchesRef.current = contextMatches;
         availableTagsRef.current = availableTags;
-    }, [aiSettings, onAiDraft, contextMatches, availableTags]);
+        onNavigateRef.current = onNavigate;
+    }, [aiSettings, onAiDraft, contextMatches, availableTags, onNavigate]);
 
     // ... hydrateContent ... (same)
     const hydrateContent = (content, tags) => { // ... (same)
         if (!content) return "";
         let hydrated = content;
-        // 1. Pre-Pass
+        // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
         hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
             const tagInfo = tags ? tags[id] : null;
             if (tagInfo && tagInfo.type === 'tab') {
-                return `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`;
+                return "\t";
             }
             return match;
         });
@@ -157,19 +179,22 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             let finalId = id;
             if (tagInfo) {
                 if (tagInfo.type === 'tab') {
-                    label = 'TAB';
-                    finalId = 'TAB';
+                    // Suppress tab tags that weren't caught by pre-pass
+                    return "";
                 }
                 else if (tagInfo.type === 'comment') label = '💬';
             }
             return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
         });
         // 3. Fallback
-        hydrated = hydrated.replace(/\[TAB\]/g, `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`);
+        hydrated = hydrated.replace(/\[TAB\]/g, "\t");
         return hydrated;
     };
 
     const editor = useEditor({
+        parseOptions: {
+            preserveWhitespace: 'full',
+        },
         extensions: [
             StarterKit,
             Underline,
@@ -185,13 +210,33 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                     new SpaceCharacter(),
                     new HardBreakNode(),
                     new ParagraphNode(),
+                    new TabCharacter(),
                 ]
             }),
             TagNode,
             Extension.create({
                 addKeyboardShortcuts() {
-                    // ... (same shortcuts)
                     return {
+                        // Navigation
+                        'Mod-Alt-ArrowDown': () => {
+                            if (onNavigateRef.current) {
+                                onNavigateRef.current('next');
+                                return true;
+                            }
+                            return false;
+                        },
+                        'Mod-Alt-ArrowUp': () => {
+                            if (onNavigateRef.current) {
+                                onNavigateRef.current('prev');
+                                return true;
+                            }
+                            return false;
+                        },
+                        // Real Tab
+                        'Tab': () => {
+                            this.editor.commands.insertContent('\t');
+                            return true;
+                        },
                         'Mod-Alt-0': () => {
                             const matches = contextMatchesRef.current;
                             const mtMatch = matches?.find(m => m.type === 'mt');
@@ -322,7 +367,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         : `min-h-[100px] outline-none p-4`;
 
     return (
-        <div className={containerClasses}>
+        <div id={`editor-${segmentId}`} className={containerClasses}>
             {!isReadOnly && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={() => onAiDraft && segmentId ? onAiDraft(segmentId) : null} />}
             <EditorContent editor={editor} className={editorContentClasses} />
         </div>

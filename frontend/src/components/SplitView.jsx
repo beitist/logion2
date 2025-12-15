@@ -107,18 +107,18 @@ export function SplitView({ projectId }) {
         );
     };
 
-    // Helper: Hydrate generic XML tags (<1>, </1>) into Tiptap TagNodes
-    const hydrateContent = (content, tags) => {
-        if (!content) return "";
-        let hydrated = content;
+    // Helper to hydrate Tiptap tags from custom XML <N> format
+    const hydrateContent = (htmlContent, tags) => {
+        if (!htmlContent) return "";
+        let hydrated = htmlContent;
 
         // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
-        // We replace the whole sequence with a single Tab Chip to avoid duplication (Chip + Text + Chip).
+        // We replace the whole sequence with a real TAB character.
+        // User Request: "Keep tabs as tabs"
         hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
             const tagInfo = tags ? tags[id] : null;
             if (tagInfo && tagInfo.type === 'tab') {
-                // Return a SINGLE chip for the whole group
-                return `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`;
+                return "\t";
             }
             return match;
         });
@@ -132,8 +132,12 @@ export function SplitView({ projectId }) {
 
             if (tagInfo) {
                 if (tagInfo.type === 'tab') {
-                    label = 'TAB';
-                    finalId = 'TAB'; // Use generic ID so user can behave generically
+                    // It's a tab tag but wasn't caught by the pre-pass (maybe split?)
+                    // Just hidden/ignored or converted to tab?
+                    // If we have a single tag for a tab, it's weird.
+                    // But if we do, let's just suppress it or return tab?
+                    // Let's suppress the tag wrapper. Content should be [TAB] text usually?
+                    return "";
                 }
                 else if (tagInfo.type === 'comment') label = '💬';
             }
@@ -330,66 +334,34 @@ export function SplitView({ projectId }) {
             const innerText = wrapMatch[2];
             const tagInfo = tags ? tags[tid] : null;
 
-            // Only strip standard formatting tags
-            // USER REQUEST 1321: "Source bitte auch keine RTF-formatierungen sondern ausschliesslich tags"
-            // We REMOVE the logic that strips tags and applies styles.
-            // Now these tags will fall through and be rendered as numeric chips below.
-
             if (tagInfo && ['bold', 'italic', 'underline'].includes(tagInfo.type)) {
-                // STRIP redundant specific styling tags that wrap the whole segment.
-                // We do NOT apply the style (wrapperStyle) to keep the "Chip Mode" strict/clean look.
-                // The tag simply disappears from view, reducing noise.
                 contentToRender = innerText;
             } else
                 if (tagInfo && tagInfo.type === 'comment') {
-                    // COMMENT RANGE DETECTED!
-                    // We unwrap it but apply a Highlight Style
-                    // For Tiptap, we can't easily apply wrapperStyle to the whole editor content unless we wrap it.
-                    // But Tiptap expects HTML string.
                     if (!forTiptap) {
                         wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
                     }
                     contentToRender = innerText;
-
-                    // Note: We strip the tag, so the "Start Tag" chip logic below won't fire for this ID.
-                    // This is perfect! We get highlight but no generic chip <N>.
-                    // But wait, the loop continues. If we unwrapped, regex below won't find <ID> anymore.
-                    // We need to ensure we don't break the loop logic if we want to strip INNER tags too.
-                    // Yes, continue unwrapping.
                 } else {
-                    // If it's a Link or Comment, stop stripping so the chip remains visible
                     break;
                 }
         }
 
         if (forTiptap) {
-            // For Tiptap, we stop here. We return the content with <1> tags intact.
-            // Tiptap's hydrateContent will convert <1> -> chips.
-            // And Tiptap handles the text rendering (and invisible chars!).
-
-            // Note: If we had a 'wrapperStyle' (e.g. comment highlight), we might need to wrap the whole thing?
-            // Tiptap content is inner.
-            // We can return `<span class="${wrapperStyle}">${contentToRender}</span>`?
-            // Tiptap supports spans? Yes.
+            // For Tiptap, we need to Hydrate the XML tags into Tiptap-friendly spans
+            const hydrated = hydrateContent(contentToRender, tags);
             if (wrapperStyle) {
-                return `<span class="${wrapperStyle}">${contentToRender}</span>`;
+                return `<span class="${wrapperStyle}">${hydrated}</span>`;
             }
-            return contentToRender;
+            return hydrated;
         }
 
         // 2. Badge Replacement (Smart) for Raw HTML View (Legacy/Fallback)
-        // We use a callback to check tag type before rendering a Blue/Orange chip.
-
         // Start Tags <n>
         let formatted = contentToRender.replace(/<(\d+)>/g, (match, id) => {
             const t = tags ? tags[id] : null;
-            // If it's a TAB or COMMENT or LINK, we might want to hide the generic numeric chip
-            // because we render the content specially (or want to avoid double-visuals).
-
-            // Tab: Logic change - We ALWAYS want to show [TAB] badge, but not the numeric wrapper.
-            // Since [TAB] marker is inside, we hide the wrapper.
             if (t && (t.type === 'tab' || t.type === 'comment')) {
-                return ""; // Hide start tag wrapper, content ([TAB]) will be styled below
+                return ""; // Hide start tag wrapper
             }
             return `<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">${id}</span>`;
         });
@@ -403,28 +375,17 @@ export function SplitView({ projectId }) {
             return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/${id}</span>`;
         });
 
-        // Replace [TAB] -> [TAB] Badge
-        formatted = formatted.replace(/\[TAB\]/g,
-            '<span class="bg-gray-100 text-gray-800 text-[10px] font-bold px-1 rounded mx-0.5 border border-gray-300">⇥ TAB</span>');
+        // Replace [TAB] -> Real TAB Character
+        formatted = formatted.replace(/\[TAB\]/g, "\t");
 
         // Replace [COMMENT] -> [💬] Badge
         formatted = formatted.replace(/\[COMMENT\]/g,
             '<span class="cursor-help bg-yellow-200 text-yellow-800 text-[10px] px-1 rounded mx-0.5 align-middle">💬</span>');
 
         // Replace <br/> -> [↵] Badge
-        // Regex for <br/> or <br> or <br />
         formatted = formatted.replace(/<br\s*\/?>/gi,
             '<span class="bg-purple-50 text-purple-400 text-[10px] px-1 rounded mx-0.5 select-none inline-block">↵</span><br/>');
-        // We append real <br/> so it breaks line visually too?
-        // User said "nicht erahnen wo welche sind".
-        // If I keep real <br/>, it breaks. If I remove it, it becomes one line with badges.
-        // Usually keeping the break IS desired, but the badge makes it EXPLICIT.
-        // Let's keep both. Badge + Break.
 
-
-        // Replace <br/> (already HTML, but ensure it's safe? dangerouslySetInnerHTML handles it)
-
-        // 3. Wrap result if we stripped a wrapper
         if (wrapperStyle) {
             return `<span class="${wrapperStyle}">${formatted}</span>`;
         }
@@ -451,6 +412,36 @@ export function SplitView({ projectId }) {
         });
 
         return Array.from(uniqueComments.values());
+    };
+
+    // Navigation Helper
+    const handleNavigation = (currentId, direction) => {
+        // finding current index
+        const currentIndex = segments.findIndex(s => s.id === currentId);
+        if (currentIndex === -1) return;
+
+        let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+
+        // Boundaries
+        if (nextIndex < 0) nextIndex = 0; // or loop? usually stop
+        if (nextIndex >= segments.length) nextIndex = segments.length - 1;
+
+        if (nextIndex !== currentIndex) {
+            const nextSeg = segments[nextIndex];
+            // Focus logic: We rely on the TiptapEditor's inner logic or we need to programmatically focus.
+            // Since we can't easily reach into Tiptap instance from here without Refs,
+            // we will use a DOM lookup for the editor wrapper we added IDs to.
+            // Requirement: TiptapEditor must have id={`editor-${segmentId}`} on its wrapper.
+            // And then we find .ProseMirror inside it.
+
+            setTimeout(() => {
+                const editorEl = document.querySelector(`#editor-${nextSeg.id} .ProseMirror`);
+                if (editorEl) {
+                    editorEl.focus();
+                    handleSegmentFocus(nextSeg.id); // Sync state
+                }
+            }, 10);
+        }
     };
 
     const handleContextMenu = (e) => {
@@ -935,4 +926,4 @@ export function SplitView({ projectId }) {
             <ShortcutsPanel isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
         </div>
     );
-}
+};

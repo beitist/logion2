@@ -2,6 +2,7 @@
 .ProseMirror {
     outline: none !important;
     min-height: 100px;
+    white-space: pre-wrap;
 }
 
 .ProseMirror p.is-editor-empty:first-child::before {
@@ -54,4 +55,23 @@
     outline: 2px solid #3b82f6;
     /* blue-500 */
     border-radius: 4px;
+}
+
+/* Custom Invisible Character: Tab */
+.Tiptap-invisible-character--tab {
+    position: relative;
+    display: inline-block;
+}
+
+.Tiptap-invisible-character--tab::before {
+    content: '⇥';
+    color: #cbd5e1;
+    /* slate-300 */
+    position: absolute;
+    pointer-events: none;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 100%;
+    text-align: center;
+    left: 0;
 }
