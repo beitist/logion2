@@ -13,7 +13,7 @@ from datetime import datetime
 from ..database import get_db, SessionLocal, engine
 from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse, ProjectFileSchema
 from ..parser import parse_docx
-from ..models import Project, Segment, ProjectFile, ProjectFileCategory
+from ..models import Project, Segment, ProjectFile, ProjectFileCategory, GlossaryEntry
 
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
@@ -121,7 +121,7 @@ async def create_project(
             # Download from MinIO
             download_file(source_record.file_path, temp_parse_path)
             
-            segments_internal = parse_docx(temp_parse_path)
+            segments_internal = parse_docx(temp_parse_path, source_lang=source_lang)
             
             for i, seg_int in enumerate(segments_internal):
                 seg_dump = seg_int.model_dump()
@@ -372,6 +372,9 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
 
     # Delete segments manually to ensure cleanup
     db.query(Segment).filter(Segment.project_id == project_id).delete()
+    # Delete glossary entries manually (no cascade relationship)
+    db.query(GlossaryEntry).filter(GlossaryEntry.project_id == project_id).delete()
+    
     db.delete(project)
     db.commit()
     return {"message": "Project deleted successfully"}
@@ -406,6 +409,11 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     ai_settings = config.get("ai_settings", {})
     threshold = float(ai_settings.get("similarity_threshold", 0.4))
     
+    # Extract tags for Tab handling
+    tags_data = None
+    if segment.metadata_json:
+        tags_data = segment.metadata_json.get("tags")
+
     result = generate_segment_draft(
         segment_text=segment.source_content,
         source_lang=project.source_lang,
@@ -413,7 +421,8 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
         project_id=str(project.id),
         db=db,
         threshold=threshold,
-        model_name=model_name
+        model_name=model_name,
+        tags=tags_data
     )
     
     # Update Segment with Draft and Matches
@@ -456,6 +465,20 @@ async def reingest_project_endpoint(project_id: str, background_tasks: Backgroun
     background_tasks.add_task(reingest_project, project_id)
     
     return {"message": "Re-ingestion started"}
+
+@router.post("/{project_id}/generate-drafts")
+async def generate_drafts_endpoint(project_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Triggers batch AI draft generation for all segments in the project.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    from ..rag import generate_project_drafts
+    background_tasks.add_task(generate_project_drafts, project_id)
+    
+    return {"message": "Batch draft generation started. This may take a while."}
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)):

@@ -3,6 +3,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
+import InvisibleCharacters, { InvisibleCharacter, SpaceCharacter, HardBreakNode, ParagraphNode } from '@tiptap/extension-invisible-characters'
 import { Node, Extension, mergeAttributes } from '@tiptap/core'
 
 import './TiptapStyles.css';
@@ -79,18 +80,19 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
             )}
 
             {/* Tag Buttons: INSERT NODE */}
-            {/* 1. Generic Tab Button (if any available) */}
-            {availableTags && Object.values(availableTags).some(t => t.type === 'tab') && (
-                <button
-                    tabIndex="-1"
-                    onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: 'TAB', label: 'TAB' } }).run()}
-                    onMouseDown={(e) => e.preventDefault()}
-                    className="px-2 py-1 text-xs font-mono rounded border bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200 active:bg-gray-300 min-w-[24px] font-bold"
-                    title="Insert Tab (Auto-mapped)"
-                >
-                    ⇥
-                </button>
-            )}
+            {/* 1. Generic Tab Button REMOVED (User Request) */}
+            {/* But we replace it with NBSP button? Or just add NBSP button next to it? */}
+            {/* User requested to remove TAB button. Let's add NBSP instead. */}
+
+            <button
+                tabIndex="-1"
+                onClick={() => editor.chain().focus().insertContent('\u00A0').run()}
+                onMouseDown={(e) => e.preventDefault()}
+                className="px-2 py-1 text-xs font-mono rounded border bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100 active:bg-gray-200 min-w-[24px]"
+                title="Insert Non-Breaking Space (Cmd+Opt+Ctrl+Space)"
+            >
+                ␣
+            </button>
 
             {/* 2. Specific ID Buttons (excluding Tabs and Comments) */}
             {availableTags && Object.keys(availableTags).map(tid => {
@@ -125,45 +127,161 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
     )
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft }) {
+
+// Custom Invisible Character for Tabs
+class TabCharacter extends InvisibleCharacter {
+    constructor() {
+        super({
+            type: 'tab',
+            predicate: char => char === '\t',
+        })
+    }
+
+    render() {
+        const span = document.createElement('span')
+        span.classList.add('Tiptap-invisible-character', 'Tiptap-invisible-character--tab')
+        // Allow selection/cursor interaction quirks if needed
+        return span
+    }
+}
+
+// Custom Invisible Character for NBSP
+class NbspCharacter extends InvisibleCharacter {
+    constructor() {
+        super({
+            type: 'nbsp',
+            predicate: char => char === '\u00A0',
+        })
+    }
+
+    render() {
+        const span = document.createElement('span')
+        span.classList.add('Tiptap-invisible-character', 'Tiptap-invisible-character--nbsp')
+        span.innerHTML = '&nbsp;' // Render actual nbsp or visual? CSS usually handles visual.
+        // Actually for visuals we might want a distinct marker like a small dot or circle.
+        // But the extension usually uses CSS `::before` content.
+        // We just need the class.
+        return span
+    }
+}
+
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, chromeless = false }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
+    const availableTagsRef = React.useRef(availableTags);
+    const onNavigateRef = React.useRef(onNavigate);
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
         onAiDraftRef.current = onAiDraft;
         contextMatchesRef.current = contextMatches;
-    }, [aiSettings, onAiDraft, contextMatches]);
+        availableTagsRef.current = availableTags;
+        onNavigateRef.current = onNavigate;
+    }, [aiSettings, onAiDraft, contextMatches, availableTags, onNavigate]);
+
+    // ... hydrateContent ... (same)
+    const hydrateContent = (content, tags) => { // ... (same)
+        if (!content) return "";
+        let hydrated = content;
+        // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
+        hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
+            const tagInfo = tags ? tags[id] : null;
+            if (tagInfo && tagInfo.type === 'tab') {
+                return "\t";
+            }
+            return match;
+        });
+        // 2. Standard Match
+        hydrated = hydrated.replace(/<(\d+)>|<\/(\d+)>/g, (match, openId, closeId) => {
+            const id = openId || closeId;
+            const tagInfo = tags ? tags[id] : null;
+            let label = id;
+            let finalId = id;
+            if (tagInfo) {
+                if (tagInfo.type === 'tab') {
+                    // Suppress tab tags that weren't caught by pre-pass
+                    return "";
+                }
+                else if (tagInfo.type === 'comment') label = '💬';
+            }
+            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
+        });
+        // 3. Fallback
+        hydrated = hydrated.replace(/\[TAB\]/g, "\t");
+        return hydrated;
+    };
 
     const editor = useEditor({
         extensions: [
-            StarterKit,
-            Underline,
+            StarterKit.configure({
+                history: false, // We handle history manually or it conflicts with external state updates sometimes
+            }),
             Link.configure({
                 openOnClick: false,
                 HTMLAttributes: {
                     class: 'text-blue-500 underline cursor-pointer',
                 },
             }),
+            Underline,
+            // Custom Invisible Characters
+            InvisibleCharacters.configure({
+                injectCSS: false, // We use our own CSS
+                builders: [
+                    new SpaceCharacter(),
+                    new HardBreakNode(),
+                    new ParagraphNode(),
+                    new TabCharacter(), // <--- Our custom tab
+                    new NbspCharacter(), // <--- Our custom NBSP
+                ]
+            }),
+            // Custom Tag Node
             TagNode,
             Extension.create({
                 addKeyboardShortcuts() {
                     return {
+                        // Navigation
+                        'Mod-Alt-ArrowDown': () => {
+                            if (onNavigateRef.current) {
+                                onNavigateRef.current('next');
+                                return true;
+                            }
+                            return false;
+                        },
+                        'Mod-Alt-ArrowUp': () => {
+                            if (onNavigateRef.current) {
+                                onNavigateRef.current('prev');
+                                return true;
+                            }
+                            return false;
+                        },
+                        // Real Tab
+                        'Tab': () => {
+                            this.editor.commands.insertContent('\t');
+                            return true;
+                        },
+                        // NBSP Shortcut: Cmd+Alt+Ctrl+Space
+                        'Mod-Alt-Control-Space': () => {
+                            this.editor.commands.insertContent('\u00A0');
+                            return true;
+                        },
                         'Mod-Alt-0': () => {
                             const matches = contextMatchesRef.current;
                             const mtMatch = matches?.find(m => m.type === 'mt');
                             if (mtMatch) {
-                                return this.editor.commands.setContent(mtMatch.content)
+                                const hydrated = hydrateContent(mtMatch.content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false;
                         },
+                        // ... (rest of shortcuts same) ...
                         'Mod-Alt-9': () => {
+                            // ...
                             const matches = contextMatchesRef.current;
-                            // Filter out MT for numeric shortcuts to keep 0 distinct
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[0]) {
-                                return this.editor.commands.setContent(refs[0].content)
+                                const hydrated = hydrateContent(refs[0].content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false
                         },
@@ -171,7 +289,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[1]) {
-                                return this.editor.commands.setContent(refs[1].content)
+                                const hydrated = hydrateContent(refs[1].content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false
                         },
@@ -179,28 +298,34 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[2]) {
-                                return this.editor.commands.setContent(refs[2].content)
+                                const hydrated = hydrateContent(refs[2].content, availableTagsRef.current);
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false
                         },
                         'Mod-Alt-ü': () => {
-                            // Explicit MT shortcut "Get AI Translation"
                             if (onAiDraftRef.current && segmentId) {
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
-                                        this.editor.commands.setContent(newContent);
+                                        const hydrated = hydrateContent(newContent, availableTagsRef.current);
+                                        this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
                                     }
                                 });
                                 return true;
                             }
                             return false;
                         },
+                        'Mod-Alt-ß': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-¿': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-\\': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-?': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-Shift-ß': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
                         'Control-Space': () => {
-                            // Easier shortcut for AI Draft
                             if (onAiDraftRef.current && segmentId) {
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
-                                        this.editor.commands.setContent(newContent);
+                                        const hydrated = hydrateContent(newContent, availableTagsRef.current);
+                                        this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
                                     }
                                 });
                                 return true;
@@ -216,26 +341,28 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                         }
                     }
                 }
-            })
+            }),
         ],
         content: content || "",
         editable: !isReadOnly,
+        parseOptions: {
+            preserveWhitespace: 'full', // Preserves \t characters
+        },
+        editorProps: {
+            attributes: {
+                // Ensure chromeless editor has no min-height using Tailwind !min-h-0
+                class: chromeless ? '!min-h-0' : '',
+            }
+        },
         onUpdate: ({ editor }) => {
             if (onUpdate) onUpdate(editor.getHTML());
         },
         onFocus: ({ editor }) => {
-            // Auto-Trigger AI Retrieval if empty (Fetcher only, no Insert)
+            if (onFocus) onFocus();
             if (editor.isEmpty && segmentId) {
-                // 1. Check if we already have data
                 const existingMatches = contextMatchesRef.current;
-
-                if (existingMatches && existingMatches.length > 0) {
-                    // Already have matches, do nothing
-                    // console.log("Matches already loaded.");
-                }
-                // 2. Otherwise trigger retrieval (SplitView handles the state update)
+                if (existingMatches && existingMatches.length > 0) { }
                 else if (onAiDraftRef.current) {
-                    console.log("Fetching context on focus...");
                     onAiDraftRef.current(segmentId);
                 }
             }
@@ -247,12 +374,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         },
     })
 
-
-    // Update content if it changes externally
-    // Note: 'content' passed here MUST be hydrated HTML with <span data-type="tag-node"> already!
     useEffect(() => {
         if (editor && content && content !== editor.getHTML()) {
-            editor.commands.setContent(content)
+            editor.commands.setContent(content, false, { preserveWhitespace: 'full' })
         }
     }, [content, editor])
 
@@ -260,13 +384,23 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         return null
     }
 
-    return (
-        <div className={`prose max-w-none border rounded-md transition-shadow relative group/editor ${isReadOnly
+    // Styles for Chromeless Mode
+    // If chromeless, we strip: border, shadow, background (inherit), padding
+    const containerClasses = chromeless
+        ? `prose max-w-none relative group/editor`
+        : `prose max-w-none border rounded-md transition-shadow relative group/editor ${isReadOnly
             ? 'bg-gray-50 text-gray-700 border-gray-200'
             : 'bg-white border-gray-300 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 shadow-sm'
-            }`}>
-            {!isReadOnly && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={() => onAiDraft && segmentId ? onAiDraft(segmentId) : null} />}
-            <EditorContent editor={editor} className="min-h-[100px] outline-none p-4" />
+        }`;
+
+    const editorContentClasses = chromeless
+        ? `outline-none` // No padding, no min-height (handled by editorProps !min-h-0)
+        : `min-h-[100px] outline-none p-4`;
+
+    return (
+        <div id={`editor-${segmentId}`} className={containerClasses}>
+            {!isReadOnly && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={() => onAiDraft && segmentId ? onAiDraft(segmentId) : null} />}
+            <EditorContent editor={editor} className={editorContentClasses} />
         </div>
     )
 }

@@ -8,7 +8,7 @@ from lxml import etree
 
 from .schemas import SegmentInternal, TagModel
 
-def parse_docx(file_path: str) -> List[SegmentInternal]:
+def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List[SegmentInternal]:
     """
     Parses a DOCX file and extracts segments with tags for formatting, hyperlinks, and comments.
     """
@@ -36,8 +36,12 @@ def parse_docx(file_path: str) -> List[SegmentInternal]:
     except Exception as e:
         print(f"Warning: Could not load comments: {e}")
 
-    # Helper context to pass comments_map
-    context = {"comments_map": comments_map}
+    # Helper context to pass comments_map, segmentation_func, source_lang
+    context = {
+        "comments_map": comments_map,
+        "segmentation_func": segmentation_func,
+        "source_lang": source_lang
+    }
 
     # 1. Body
     segments.extend(_process_container(doc, {"type": "body"}, context))
@@ -81,8 +85,17 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
 
     # 2. Tables
     for t_idx, table in enumerate(container.tables):
+        # Track processed cells to handle Merged Cells (vMerge)
+        # python-docx repeats the cell object for each covered row.
+        processed_tcs = set() 
+        
         for r_idx, row in enumerate(table.rows):
             for c_idx, cell in enumerate(row.cells):
+                # Check for duplication via XML element (tc)
+                if cell._tc in processed_tcs:
+                    continue
+                processed_tcs.add(cell._tc)
+
                 # Recursion! A cell is also a container (has paragraphs and tables)
                 # We need to construct the location correctly.
                 
@@ -272,19 +285,19 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
     if not full_text:
         return []
 
-    # Decision: Split or Keep Whole?
-    # MVP Strategy: Only split if NO TAGS are present to avoid breaking tag structure.
-    # Future: Parse <n>...</n> and split safely.
-    segments_to_create = []
+    # Decision: Smart Splitting
+    # Always split sentences, then repair tags across boundaries.
     
-    if not tags:
-        # Pure text, safe to split
-        sentences = _split_sentences(full_text)
-        for idx, sentence in enumerate(sentences):
-             segments_to_create.append((sentence, idx))
-    else:
-        # Has tags, keep whole
-        segments_to_create.append((full_text, 0))
+    segments_to_create = []
+
+    # 1. Split (using SemanticAligner which protects tags from breaking splitting logic)
+    sentences = _split_sentences(full_text, context.get("segmentation_func"), lang=context.get("source_lang", "en"))
+    
+    # 2. Repair Tags (Clone open tags across split boundaries)
+    repaired_sentences = _repair_tags(sentences)
+    
+    for idx, sentence in enumerate(repaired_sentences):
+         segments_to_create.append((sentence, idx))
 
     final_segments = []
     for content, sub_index in segments_to_create:
@@ -306,11 +319,24 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
 
 import pysbd
 
-_segmenter = pysbd.Segmenter(language="en", clean=False)
+_segmenter_cache = {}
 
-def _split_sentences(text: str) -> List[str]:
+def _get_segmenter(lang: str):
+    if lang not in _segmenter_cache:
+        # Pysbd supports ISO codes. Fallback to en.
+        try:
+             _segmenter_cache[lang] = pysbd.Segmenter(language=lang, clean=False)
+        except:
+             _segmenter_cache[lang] = pysbd.Segmenter(language="en", clean=False)
+    return _segmenter_cache[lang]
+
+def _split_sentences(text: str, segmentation_func=None, lang="en") -> List[str]:
     # Use pysbd for robust splitting
-    return _segmenter.segment(text)
+    if segmentation_func:
+        return segmentation_func(text)
+    
+    seg = _get_segmenter(lang)
+    return seg.segment(text)
 
 def _extract_tags(run) -> List[TagModel]:
     """
@@ -384,9 +410,16 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
             cid = child.get(qn('w:id'))
             if cid and context["comments_map"].get(cid):
                 ctext = context["comments_map"][cid]
-                com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
                 tid = add_tag_func(com_tag)
                 content_accum += f"<{tid}>[COMMENT]</{tid}>"
+
+        elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
+             # Handle Shapes/Images
+             # We create a placeholder tag.
+             # In reassembly, we will attempt to restore the shape from the original doc.
+             shape_tag = TagModel(type="shape", content="[SHAPE]")
+             tid = add_tag_func(shape_tag)
+             content_accum += f"<{tid}>[SHAPE]</{tid}>"
 
     # 4. Process Text for URLs (Regex)
     # URL detection works on text parts.
@@ -461,3 +494,43 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
             full_run_text += f"</{tid}>"
             
     return full_run_text
+
+import re
+from typing import List
+
+def _repair_tags(segments: List[str]) -> List[str]:
+    """
+    Ensures that if a segment ends with open tags, they are closed,
+    and reopened in the next segment.
+    """
+    repaired = []
+    stack = []
+    # Regex to find tags: <1>, </1>
+    pattern = re.compile(r'<(/?(\d+))>')
+    
+    for part in segments:
+        # 1. Prepend Open Tags from Stack (Re-Open)
+        prefix = "".join([f"<{tid}>" for tid in stack])
+        current_seg = prefix + part
+        
+        # 2. Update Stack based on tags in THIS part (Original content)
+        # We must scan 'part' to avoiding seeing the tags we just prepended
+        for m in pattern.finditer(part):
+            full_tag = m.group(1) # "1" or "/1"
+            tid = m.group(2)
+            is_close = full_tag.startswith("/")
+            
+            if is_close:
+                # Attempt to pop from stack
+                if stack and stack[-1] == tid:
+                    stack.pop()
+            else:
+                stack.append(tid)
+        
+        # 3. Append Close Tags for remaining Stack (Close)
+        suffix = "".join([f"</{tid}>" for tid in reversed(stack)])
+        current_seg = current_seg + suffix
+        
+        repaired.append(current_seg)
+        
+    return repaired

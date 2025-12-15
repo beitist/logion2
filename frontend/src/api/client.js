@@ -79,10 +79,53 @@ export async function generateDraft(segmentId) {
     return res.json();
 }
 
+export async function generateProjectDrafts(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/generate-drafts`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to start batch generation");
+    return res.json();
+}
+
 export async function reingestProject(projectId) {
     const res = await fetch(`${API_BASE}/project/${projectId}/reingest`, {
         method: "POST",
     });
     if (!res.ok) throw new Error("Failed to re-ingest project");
+    return res.json();
+}
+
+// Glossary API
+
+export async function addGlossaryTerm(projectId, source, target, note) {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/glossary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_term: source, target_term: target, context_note: note }),
+    });
+    if (!res.ok) throw new Error("Failed to add glossary term");
+    return res.json();
+}
+
+export async function getGlossaryTerms(projectId) {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/glossary`);
+    if (!res.ok) throw new Error("Failed to fetch glossary");
+    return res.json();
+}
+
+export async function uploadGlossary(projectId, file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/projects/${projectId}/glossary/upload`, {
+        method: "POST",
+        body: formData,
+    });
+    if (!res.ok) throw new Error("Failed to upload glossary");
+    return res.json();
+}
+
+export async function getAiModels() {
+    const res = await fetch(`${API_BASE}/config/models`);
+    if (!res.ok) throw new Error("Failed to fetch models");
     return res.json();
 }

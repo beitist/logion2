@@ -2,6 +2,7 @@
 .ProseMirror {
     outline: none !important;
     min-height: 100px;
+    white-space: pre-wrap;
 }
 
 .ProseMirror p.is-editor-empty:first-child::before {
@@ -54,4 +55,74 @@
     outline: 2px solid #3b82f6;
     /* blue-500 */
     border-radius: 4px;
+}
+
+/* Custom Invisible Character: Tab */
+.Tiptap-invisible-character--tab {
+    position: relative;
+    display: inline-block;
+}
+
+.Tiptap-invisible-character--tab::before {
+    content: '⇥';
+    color: #94a3b8;
+    /* slate-400 - darker for visibility */
+    display: inline-block;
+    width: 20px;
+    /* Force width */
+    text-align: center;
+    pointer-events: none;
+    font-weight: bold;
+    opacity: 0.7;
+    background-color: rgba(0, 0, 0, 0.05);
+    /* Slight background to verify dimension */
+    border-radius: 2px;
+}
+
+/* Custom Invisible Character: NBSP */
+.Tiptap-invisible-character--nbsp {
+    position: relative;
+    display: inline-block;
+}
+
+.Tiptap-invisible-character--nbsp::before {
+    content: '␣';
+    /* Or '·' or '⍽' */
+    color: #94a3b8;
+    /* slate-400 */
+    position: absolute;
+    pointer-events: none;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 100%;
+    text-align: center;
+    left: 0;
+    font-weight: bold;
+    opacity: 0.5;
+}
+
+/* Custom Invisible Character: Space */
+.Tiptap-invisible-character--space {
+    position: relative;
+    display: inline-block;
+}
+
+.Tiptap-invisible-character--space::before {
+    content: '·';
+    color: #93c5fd;
+    /* blue-300 (Light Blue) */
+    position: absolute;
+    pointer-events: none;
+    top: 50%;
+    /* Center anchor */
+    transform: translateY(-65%);
+    /* Move up slightly more than half to counter baseline bias */
+    left: 0;
+    width: 100%;
+    text-align: center;
+    font-weight: bold;
+    /* Bold for better visibility of the dot */
+    font-size: 1.2em;
+    /* Slightly larger */
+    line-height: 1;
 }

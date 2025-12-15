@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft } from "../api/client";
+import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft, getGlossaryTerms } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
 
 // GLOBAL DEBUG FLAG
@@ -7,8 +7,12 @@ import { TiptapEditor } from './TiptapEditor';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
 import { AISettingsTab } from './settings/AISettingsTab';
+import { GlossarySettingsTab } from './settings/GlossarySettingsTab';
+import { StatisticsSettingsTab } from './settings/StatisticsSettingsTab';
+import { GlossaryAddModal } from './GlossaryAddModal';
 
-import { Terminal, Bug, Keyboard } from 'lucide-react';
+import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy } from 'lucide-react';
+import './TiptapStyles.css'; // Ensure invisible character styles are available
 import { LogConsole } from './LogConsole';
 import { ShortcutsPanel } from './ShortcutsPanel';
 
@@ -20,7 +24,19 @@ export function SplitView({ projectId }) {
     const [savingId, setSavingId] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
     const [showShortcuts, setShowShortcuts] = useState(false);
-    const [activeSettingsTab, setActiveSettingsTab] = useState('files'); // 'files' or 'ai'
+    const [activeSettingsTab, setActiveSettingsTab] = useState('files'); // 'files', 'ai', 'glossary'
+    const [activeSegmentId, setActiveSegmentId] = useState(null); // Track active segment for sidebar & AI logic
+
+    // Glossary Modal State
+    const [showGlossaryModal, setShowGlossaryModal] = useState(false);
+    const [glossarySelection, setGlossarySelection] = useState("");
+    const [glossaryTerms, setGlossaryTerms] = useState([]); // Cache for display
+
+    useEffect(() => {
+        if (projectId) {
+            getGlossaryTerms(projectId).then(setGlossaryTerms).catch(err => console.warn("Glossary load failed", err));
+        }
+    }, [projectId, showGlossaryModal]); // Reload if modal closes (term added)
 
     // Console & Debug State
     const [showConsole, setShowConsole] = useState(false);
@@ -92,21 +108,26 @@ export function SplitView({ projectId }) {
         );
     };
 
-    // Helper: Hydrate generic XML tags (<1>, </1>) into Tiptap TagNodes
-    const hydrateContent = (content, tags) => {
-        if (!content) return "";
-        let hydrated = content;
+    // Helper to hydrate Tiptap tags from custom XML <N> format
+    const hydrateContent = (htmlContent, tags) => {
+        if (!htmlContent) return "";
+        let hydrated = htmlContent;
 
-        // 1. Pre-Pass: Handle Self-Contained Tabs <N>[TAB]</N>
-        // We replace the whole sequence with a single Tab Chip to avoid duplication (Chip + Text + Chip).
-        hydrated = hydrated.replace(/<(\d+)>\[TAB\]<\/\1>/g, (match, id) => {
-            const tagInfo = tags ? tags[id] : null;
-            if (tagInfo && tagInfo.type === 'tab') {
-                // Return a SINGLE chip for the whole group
-                return `<span data-type="tag-node" data-id="TAB" data-label="TAB"></span>`;
-            }
-            return match;
-        });
+        // 1. Pre-Pass: Iteratively Handle Wrapper Tags around TABs
+        // Example: <2><4>[TAB]</4></2> -> <2>\t</2> -> \t
+        // We do this in a loop to handle arbitrary nesting depth.
+        let changed = true;
+        while (changed) {
+            changed = false;
+            // Match <N> [TAB] or \t </N> with optional spaces
+            hydrated = hydrated.replace(/<(\d+)>\s*(?:\[TAB\]|\t)\s*<\/\1>/g, (match, id) => {
+                // We don't strictly care about tag type here. 
+                // If a tag wraps ONLY a tab, it's structurally irrelevant for the Editor view 
+                // and causes visual "Chips" (e.g. bold tabs). We strip the wrapper.
+                changed = true;
+                return "\t";
+            });
+        }
 
         // 2. Standard Match <(\d+)> OR </(\d+)>
         hydrated = hydrated.replace(/<(\d+)>|<\/(\d+)>/g, (match, openId, closeId) => {
@@ -117,12 +138,11 @@ export function SplitView({ projectId }) {
 
             if (tagInfo) {
                 if (tagInfo.type === 'tab') {
-                    label = 'TAB';
-                    finalId = 'TAB'; // Use generic ID so user can behave generically
+                    // Start/End tag for a specific TAB (if not caught by pre-pass for some reason)
+                    return "";
                 }
                 else if (tagInfo.type === 'comment') label = '💬';
             }
-
             return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
         });
 
@@ -300,7 +320,7 @@ export function SplitView({ projectId }) {
     };
 
     // Helper to visualize tags as badges & apply smart hiding
-    const formatSourceContent = (htmlContent, tags) => {
+    const formatSourceContent = (htmlContent, tags, forTiptap = false) => {
         if (!htmlContent) return "";
 
         let contentToRender = htmlContent;
@@ -315,47 +335,46 @@ export function SplitView({ projectId }) {
             const innerText = wrapMatch[2];
             const tagInfo = tags ? tags[tid] : null;
 
-            // Only strip standard formatting tags
-            // USER REQUEST 1321: "Source bitte auch keine RTF-formatierungen sondern ausschliesslich tags"
-            // We REMOVE the logic that strips tags and applies styles.
-            // Now these tags will fall through and be rendered as numeric chips below.
-
             if (tagInfo && ['bold', 'italic', 'underline'].includes(tagInfo.type)) {
-                // STRIP redundant specific styling tags that wrap the whole segment.
-                // We do NOT apply the style (wrapperStyle) to keep the "Chip Mode" strict/clean look.
-                // The tag simply disappears from view, reducing noise.
                 contentToRender = innerText;
             } else
                 if (tagInfo && tagInfo.type === 'comment') {
-                    // COMMENT RANGE DETECTED!
-                    // We unwrap it but apply a Highlight Style
-                    wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
+                    if (!forTiptap) {
+                        wrapperStyle += " bg-yellow-100 border-b-2 border-yellow-300 cursor-help";
+                    }
                     contentToRender = innerText;
-
-                    // Note: We strip the tag, so the "Start Tag" chip logic below won't fire for this ID.
-                    // This is perfect! We get highlight but no generic chip <N>.
-                    // But wait, the loop continues. If we unwrapped, regex below won't find <ID> anymore.
-                    // We need to ensure we don't break the loop logic if we want to strip INNER tags too.
-                    // Yes, continue unwrapping.
                 } else {
-                    // If it's a Link or Comment, stop stripping so the chip remains visible
                     break;
                 }
         }
 
-        // 2. Badge Replacement (Smart)
-        // We use a callback to check tag type before rendering a Blue/Orange chip.
+        if (forTiptap) {
+            // For Tiptap, we need to Hydrate the XML tags into Tiptap-friendly spans
+            // AND we must ensure that [TAB] is converted to real \t character for the InvisibleCharacters extension to pick it up.
+            let hydrated = hydrateContent(contentToRender, tags);
 
+            // Explicitly handle any remaining generic [TAB] or known tab contents
+            // If hydrateContent returned [TAB] because regex failed, we fix it here.
+            hydrated = hydrated.replace(/\[TAB\]/g, '\t');
+
+            if (wrapperStyle) {
+                return `<span class="${wrapperStyle}">${hydrated}</span>`;
+            }
+            return hydrated;
+        }
+
+        // For Sidebar / HTML View: Render VISIBLE TAB
+        // We replace [TAB] or \t with the exact HTML structure used by Tiptap CSS (roughly)
+        // so it looks the same.
+        let visibleContent = contentToRender.replace(/\[TAB\]/g, '\t');
+        visibleContent = visibleContent.replace(/\t/g, '<span class="Tiptap-invisible-character Tiptap-invisible-character--tab"></span>');
+
+        // 2. Badge Replacement (Smart) for Raw HTML View (Legacy/Fallback)
         // Start Tags <n>
-        let formatted = contentToRender.replace(/<(\d+)>/g, (match, id) => {
+        let formatted = visibleContent.replace(/<(\d+)>/g, (match, id) => {
             const t = tags ? tags[id] : null;
-            // If it's a TAB or COMMENT or LINK, we might want to hide the generic numeric chip 
-            // because we render the content specially (or want to avoid double-visuals).
-
-            // Tab: Logic change - We ALWAYS want to show [TAB] badge, but not the numeric wrapper.
-            // Since [TAB] marker is inside, we hide the wrapper.
             if (t && (t.type === 'tab' || t.type === 'comment')) {
-                return ""; // Hide start tag wrapper, content ([TAB]) will be styled below
+                return ""; // Hide start tag wrapper
             }
             return `<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">${id}</span>`;
         });
@@ -369,28 +388,17 @@ export function SplitView({ projectId }) {
             return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/${id}</span>`;
         });
 
-        // Replace [TAB] -> [TAB] Badge
-        formatted = formatted.replace(/\[TAB\]/g,
-            '<span class="bg-gray-100 text-gray-800 text-[10px] font-bold px-1 rounded mx-0.5 border border-gray-300">⇥ TAB</span>');
+        // Replace [TAB] -> Visible Arrow [⇥] for sidebar/raw view
+        formatted = formatted.replace(/\t|\[TAB\]/g, '<span class="text-gray-400 font-mono select-none">⇥</span>');
 
         // Replace [COMMENT] -> [💬] Badge
         formatted = formatted.replace(/\[COMMENT\]/g,
             '<span class="cursor-help bg-yellow-200 text-yellow-800 text-[10px] px-1 rounded mx-0.5 align-middle">💬</span>');
 
         // Replace <br/> -> [↵] Badge
-        // Regex for <br/> or <br> or <br />
         formatted = formatted.replace(/<br\s*\/?>/gi,
             '<span class="bg-purple-50 text-purple-400 text-[10px] px-1 rounded mx-0.5 select-none inline-block">↵</span><br/>');
-        // We append real <br/> so it breaks line visually too? 
-        // User said "nicht erahnen wo welche sind".
-        // If I keep real <br/>, it breaks. If I remove it, it becomes one line with badges.
-        // Usually keeping the break IS desired, but the badge makes it EXPLICIT.
-        // Let's keep both. Badge + Break.
 
-
-        // Replace <br/> (already HTML, but ensure it's safe? dangerouslySetInnerHTML handles it)
-
-        // 3. Wrap result if we stripped a wrapper
         if (wrapperStyle) {
             return `<span class="${wrapperStyle}">${formatted}</span>`;
         }
@@ -419,6 +427,48 @@ export function SplitView({ projectId }) {
         return Array.from(uniqueComments.values());
     };
 
+    // Navigation Helper
+    const handleNavigation = (currentId, direction) => {
+        // finding current index
+        const currentIndex = segments.findIndex(s => s.id === currentId);
+        if (currentIndex === -1) return;
+
+        let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+
+        // Boundaries
+        if (nextIndex < 0) nextIndex = 0; // or loop? usually stop
+        if (nextIndex >= segments.length) nextIndex = segments.length - 1;
+
+        if (nextIndex !== currentIndex) {
+            const nextSeg = segments[nextIndex];
+            // Focus logic: We rely on the TiptapEditor's inner logic or we need to programmatically focus.
+            // Since we can't easily reach into Tiptap instance from here without Refs,
+            // we will use a DOM lookup for the editor wrapper we added IDs to.
+            // Requirement: TiptapEditor must have id={`editor-${segmentId}`} on its wrapper.
+            // And then we find .ProseMirror inside it.
+
+            setTimeout(() => {
+                const editorEl = document.querySelector(`#editor-${nextSeg.id} .ProseMirror`);
+                if (editorEl) {
+                    editorEl.focus();
+                    handleSegmentFocus(nextSeg.id); // Sync state
+                }
+            }, 10);
+        }
+    };
+
+    const handleContextMenu = (e) => {
+        // Check if text is selected
+        const selection = window.getSelection();
+        const selectedText = selection.toString().trim();
+
+        if (selectedText) {
+            e.preventDefault(); // Prevent browser menu
+            setGlossarySelection(selectedText);
+            setShowGlossaryModal(true);
+        }
+    };
+
     // Handler for manual AI Draft triggers
     const handleAiDraft = async (segmentId) => {
         const seg = segments.find(s => s.id === segmentId);
@@ -443,6 +493,26 @@ export function SplitView({ projectId }) {
             console.error("AI Draft failed", err);
             alert("AI Draft creation failed");
             throw err;
+        }
+    };
+
+    // Focus Handler
+    const handleSegmentFocus = async (id) => {
+        if (id === activeSegmentId) return;
+        setActiveSegmentId(id);
+
+        // Auto-Generate Draft on Focus (if configured)
+        const aiSettings = project?.config?.ai_settings || {};
+        const isPreloadMode = aiSettings.preload_mode === true;
+
+        const seg = segments.find(s => s.id === id);
+
+        if (!isPreloadMode && seg && !seg.target_content && !seg.locked) {
+            try {
+                handleAiDraft(id);
+            } catch (e) {
+                // ignore
+            }
         }
     };
 
@@ -523,6 +593,18 @@ export function SplitView({ projectId }) {
                                     >
                                         AI & Model
                                     </button>
+                                    <button
+                                        onClick={() => setActiveSettingsTab('glossary')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'glossary' ? 'bg-white shadow text-green-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        📚 Glossary
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveSettingsTab('stats')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'stats' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        📊 Stats
+                                    </button>
                                 </div>
                             </div>
 
@@ -585,9 +667,13 @@ export function SplitView({ projectId }) {
                                     </div>
                                 ) : activeSettingsTab === 'rag' ? (
                                     <RAGSettingsTab project={project} onUpdate={setProject} />
-                                ) : (
+                                ) : activeSettingsTab === 'ai' ? (
                                     <AISettingsTab project={project} onUpdate={setProject} />
-                                )}
+                                ) : activeSettingsTab === 'glossary' ? (
+                                    <GlossarySettingsTab project={project} onUpdate={setProject} />
+                                ) : activeSettingsTab === 'stats' ? (
+                                    <StatisticsSettingsTab project={{ ...project, segments: segments }} />
+                                ) : null}
                             </div>
 
                             <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
@@ -609,11 +695,30 @@ export function SplitView({ projectId }) {
                 )}
             </header>
 
+            {/* Glossary Add Modal */}
+            {showGlossaryModal && (
+                <GlossaryAddModal
+                    projectId={projectId}
+                    initialSource={glossarySelection}
+                    onClose={() => setShowGlossaryModal(false)}
+                    onSuccess={() => {
+                        // Optional: Show toast or just close
+                        // alert("Term added!");
+                    }}
+                />
+            )}
+
             <div className="flex-1 overflow-auto p-4 bg-gray-50/50">
                 <div className="max-w-7xl mx-auto space-y-4">
                     {segments.map((seg) => {
                         const comments = getSegmentComments(seg.tags);
                         const hasContext = (seg.context_matches?.length > 0 || seg.metadata?.context_matches?.length > 0);
+
+                        // Logic for UI Highlight:
+                        // User wants to see "light red" background if 100% Mandatory Match exists (and likely pre-filled).
+                        const allMatches = seg.context_matches || seg.metadata?.context_matches || [];
+                        const mandatoryMatch = allMatches.find(m => m.type === 'mandatory' && m.score >= 98);
+                        const isMandatoryContext = !!mandatoryMatch;
 
                         return (
                             <div key={seg.id} className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
@@ -621,8 +726,17 @@ export function SplitView({ projectId }) {
                                 <div className="p-5 bg-gray-50/80 rounded-l-xl text-sm leading-relaxed border-r border-gray-100 flex flex-col relative">
                                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">#{seg.index + 1}</div>
 
-                                    {/* Source Text */}
-                                    <div className="flex-grow font-source" dangerouslySetInnerHTML={{ __html: formatSourceContent(seg.source_content, seg.tags) }} />
+                                    {/* Source Text (Tiptap ReadOnly with Invisible Chars) */}
+                                    <div className="flex-grow">
+                                        <TiptapEditor
+                                            content={formatSourceContent(seg.source_content, seg.tags, true)}
+                                            isReadOnly={true}
+                                            chromeless={true}
+                                            availableTags={seg.tags}
+                                            // Pass ID mostly for hydration or future keys
+                                            segmentId={`source-${seg.id}`}
+                                        />
+                                    </div>
 
                                     {/* Comments Section */}
                                     {comments.length > 0 && (
@@ -649,9 +763,18 @@ export function SplitView({ projectId }) {
                                     {/* Context Panel (Matches) */}
                                     {hasContext && (
                                         <div className="mt-6 border-t border-gray-200 pt-4">
-                                            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                                <span className="w-1 h-1 bg-gray-400 rounded-full"></span> Translation Memory / Context
-                                            </h4>
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                                    <span className="w-1 h-1 bg-gray-400 rounded-full"></span> Translation Memory / Context
+                                                </h4>
+                                                <button
+                                                    onClick={() => handleAiDraft(seg.id)}
+                                                    className="text-gray-400 hover:text-indigo-600 transition-colors"
+                                                    title="Refresh Context (Cmd+Alt+ß / Cmd+Alt+?)"
+                                                >
+                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                                </button>
+                                            </div>
                                             <div className="space-y-2">
                                                 {(() => {
                                                     const sortedMatches = (seg.context_matches || seg.metadata.context_matches || [])
@@ -662,6 +785,7 @@ export function SplitView({ projectId }) {
                                                     return sortedMatches.map((match, idx) => {
                                                         const isMandatory = match.type === 'mandatory';
                                                         const isMT = match.type === 'mt';
+                                                        const isGlossary = match.type === 'glossary';
 
                                                         // FILTERING: Check Thresholds
                                                         const aiConfig = project?.config?.ai_settings || {};
@@ -671,7 +795,9 @@ export function SplitView({ projectId }) {
                                                         const score = match.score || 0;
 
                                                         // Apply Filter
-                                                        if (isMandatory) {
+                                                        if (isGlossary) {
+                                                            // Always show glossary
+                                                        } else if (isMandatory) {
                                                             if (score < tMandatory) return null;
                                                         } else if (!isMT) {
                                                             // Optional / Archive
@@ -682,6 +808,8 @@ export function SplitView({ projectId }) {
                                                         let shortcutLabel = '';
                                                         if (isMT) {
                                                             shortcutLabel = 'Cmd+Opt+0';
+                                                        } else if (isGlossary) {
+                                                            // Provide a shortcut? Maybe not for now, or use first slot
                                                         } else {
                                                             const tmIdx = tmMatches.indexOf(match);
                                                             if (tmIdx === 0) shortcutLabel = 'Cmd+Opt+9';
@@ -700,6 +828,11 @@ export function SplitView({ projectId }) {
                                                             bgClass = 'bg-purple-50';
                                                             textClass = 'text-purple-700';
                                                             label = '🤖 Machine Translation';
+                                                        } else if (isGlossary) {
+                                                            borderClass = 'border-l-teal-500';
+                                                            bgClass = 'bg-teal-50';
+                                                            textClass = 'text-teal-700';
+                                                            label = '📚 Glossary Term';
                                                         }
 
                                                         return (
@@ -725,9 +858,16 @@ export function SplitView({ projectId }) {
                                                                 </div>
 
                                                                 {/* Content - Smart Sentence Display */}
-                                                                <div className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100">
-                                                                    {match.content}
-                                                                </div>
+                                                                <div
+                                                                    className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100"
+                                                                    dangerouslySetInnerHTML={{ __html: formatSourceContent(match.content, null, false) }}
+                                                                />
+                                                                {/* Note info */}
+                                                                {match.note && (
+                                                                    <div className="mt-1 text-[10px] text-gray-500 italic border-t border-gray-200/50 pt-1">
+                                                                        Note: {match.note}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         )
                                                     })
@@ -738,10 +878,12 @@ export function SplitView({ projectId }) {
                                 </div>
 
                                 {/* Target Column */}
-                                <div className="p-5 bg-white rounded-r-xl flex flex-col relative group">
+                                <div className={`p-5 rounded-r-xl flex flex-col relative group ${isMandatoryContext ? 'bg-red-50/80 border-l border-red-200' : 'bg-white'}`}>
                                     <div className="text-xs text-gray-400 font-mono mb-2 uppercase tracking-wider flex justify-between items-center select-none">
                                         <div className="flex items-center gap-2">
-                                            <span className="font-bold text-gray-300 group-hover:text-indigo-400 transition-colors">Target (DE)</span>
+                                            <span className={`font-bold transition-colors ${isMandatoryContext ? 'text-red-800' : 'text-gray-300 group-hover:text-indigo-400'}`}>
+                                                {isMandatoryContext ? '⚠️ Mandatory Target' : 'Target (DE)'}
+                                            </span>
                                             {/* Context Badges */}
                                             {seg.metadata && (
                                                 <div className="flex gap-1">
@@ -770,6 +912,7 @@ export function SplitView({ projectId }) {
                                             onSave={handleSave}
                                             aiSettings={aiSettings}
                                             onAiDraft={handleAiDraft}
+                                            onFocus={() => handleSegmentFocus(seg.id)}
                                         />
                                     </div>
 
@@ -797,4 +940,4 @@ export function SplitView({ projectId }) {
             <ShortcutsPanel isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
         </div>
     );
-}
+};
