@@ -97,6 +97,34 @@ class TranslationOrigin(str, enum.Enum):
     user = "user"
     optional = "optional"
 
+class TranslationOrigin(str, enum.Enum):
+    mandatory = "mandatory"
+    user = "user"
+    optional = "optional"
+
+class TranslationMemoryUnit(Base):
+    """
+    Vector-Enabled Translation Memory (Replaces ChromaDB)
+    """
+    __tablename__ = "tm_vectors"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    
+    # Text Content
+    source_text = Column(Text, nullable=False) # STRIPPED source for embedding/search
+    target_text = Column(Text, nullable=False) 
+    
+    # Metadata for Display
+    raw_source = Column(Text, nullable=False) # Original Source with Tags/Tabs
+    source_lang = Column(String, default="en")
+    target_lang = Column(String, default="de")
+    
+    # Vector
+    # Using 384 dimensions for all-MiniLM-L6-v2 (default SentenceTransformer)
+    embedding = Column(Vector(384)) 
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class TranslationUnit(Base):
     """Hybrid TMX / Exact Match Table"""
     __tablename__ = "translation_units"

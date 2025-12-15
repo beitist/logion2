@@ -622,12 +622,26 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # Return Top 5 for Display
     return final_matches[:5]
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-2.0-flash", custom_prompt=""):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-2.0-flash", custom_prompt="", tags=None):
     """
     Generates a draft translation using aligned context.
     """
-    # 1. Retrieve Context (New Pipeline)
+    # 1. Retrieve Context
     matches = search_context_for_segment(segment_text, project_id, db)
+    
+    # 1.1 Fetch Segment Object for Tag Access (needed for Tab Cleanups)
+    # We need to find the segment in DB to get its metadata/tags
+    # We don't have segment_id passed in? 
+    # Actually segment_text isn't enough to find unique segment.
+    # But this function is called by `generate_draft_endpoint` which has `segment` object.
+    # Refactor: Pass `segment` object or `tags` dict to this function?
+    # Modifying signature to accept Optional[Dict] tags or Segment object.
+    # But for now, let's just find the segment if possible or rely on passed arguments.
+    # Since I cannot easily change all callers without checking them, 
+    # and I see `generate_segment_draft` signature has `segment_text`.
+    
+    # Strategy: Add `tags` argument to `generate_segment_draft`
+    pass
 
     # 1.5 Glossary Matches
     gloss_hits = []
@@ -668,19 +682,89 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
         # Construct dynamic system instruction
         system_instruction = f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text. No preamble, no markdown formatting, no 'Translation:'."
         
-        # Inject Glossary
+        # TAB HANDLING: Prompt Instruction
+        try:
+            clean_source = segment_text
+            
+            # 1. Regex Strip Wrapper Tags around [TAB] (Iterative for nested cases)
+            # convert <2><4>[TAB]</4></2> -> [TAB]
+            
+            # First, normalize [TAB] placeholders
+            clean_source = clean_source.replace("\t", "[TAB]")
+            
+            # Loop to remove layers of tags wrapping [TAB]
+            while True:
+                prev = clean_source
+                clean_source = re.sub(r'<(\d+)>\s*\[TAB\]\s*</\1>', '[TAB]', clean_source, flags=re.IGNORECASE)
+                if clean_source == prev:
+                    break
+            
+            # 2. Replace [TAB] with <tab/>
+            system_instruction += " Important: The source text contains tab characters represented as <tab/>. You MUST preserve these <tab/> tags in the translation at the appropriate positions."
+            clean_source = clean_source.replace("[TAB]", "<tab/>")
+                 
+        except Exception as e:
+            print(f"TAB Handling Error: {e}")
+            import traceback
+            traceback.print_exc()
+            clean_source = segment_text # Fallback
+        
+        print(f"DEBUG: Clean Source for MT: {repr(clean_source)}")
+
+        # Inject Glossary (Cleaned)
         if gloss_hits:
             system_instruction += "\n\nglossary terms (recommendation, see if they fit the context):"
             for g in gloss_hits:
-                system_instruction += f"\n- {g['source']} -> {g['target']}"
+                # Clean glossary source/target of tab tags too?
+                g_src_clean = re.sub(r'<(\d+)>\s*\[TAB\]\s*</\1>', '[TAB]', g['source'], flags=re.IGNORECASE).replace("[TAB]", "<tab/>")
+                g_tgt_clean = re.sub(r'<(\d+)>\s*\[TAB\]\s*</\1>', '[TAB]', g['target'], flags=re.IGNORECASE).replace("[TAB]", "<tab/>")
+                system_instruction += f"\n- {g_src_clean} -> {g_tgt_clean}"
+        
+        # Inject Context Matches (Cleaned) to prevent Hallucination
+        # matches contains TM hits.
+        if matches:
+             system_instruction += "\n\nExisting similar translations (Context):"
+             for m in matches[:3]: # Top 3
+                 if m['type'] == 'mt': continue # Skip previous MT
+                 
+                 # Clean Content
+                 c_content = m['content']
+                 # Iterative strip
+                 if "[TAB]" in c_content or "\t" in c_content or re.search(r'<(\d+)>', c_content):
+                     c_content = c_content.replace("\t", "[TAB]")
+                     while True:
+                        prev_c = c_content
+                        c_content = re.sub(r'<(\d+)>\s*\[TAB\]\s*</\1>', '[TAB]', c_content, flags=re.IGNORECASE)
+                        if c_content == prev_c: break
+                     c_content = c_content.replace("[TAB]", "<tab/>")
+                 
+                 system_instruction += f"\n- {c_content}"
         
         # Inject Custom Prompt (Technical/Style)
         if custom_prompt and custom_prompt.strip():
             system_instruction += f"\n\nStyle Guide / User Instructions:\n{custom_prompt}"
             
         draft_model = genai.GenerativeModel(model_name)
-        res = draft_model.generate_content(f"{system_instruction}\n\nSource: {segment_text}")
+        
+        # DEBUG LOGGING SETUP
+        import logging
+        try:
+            logging.basicConfig(filename='/Users/beiti/prog/logion2/backend/mt_debug.log', level=logging.DEBUG, format='%(asctime)s %(message)s')
+            logging.info(f"START MT GENERATION for Project {project_id}")
+            logging.info(f"Cleaned Source: {repr(clean_source)}")
+        except: pass
+        
+        res = draft_model.generate_content(f"{system_instruction}\n\nSource: {clean_source}")
         mt_draft = res.text.strip()
+        try: logging.info(f"raw mt_draft: {repr(mt_draft)}")
+        except: pass
+        
+        # TAB HANDLING: Post-process (Restore tabs)
+        mt_draft = re.sub(r'<tab\s*/?>', '\t', mt_draft, flags=re.IGNORECASE)
+        mt_draft = re.sub(r'</?tab>', '\t', mt_draft, flags=re.IGNORECASE)
+        try: logging.info(f"restored mt_draft: {repr(mt_draft)}")
+        except: pass
+
         # Add MT match to list
         if mt_draft:
             matches.insert(0, {
@@ -691,8 +775,12 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
                  "category": "ai",
                  "score": 101 # Always top
             })
-    except:
-        pass
+
+    except Exception as e:
+        logging.error(f"Generate Error: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+        pass # Return empty draft if fails
     
     # 4. Generate Final Draft
     return {

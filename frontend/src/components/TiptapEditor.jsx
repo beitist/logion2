@@ -80,18 +80,19 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
             )}
 
             {/* Tag Buttons: INSERT NODE */}
-            {/* 1. Generic Tab Button (if any available) */}
-            {availableTags && Object.values(availableTags).some(t => t.type === 'tab') && (
-                <button
-                    tabIndex="-1"
-                    onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: 'TAB', label: 'TAB' } }).run()}
-                    onMouseDown={(e) => e.preventDefault()}
-                    className="px-2 py-1 text-xs font-mono rounded border bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200 active:bg-gray-300 min-w-[24px] font-bold"
-                    title="Insert Tab (Auto-mapped)"
-                >
-                    ⇥
-                </button>
-            )}
+            {/* 1. Generic Tab Button REMOVED (User Request) */}
+            {/* But we replace it with NBSP button? Or just add NBSP button next to it? */}
+            {/* User requested to remove TAB button. Let's add NBSP instead. */}
+
+            <button
+                tabIndex="-1"
+                onClick={() => editor.chain().focus().insertContent('\u00A0').run()}
+                onMouseDown={(e) => e.preventDefault()}
+                className="px-2 py-1 text-xs font-mono rounded border bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100 active:bg-gray-200 min-w-[24px]"
+                title="Insert Non-Breaking Space (Cmd+Opt+Ctrl+Space)"
+            >
+                ␣
+            </button>
 
             {/* 2. Specific ID Buttons (excluding Tabs and Comments) */}
             {availableTags && Object.keys(availableTags).map(tid => {
@@ -144,6 +145,26 @@ class TabCharacter extends InvisibleCharacter {
     }
 }
 
+// Custom Invisible Character for NBSP
+class NbspCharacter extends InvisibleCharacter {
+    constructor() {
+        super({
+            type: 'nbsp',
+            predicate: char => char === '\u00A0',
+        })
+    }
+
+    render() {
+        const span = document.createElement('span')
+        span.classList.add('Tiptap-invisible-character', 'Tiptap-invisible-character--nbsp')
+        span.innerHTML = '&nbsp;' // Render actual nbsp or visual? CSS usually handles visual.
+        // Actually for visuals we might want a distinct marker like a small dot or circle.
+        // But the extension usually uses CSS `::before` content.
+        // We just need the class.
+        return span
+    }
+}
+
 export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, chromeless = false }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
@@ -192,27 +213,29 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     };
 
     const editor = useEditor({
-        parseOptions: {
-            preserveWhitespace: 'full',
-        },
         extensions: [
-            StarterKit,
-            Underline,
+            StarterKit.configure({
+                history: false, // We handle history manually or it conflicts with external state updates sometimes
+            }),
             Link.configure({
                 openOnClick: false,
                 HTMLAttributes: {
                     class: 'text-blue-500 underline cursor-pointer',
                 },
             }),
+            Underline,
+            // Custom Invisible Characters
             InvisibleCharacters.configure({
-                injectCSS: true,
+                injectCSS: false, // We use our own CSS
                 builders: [
                     new SpaceCharacter(),
                     new HardBreakNode(),
                     new ParagraphNode(),
-                    new TabCharacter(),
+                    new TabCharacter(), // <--- Our custom tab
+                    new NbspCharacter(), // <--- Our custom NBSP
                 ]
             }),
+            // Custom Tag Node
             TagNode,
             Extension.create({
                 addKeyboardShortcuts() {
@@ -237,12 +260,17 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             this.editor.commands.insertContent('\t');
                             return true;
                         },
+                        // NBSP Shortcut: Cmd+Alt+Ctrl+Space
+                        'Mod-Alt-Control-Space': () => {
+                            this.editor.commands.insertContent('\u00A0');
+                            return true;
+                        },
                         'Mod-Alt-0': () => {
                             const matches = contextMatchesRef.current;
                             const mtMatch = matches?.find(m => m.type === 'mt');
                             if (mtMatch) {
                                 const hydrated = hydrateContent(mtMatch.content, availableTagsRef.current);
-                                return this.editor.commands.setContent(hydrated)
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false;
                         },
@@ -253,7 +281,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[0]) {
                                 const hydrated = hydrateContent(refs[0].content, availableTagsRef.current);
-                                return this.editor.commands.setContent(hydrated)
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false
                         },
@@ -262,7 +290,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[1]) {
                                 const hydrated = hydrateContent(refs[1].content, availableTagsRef.current);
-                                return this.editor.commands.setContent(hydrated)
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false
                         },
@@ -271,7 +299,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[2]) {
                                 const hydrated = hydrateContent(refs[2].content, availableTagsRef.current);
-                                return this.editor.commands.setContent(hydrated)
+                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false
                         },
@@ -280,7 +308,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
                                         const hydrated = hydrateContent(newContent, availableTagsRef.current);
-                                        this.editor.commands.setContent(hydrated);
+                                        this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
                                     }
                                 });
                                 return true;
@@ -297,7 +325,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                                 onAiDraftRef.current(segmentId).then((newContent) => {
                                     if (newContent) {
                                         const hydrated = hydrateContent(newContent, availableTagsRef.current);
-                                        this.editor.commands.setContent(hydrated);
+                                        this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
                                     }
                                 });
                                 return true;
@@ -317,6 +345,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         ],
         content: content || "",
         editable: !isReadOnly,
+        parseOptions: {
+            preserveWhitespace: 'full', // Preserves \t characters
+        },
         editorProps: {
             attributes: {
                 // Ensure chromeless editor has no min-height using Tailwind !min-h-0
@@ -345,7 +376,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
 
     useEffect(() => {
         if (editor && content && content !== editor.getHTML()) {
-            editor.commands.setContent(content)
+            editor.commands.setContent(content, false, { preserveWhitespace: 'full' })
         }
     }, [content, editor])
 

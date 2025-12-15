@@ -65,8 +65,31 @@
 
 .Tiptap-invisible-character--tab::before {
     content: '⇥';
-    color: #cbd5e1;
-    /* slate-300 */
+    color: #94a3b8;
+    /* slate-400 - darker for visibility */
+    display: inline-block;
+    width: 20px;
+    /* Force width */
+    text-align: center;
+    pointer-events: none;
+    font-weight: bold;
+    opacity: 0.7;
+    background-color: rgba(0, 0, 0, 0.05);
+    /* Slight background to verify dimension */
+    border-radius: 2px;
+}
+
+/* Custom Invisible Character: NBSP */
+.Tiptap-invisible-character--nbsp {
+    position: relative;
+    display: inline-block;
+}
+
+.Tiptap-invisible-character--nbsp::before {
+    content: '␣';
+    /* Or '·' or '⍽' */
+    color: #94a3b8;
+    /* slate-400 */
     position: absolute;
     pointer-events: none;
     top: 50%;
@@ -74,4 +97,26 @@
     width: 100%;
     text-align: center;
     left: 0;
+    font-weight: bold;
+    opacity: 0.5;
+}
+
+/* Custom Invisible Character: Space */
+.Tiptap-invisible-character--space {
+    position: relative;
+    display: inline-block;
+}
+
+.Tiptap-invisible-character--space::before {
+    content: '·';
+    color: #cbd5e1;
+    /* slate-300 */
+    position: absolute;
+    pointer-events: none;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 0;
+    width: 100%;
+    text-align: center;
+    font-weight: normal;
 }

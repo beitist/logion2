@@ -409,6 +409,11 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     ai_settings = config.get("ai_settings", {})
     threshold = float(ai_settings.get("similarity_threshold", 0.4))
     
+    # Extract tags for Tab handling
+    tags_data = None
+    if segment.metadata_json:
+        tags_data = segment.metadata_json.get("tags")
+
     result = generate_segment_draft(
         segment_text=segment.source_content,
         source_lang=project.source_lang,
@@ -416,7 +421,8 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
         project_id=str(project.id),
         db=db,
         threshold=threshold,
-        model_name=model_name
+        model_name=model_name,
+        tags=tags_data
     )
     
     # Update Segment with Draft and Matches

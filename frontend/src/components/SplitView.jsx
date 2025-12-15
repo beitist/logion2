@@ -11,7 +11,8 @@ import { GlossarySettingsTab } from './settings/GlossarySettingsTab';
 import { StatisticsSettingsTab } from './settings/StatisticsSettingsTab';
 import { GlossaryAddModal } from './GlossaryAddModal';
 
-import { Terminal, Bug, Keyboard } from 'lucide-react';
+import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy } from 'lucide-react';
+import './TiptapStyles.css'; // Ensure invisible character styles are available
 import { LogConsole } from './LogConsole';
 import { ShortcutsPanel } from './ShortcutsPanel';
 
@@ -132,11 +133,15 @@ export function SplitView({ projectId }) {
 
             if (tagInfo) {
                 if (tagInfo.type === 'tab') {
-                    // It's a tab tag but wasn't caught by the pre-pass (maybe split?)
-                    // Just hidden/ignored or converted to tab?
-                    // If we have a single tag for a tab, it's weird.
-                    // But if we do, let's just suppress it or return tab?
-                    // Let's suppress the tag wrapper. Content should be [TAB] text usually?
+                    // It's a tab tag. We want to convert it to a real TAB character.
+                    // If we return "", the content inside the tag (which is [TAB]) will remain.
+                    // But we want to ensure it is \t.
+                    // If the content was just [TAB], we can return \t and hope regex consumes the inner content?
+                    // NO. The regex matches `<(\d+)>` or `</(\d+)>`. It does NOT match content.
+                    // So if we have `<4>[TAB]</4>`, we get `[TAB]` appearing in the string.
+                    // Logic: Retuning "" removes the tag wrapper. Inner content persists.
+                    // Then `replace` loop below handles `[TAB]`.
+                    // So return "" is actually correct for the wrapper.
                     return "";
                 }
                 else if (tagInfo.type === 'comment') label = '💬';
@@ -349,16 +354,28 @@ export function SplitView({ projectId }) {
 
         if (forTiptap) {
             // For Tiptap, we need to Hydrate the XML tags into Tiptap-friendly spans
-            const hydrated = hydrateContent(contentToRender, tags);
+            // AND we must ensure that [TAB] is converted to real \t character for the InvisibleCharacters extension to pick it up.
+            let hydrated = hydrateContent(contentToRender, tags);
+
+            // Explicitly handle any remaining generic [TAB] or known tab contents
+            // If hydrateContent returned [TAB] because regex failed, we fix it here.
+            hydrated = hydrated.replace(/\[TAB\]/g, '\t');
+
             if (wrapperStyle) {
                 return `<span class="${wrapperStyle}">${hydrated}</span>`;
             }
             return hydrated;
         }
 
+        // For Sidebar / HTML View: Render VISIBLE TAB
+        // We replace [TAB] or \t with the exact HTML structure used by Tiptap CSS (roughly)
+        // so it looks the same.
+        let visibleContent = contentToRender.replace(/\[TAB\]/g, '\t');
+        visibleContent = visibleContent.replace(/\t/g, '<span class="Tiptap-invisible-character Tiptap-invisible-character--tab"></span>');
+
         // 2. Badge Replacement (Smart) for Raw HTML View (Legacy/Fallback)
         // Start Tags <n>
-        let formatted = contentToRender.replace(/<(\d+)>/g, (match, id) => {
+        let formatted = visibleContent.replace(/<(\d+)>/g, (match, id) => {
             const t = tags ? tags[id] : null;
             if (t && (t.type === 'tab' || t.type === 'comment')) {
                 return ""; // Hide start tag wrapper
@@ -375,8 +392,8 @@ export function SplitView({ projectId }) {
             return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/${id}</span>`;
         });
 
-        // Replace [TAB] -> Real TAB Character
-        formatted = formatted.replace(/\[TAB\]/g, "\t");
+        // Replace [TAB] -> Visible Arrow [⇥] for sidebar/raw view
+        formatted = formatted.replace(/\t|\[TAB\]/g, '<span class="text-gray-400 font-mono select-none">⇥</span>');
 
         // Replace [COMMENT] -> [💬] Badge
         formatted = formatted.replace(/\[COMMENT\]/g,
@@ -845,9 +862,10 @@ export function SplitView({ projectId }) {
                                                                 </div>
 
                                                                 {/* Content - Smart Sentence Display */}
-                                                                <div className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100">
-                                                                    {match.content}
-                                                                </div>
+                                                                <div
+                                                                    className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100"
+                                                                    dangerouslySetInnerHTML={{ __html: formatSourceContent(match.content, null, false) }}
+                                                                />
                                                                 {/* Note info */}
                                                                 {match.note && (
                                                                     <div className="mt-1 text-[10px] text-gray-500 italic border-t border-gray-200/50 pt-1">
