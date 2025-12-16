@@ -541,113 +541,25 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     for idx, (chunk, file) in enumerate(results):
         base_score = float(scores[idx]) # Logit score (approx -10 to 10)
         
-        # Number Penalty
-        chunk_numbers = extract_numbers(chunk.content)
-        missing_numbers = query_numbers - chunk_numbers
-        
-        penalty = 0.0
-        
-        # 1. Number Penalty
-        if missing_numbers:
-             penalty += 5.0 # Massive penalty for missing numbers
+        # --- Refactored Scoring Logic (2025-12-16) ---
+        from .scoring import ScoringEngine
 
-        # 2. Length Ratio Penalty (Cross-Lingual Guardrail)
-        # Avoid matching short queries to very long paragraphs just because of entity overlap.
-        try:
-            l_query = len(segment_text)
-            l_chunk = len(chunk.content) # Content is Source Text
-            
-            # Bidirectional Length Penalty
-            ratio = 1.0
-            if l_chunk > l_query:
-                ratio = l_chunk / max(l_query, 1)
-            else:
-                ratio = l_query / max(l_chunk, 1)
-                
-            if ratio > 1.5:
-                # Apply penalty
-                penalty += math.log(ratio) * 2.5
-                
-            # Cap Score if ratio is extreme (Guardrail against "99% partial match")
-            if ratio > 2.5:
-                 # If length difference is > 2.5x, max possible Logit should yield ~90%
-                 # Current 99% is > 4.0.
-                 # We force a penalty to bring it down.
-                 penalty += 2.0 # Extra penalty
-        except:
-             pass
-             
-        final_score_logit = base_score - penalty
-        
-        # Convert Logit to UI Score (0-100)
-        # Calibration (Phase 7):
-        # We want strong semantic matches (Logit > 2.5) to appear green (> 90%).
-        # Old formula: offset 1.5 -> Logit 3.0 = 81%. Too low.
-        # New formula: offset 0.5 -> Logit 3.0 = 92%.
-        # Boost: If Logit > 4.0 -> 98-99%.
-        
-        if final_score_logit > 4.0:
-            ui_score = 99 # Near perfect interaction
-        elif final_score_logit > 2.5:
-             # Aggressive sigmoid for good matches
-             ui_score = 1 / (1 + math.exp(-(final_score_logit - 0.0))) * 100
-        else:
-             # Standard curve for weaker matches
-             ui_score = 1 / (1 + math.exp(-(final_score_logit - 0.0))) * 100
-        
-        # 4. Length-Based Precision Decay (Tuning Phase 8)
-        # Cross-Lingual Levenshtein is invalid. We use Length Ratio as a proxy for omissions.
-        # Normal expansion En<->De is ~1.1-1.3.
-        # If ratio > 1.35, it implies significant content mismatch (truncation or hallucination).
-        try:
-            l_query = len(segment_text)
-            l_chunk = len(chunk.content)
-            ratio = l_chunk / max(l_query, 1) if l_chunk > l_query else l_query / max(l_chunk, 1)
-            
-            THRESHOLD = 1.25
-            if ratio > THRESHOLD:
-                # Linear decay: 
-                # Ratio 1.3 (Truncated "modern") -> (1.3 - 1.25) * 100 = 5% penalty. 99 -> 94.
-                # Ratio 1.5 (Truncated word) -> (1.5 - 1.25) * 100 = 25% penalty. 99 -> 74.
-                len_penalty = (ratio - THRESHOLD) * 100
-                ui_score -= len_penalty
-        except:
-            pass
-            
-        # 5. Linguistic Completeness Penalty
-        # If the Query/Segment ends with a determiner/preposition (e.g. "verändert die"), 
-        # it is likely an incomplete fragment. We penalize this to differentiate from proper sentences.
-        # We use the loaded SpaCy models in _aligner if available.
-        if ui_score > 95 and _aligner:
-            try:
-                # Detect Language implies which model to use.
-                # Heuristic: If text has German words, use DE model.
-                # Simple: Check if 'die', 'der', 'das', 'und' in text.
-                is_german = any(w in segment_text.lower().split() for w in ['die', 'der', 'das', 'dem', 'den', 'und', 'mit', 'auf'])
-                nlp = _aligner.nlp_de if is_german else _aligner.nlp_en
-                
-                if nlp:
-                    doc = nlp(segment_text)
-                    if len(doc) > 0:
-                        # Find last non-punct token
-                        last_token = None
-                        for token in reversed(doc):
-                            if token.pos_ not in ["PUNCT", "SPACE"]:
-                                last_token = token
-                                break
-                        
-                        if last_token:
-                            # Check for STOP class words at end: DET (the/die), ADP (of/von), CONJ (and/und), PRON (die/the sometimes)
-                            if last_token.pos_ in ["DET", "ADP", "CCONJ", "SCONJ", "PRON"]:
-                                 # Penalty for incomplete fragment
-                                 # 99 -> 94
-                                 ui_score -= 5.0
-            except Exception as e:
-                pass
+        # Determine strictness model for Linguistic Checks (if needed)
+        # We try to use the correct SpaCy model if available
+        nlp = None
+        if _aligner:
+            # Simple heuristic for lang detection
+            is_german = any(w in segment_text.lower().split() for w in ['die', 'der', 'das', 'dem', 'den', 'und', 'mit', 'auf'])
+            nlp = _aligner.nlp_de if is_german else _aligner.nlp_en
 
-        if final_score_logit < -2.0: 
-            continue # Filter out completely
-            
+        # Calculate Logic
+        # We pass the Raw Logit (base_score). The engine applies ALL penalties (Number, Length, POS).
+        ui_score, applied_penalties = ScoringEngine.calculate_score(segment_text, chunk.content, base_score, nlp)
+        
+        # If score is too low, filter it out
+        if ui_score < 30: # Implicit filtering
+             continue
+
         match_type = "mandatory" if file.category == "legal" else "optional"
         
         # Use Rich Content (with Tags) if available, else plain content
@@ -660,7 +572,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
             "type": match_type,
             "category": file.category,
             "score": int(ui_score), # Integer format
-            "raw_logit": final_score_logit
+            "raw_logit": base_score # Helper for debugging, unpenalized
         })
 
     # Sort by Final UI Score
