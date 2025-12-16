@@ -613,6 +613,37 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
                 ui_score -= len_penalty
         except:
             pass
+            
+        # 5. Linguistic Completeness Penalty
+        # If the Query/Segment ends with a determiner/preposition (e.g. "verändert die"), 
+        # it is likely an incomplete fragment. We penalize this to differentiate from proper sentences.
+        # We use the loaded SpaCy models in _aligner if available.
+        if ui_score > 95 and _aligner:
+            try:
+                # Detect Language implies which model to use.
+                # Heuristic: If text has German words, use DE model.
+                # Simple: Check if 'die', 'der', 'das', 'und' in text.
+                is_german = any(w in segment_text.lower().split() for w in ['die', 'der', 'das', 'dem', 'den', 'und', 'mit', 'auf'])
+                nlp = _aligner.nlp_de if is_german else _aligner.nlp_en
+                
+                if nlp:
+                    doc = nlp(segment_text)
+                    if len(doc) > 0:
+                        # Find last non-punct token
+                        last_token = None
+                        for token in reversed(doc):
+                            if token.pos_ not in ["PUNCT", "SPACE"]:
+                                last_token = token
+                                break
+                        
+                        if last_token:
+                            # Check for STOP class words at end: DET (the/die), ADP (of/von), CONJ (and/und), PRON (die/the sometimes)
+                            if last_token.pos_ in ["DET", "ADP", "CCONJ", "SCONJ", "PRON"]:
+                                 # Penalty for incomplete fragment
+                                 # 99 -> 94
+                                 ui_score -= 5.0
+            except Exception as e:
+                pass
 
         if final_score_logit < -2.0: 
             continue # Filter out completely
