@@ -59,6 +59,68 @@ export function SplitView({ projectId }) {
     };
 
     // ... useEffect loadData ...
+    // AI Auto-Drafting Queue System
+    const draftQueue = React.useRef([]);
+    const isProcessingQueue = React.useRef(false);
+    const segmentsRef = React.useRef(segments); // Keep latest state for async queue
+
+    // Update ref whenever segments change
+    useEffect(() => {
+        segmentsRef.current = segments;
+    }, [segments]);
+
+    // Helper to add to queue safely
+    const queueSegments = (ids) => {
+        let added = false;
+        ids.forEach(id => {
+            if (draftQueue.current.includes(id)) return;
+
+            // Check if already done (using Ref for latest)
+            const seg = segmentsRef.current.find(s => s.id === id);
+            if (!seg) return;
+
+            // CRITICAL: Only add if EMPTY/Draft and NOT locked. Avoid Double-Loading.
+            const hasContent = seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
+            if (hasContent) return; // Skip finished ones
+            if (seg.locked) return;
+
+            draftQueue.current.push(id);
+            added = true;
+        });
+
+        if (added) {
+            processQueue();
+        }
+    };
+
+    // Main Queue Processor
+    const processQueue = async () => {
+        if (isProcessingQueue.current) return;
+        isProcessingQueue.current = true;
+
+        while (draftQueue.current.length > 0) {
+            const nextId = draftQueue.current.shift();
+
+            // Double-check just before execution
+            const seg = segmentsRef.current.find(s => s.id === nextId);
+            const hasContent = seg && seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
+
+            if (!seg || hasContent || seg.locked) {
+                continue; // Skip
+            }
+
+            try {
+                await handleAiDraft(nextId, true); // true = isAuto
+            } catch (e) {
+                console.warn("Queue item failed", nextId, e);
+            }
+            // Sequential delay for context connectivity
+            await new Promise(r => setTimeout(r, 200));
+        }
+
+        isProcessingQueue.current = false;
+    };
+
     useEffect(() => {
         const loadData = async () => {
             try {
@@ -67,29 +129,20 @@ export function SplitView({ projectId }) {
                 setProject(p);
                 const s = await getSegments(projectId);
                 setSegments(s);
+                segmentsRef.current = s;
 
-                // Trigger AI Drafts for configured number of segments
+                // Trigger Initial Lookahead
                 const config = p.config || {};
                 const aiSettings = config.ai_settings || {};
                 const preTranslateCount = parseInt(aiSettings.pre_translate_count) || 0;
 
-                if (s && s.length > 0 && preTranslateCount > 0) {
-                    const emptySegs = s.filter(seg => !seg.target_content).slice(0, preTranslateCount);
-                    emptySegs.forEach(async (seg) => {
-                        try {
-                            // We use the new generateDraft API
-                            // This expects we imported it!
-                            // const { generateDraft } = await import("../api/client"); // Already imported at top
-                            const updated = await generateDraft(seg.id);
-
-                            // Update local state smoothly
-                            setSegments(prev => prev.map(current =>
-                                current.id === seg.id ? { ...current, ...updated } : current
-                            ));
-                        } catch (e) {
-                            console.warn("Auto-draft failed for", seg.id, e);
-                        }
-                    });
+                if (preTranslateCount > 0 && s.length > 0) {
+                    // Start from 0, queue N segments
+                    const initialIds = s.slice(0, preTranslateCount).map(seg => seg.id);
+                    // Defer to ensure refs/state are settled? 
+                    // Direct call is fine as we set segmentsRef above.
+                    // But queueSegments uses segmentsRef.
+                    setTimeout(() => queueSegments(initialIds), 100);
                 }
             } catch (err) {
                 console.error(err);
@@ -470,28 +523,46 @@ export function SplitView({ projectId }) {
     };
 
     // Handler for manual AI Draft triggers
-    const handleAiDraft = async (segmentId) => {
-        const seg = segments.find(s => s.id === segmentId);
-        log(`Generating draft for segment #${seg?.index + 1}...`, 'info', { segmentId });
+    // Handler for manual AI Draft triggers
+    const handleAiDraft = async (segmentId, isAuto = false) => {
+        const seg = segmentsRef.current.find(s => s.id === segmentId); // Use Ref for safety
+        if (!isAuto) {
+            log(`Generating draft for segment #${seg?.index + 1}...`, 'info', { segmentId });
+        }
+
         try {
             const start = performance.now();
             const updated = await generateDraft(segmentId);
             const duration = Math.round(performance.now() - start);
 
-            log(`Draft generated in ${duration}ms`, 'success', {
-                target_len: updated.target_content?.length,
-                matches: updated.context_matches?.length || 0
-            });
+            if (!isAuto) {
+                log(`Draft generated in ${duration}ms`, 'success', {
+                    target_len: updated.target_content?.length,
+                    matches: updated.context_matches?.length || 0
+                });
+            }
 
-            // USER REQUEST: Do NOT auto-insert text. Only update Matches sidebar.
-            setSegments(prev => prev.map(s =>
-                s.id === segmentId ? { ...s, context_matches: updated.context_matches } : s
-            ));
-            return updated.context_matches; // Changed return to signify "done" but no text content flow
+            // Update State
+            setSegments(prev => prev.map(s => {
+                if (s.id !== segmentId) return s;
+
+                // For Auto (Pre-cache), we WANT the draft content (that's the point of pre-translation)
+                if (isAuto) {
+                    return { ...s, ...updated };
+                }
+
+                // For Manual Shortcut (Legacy Request): "Do NOT auto-insert text. Only update Matches sidebar."
+                // Only update context_matches (and maybe metadata?)
+                return { ...s, context_matches: updated.context_matches };
+            }));
+
+            return updated.context_matches;
         } catch (err) {
-            log("AI Draft failed", 'error', err.message);
-            console.error("AI Draft failed", err);
-            alert("AI Draft creation failed");
+            if (!isAuto) {
+                log("AI Draft failed", 'error', err.message);
+                console.error("AI Draft failed", err);
+                alert("AI Draft creation failed");
+            }
             throw err;
         }
     };
@@ -505,13 +576,19 @@ export function SplitView({ projectId }) {
         const aiSettings = project?.config?.ai_settings || {};
         const isPreloadMode = aiSettings.preload_mode === true;
 
-        const seg = segments.find(s => s.id === id);
+        // "Iterative way... loaded after the next"
+        const preTranslateCount = parseInt(aiSettings.pre_translate_count) || 0;
 
-        if (!isPreloadMode && seg && !seg.target_content && !seg.locked) {
-            try {
-                handleAiDraft(id);
-            } catch (e) {
-                // ignore
+        if (!isPreloadMode && preTranslateCount > 0) {
+            // Find current index
+            const currentIndex = segmentsRef.current.findIndex(s => s.id === id);
+            if (currentIndex !== -1) {
+                // Queue Next N
+                const nextSegments = segmentsRef.current.slice(currentIndex, currentIndex + preTranslateCount + 1); // +1 because slice is exclusive? No, we want Current + N ahead?
+                // User said "while I am working on one", "segment is loaded after the next"
+                // Usually means: Current (if empty) + Next 1 + Next 2...
+                const idsToQueue = nextSegments.map(s => s.id);
+                queueSegments(idsToQueue);
             }
         }
     };
