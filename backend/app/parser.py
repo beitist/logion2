@@ -480,64 +480,9 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
             full_run_text += f"<{tid}>"
             active_ids.append(tid)
             
-    # 3. Iterate Children of w:r (Text, Tab, Br, CommentRef)
-    content_accum = ""
-    
-    for child in run_element:
-        tag_name = child.tag
-        
-        if tag_name == qn('w:t'):
-            text_val = child.text or ""
-            content_accum += text_val
-            
-        elif tag_name == qn('w:tab'):
-             # Handle TAB
-             # Strategy: Convert to Tag or literal. Plan said <4>TAB</4> tag type="tab".
-             # Let's create a TagModel for it.
-             tab_tag = TagModel(type="tab", content="[TAB]")
-             tid = add_tag_func(tab_tag)
-             # Visual spacer? Or just the tag?
-             # Let's render it as a visual block in frontend, so [TAB] is good.
-             content_accum += f"<{tid}>[TAB]</{tid}>"
-             
-        elif tag_name == qn('w:br'):
-             # Handle LINE BREAK
-             # Insert HTML break and maybe a Tag?
-             # Plan says: <br/> literal.
-             content_accum += "<br/>"
-
-        elif tag_name == qn('w:commentReference'):
-            cid = child.get(qn('w:id'))
-            if cid and context["comments_map"].get(cid):
-                ctext = context["comments_map"][cid]
-                tid = add_tag_func(com_tag)
-                content_accum += f"<{tid}>[COMMENT]</{tid}>"
-
-        elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
-             # Handle Shapes/Images
-             # We create a placeholder tag.
-             # In reassembly, we will attempt to restore the shape from the original doc.
-             shape_tag = TagModel(type="shape", content="[SHAPE]")
-             tid = add_tag_func(shape_tag)
-             content_accum += f"<{tid}>[SHAPE]</{tid}>"
-
-    # 4. Process Text for URLs (Regex)
-    # URL detection works on text parts.
-    # But mixed content (text <br> text) makes regex hard.
-    # Simple strategy: Run regex on the whole accumulated string? 
-    # Risk: Regex matching tags inside.
-    # Better: Only run regex on the w:t parts before appending?
-    # But we already accumulated them.
-    # Refactoring:
-    # URL regex should run on text chunks only.
-    # Let's just do it post-hoc on the accumulated text if it hasn't tags inside?
-    # Or, simpler: Just return content_accum.
-    # If we want High-Fidelity URL detection in mixed content (Tabs/Breaks), it requires distinct processing.
-    # For MVP: Re-apply the URL pattern to text parts?
-    # Let's modify the loop above:
-    
-    # New Loop logic to handle URL splitting on the fly
-    content_accum_final = ""
+    # 3. Iterate Children of w:r (Text, Tab, Br, CommentRef, Shapes)
+    # Re-iterate or just rebuild logic
+    final_content = ""
     
     # helper for checking URL in text
     def process_text_for_urls(txt):
@@ -557,34 +502,42 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
         else:
             return txt
 
-    # Re-iterate or just rebuild logic
-    final_content = ""
     for child in run_element:
         tag_name = child.tag
+        
         if tag_name == qn('w:t'):
             final_content += process_text_for_urls(child.text or "")
+            
         elif tag_name == qn('w:tab'):
              tab_tag = TagModel(type="tab", content="[TAB]")
              tid = add_tag_func(tab_tag)
              final_content += f"<{tid}>[TAB]</{tid}>"
+             
         elif tag_name == qn('w:br'):
              final_content += "<br/>"
+             
         elif tag_name == qn('w:commentReference'):
             cid = child.get(qn('w:id'))
             
             # Check if this was already handled as a range
-            # Note: _process_run_element shares the same context dict as _process_paragraph
             was_handled = "_handled_ranges" in context and cid in context["_handled_ranges"]
             is_active = "_active_ranges" in context and cid in context["_active_ranges"]
             
             if was_handled or is_active:
-                # Suppress point comment
                 pass
             elif cid and context["comments_map"].get(cid):
                 ctext = context["comments_map"][cid]
                 com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
                 tid = add_tag_func(com_tag)
                 final_content += f"<{tid}>[COMMENT]</{tid}>"
+
+        elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
+             # Handle Shapes/Images
+             # We create a placeholder tag.
+             # In reassembly, we will attempt to restore the shape from the original doc.
+             shape_tag = TagModel(type="shape", content="[SHAPE]")
+             tid = add_tag_func(shape_tag)
+             final_content += f"<{tid}>[SHAPE]</{tid}>"
 
     full_run_text += final_content
 
