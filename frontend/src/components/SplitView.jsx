@@ -480,6 +480,9 @@ export function SplitView({ projectId }) {
         return Array.from(uniqueComments.values());
     };
 
+    // Editor Instances Registry
+    const editorRefs = React.useRef({});
+
     // Navigation Helper
     const handleNavigation = (currentId, direction) => {
         // finding current index
@@ -494,12 +497,21 @@ export function SplitView({ projectId }) {
 
         if (nextIndex !== currentIndex) {
             const nextSeg = segments[nextIndex];
-            // Focus logic: We rely on the TiptapEditor's inner logic or we need to programmatically focus.
-            // Since we can't easily reach into Tiptap instance from here without Refs,
-            // we will use a DOM lookup for the editor wrapper we added IDs to.
-            // Requirement: TiptapEditor must have id={`editor-${segmentId}`} on its wrapper.
-            // And then we find .ProseMirror inside it.
 
+            // Try Tiptap Method first (Cleanest)
+            const editor = editorRefs.current[nextSeg.id];
+            if (editor) {
+                editor.commands.focus('end'); // Focus at end of text
+                handleSegmentFocus(nextSeg.id);
+                // Ensure scroll
+                setTimeout(() => {
+                    const el = document.getElementById(`editor-${nextSeg.id}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 50);
+                return;
+            }
+
+            // Fallback to DOM (Old way)
             setTimeout(() => {
                 const editorEl = document.querySelector(`#editor-${nextSeg.id} .ProseMirror`);
                 if (editorEl) {
@@ -990,6 +1002,8 @@ export function SplitView({ projectId }) {
                                             aiSettings={aiSettings}
                                             onAiDraft={handleAiDraft}
                                             onFocus={() => handleSegmentFocus(seg.id)}
+                                            onNavigate={(dir) => handleNavigation(seg.id, dir)}
+                                            onEditorReady={(ed) => editorRefs.current[seg.id] = ed}
                                         />
                                     </div>
 

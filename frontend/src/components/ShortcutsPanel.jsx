@@ -5,12 +5,16 @@ export function ShortcutsPanel({ isOpen, onClose }) {
     if (!isOpen) return null;
 
     const shortcuts = [
-        { keys: ["Cmd", "Enter"], desc: "Save Segment", category: "Editor" },
-        { keys: ["Cmd", "Alt", "N"], desc: "Get AI Translation", category: "AI" },
-        { keys: ["Cmd", "Alt", "1"], desc: "Insert Mandatory Match", category: "Context" },
-        { keys: ["Cmd", "Alt", "2"], desc: "Insert Internal Match", category: "Context" },
-        { keys: ["Cmd", "Alt", "3"], desc: "Insert Optional Match", category: "Context" },
+        { keys: ["Cmd", "Enter"], desc: "Save & Next Segment", category: "Editor" },
+        { keys: ["Cmd", "Shift", "↓"], desc: "Next Segment", category: "Navigation" },
+        { keys: ["Ctrl", "Cmd", "Alt", "↓"], desc: "Next Segment (Alt)", category: "Navigation" },
+        { keys: ["Cmd", "Shift", "↑"], desc: "Prev Segment", category: "Navigation" },
+        { keys: ["Ctrl", "Space"], desc: "AI Draft / Auto-Complete", category: "AI" },
+        { keys: ["Cmd", "Alt", "0"], desc: "Insert Best Match (MT)", category: "Context" },
+        { keys: ["Cmd", "Alt", "9"], desc: "Insert Ref Match 1", category: "Context" },
+        { keys: ["Cmd", "Alt", "8"], desc: "Insert Ref Match 2", category: "Context" },
         { keys: ["Tab"], desc: "Insert [TAB]", category: "Formatting" },
+        { keys: ["Ctrl", "Cmd", "Alt", "Space"], desc: "Insert NBSP", category: "Formatting" },
     ];
 
     return (

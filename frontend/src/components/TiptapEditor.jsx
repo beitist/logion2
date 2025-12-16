@@ -165,7 +165,7 @@ class NbspCharacter extends InvisibleCharacter {
     }
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, chromeless = false }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
@@ -240,43 +240,44 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             Extension.create({
                 addKeyboardShortcuts() {
                     return {
-                        // Navigation
-                        'Mod-Alt-ArrowDown': () => {
-                            if (onNavigateRef.current) {
-                                onNavigateRef.current('next');
-                                return true;
-                            }
-                            return false;
-                        },
-                        'Mod-Alt-ArrowUp': () => {
-                            if (onNavigateRef.current) {
-                                onNavigateRef.current('prev');
-                                return true;
-                            }
-                            return false;
-                        },
+                        // Navigation: Next Segment
+                        'Mod-Alt-ArrowDown': () => { if (onNavigateRef.current) { onNavigateRef.current('next'); return true; } return false; },
+                        'Mod-Control-Alt-ArrowDown': () => { if (onNavigateRef.current) { onNavigateRef.current('next'); return true; } return false; },
+                        'Mod-Shift-ArrowDown': () => { if (onNavigateRef.current) { onNavigateRef.current('next'); return true; } return false; },
+
+                        // Navigation: Prev Segment
+                        'Mod-Alt-ArrowUp': () => { if (onNavigateRef.current) { onNavigateRef.current('prev'); return true; } return false; },
+                        'Mod-Control-Alt-ArrowUp': () => { if (onNavigateRef.current) { onNavigateRef.current('prev'); return true; } return false; },
+                        'Mod-Shift-ArrowUp': () => { if (onNavigateRef.current) { onNavigateRef.current('prev'); return true; } return false; },
+
                         // Real Tab
                         'Tab': () => {
                             this.editor.commands.insertContent('\t');
                             return true;
                         },
-                        // NBSP Shortcut: Cmd+Alt+Ctrl+Space
-                        'Mod-Alt-Control-Space': () => {
+
+                        // NBSP Shortcut
+                        'Mod-Control-Alt-Space': () => {
                             this.editor.commands.insertContent('\u00A0');
                             return true;
                         },
+
+                        // --- INSERT MATCHES (Legacy: 0=MT, 9,8,7=Refs) ---
+                        // 0. Mandatory / MT
                         'Mod-Alt-0': () => {
                             const matches = contextMatchesRef.current;
                             const mtMatch = matches?.find(m => m.type === 'mt');
-                            if (mtMatch) {
-                                const hydrated = hydrateContent(mtMatch.content, availableTagsRef.current);
+                            const bestMatch = mtMatch || matches?.[0];
+
+                            if (bestMatch) {
+                                const hydrated = hydrateContent(bestMatch.content, availableTagsRef.current);
                                 return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
                             }
                             return false;
                         },
-                        // ... (rest of shortcuts same) ...
+
+                        // 9. Match 1 (Ref)
                         'Mod-Alt-9': () => {
-                            // ...
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
                             if (refs[0]) {
@@ -285,6 +286,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false
                         },
+
+                        // 8. Match 2 (Ref)
                         'Mod-Alt-8': () => {
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
@@ -294,6 +297,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false
                         },
+
+                        // 7. Match 3 (Ref)
                         'Mod-Alt-7': () => {
                             const matches = contextMatchesRef.current;
                             const refs = matches?.filter(m => m.type !== 'mt') || [];
@@ -335,6 +340,12 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                         'Mod-Enter': () => {
                             if (onSave && segmentId) {
                                 onSave(segmentId, this.editor.getHTML())
+                                // User requested "Confirm & Next" behavior
+                                if (onNavigateRef.current) {
+                                    // Small delay to allow save state to settle or nice UX feeling?
+                                    // Immediate is better for power users.
+                                    onNavigateRef.current('next');
+                                }
                                 return true
                             }
                             return false
@@ -375,10 +386,14 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     })
 
     useEffect(() => {
-        if (editor && content && content !== editor.getHTML()) {
-            editor.commands.setContent(content, false, { preserveWhitespace: 'full' })
+        if (editor) {
+            if (onEditorReady) onEditorReady(editor);
+
+            if (content && content !== editor.getHTML()) {
+                editor.commands.setContent(content, false, { preserveWhitespace: 'full' })
+            }
         }
-    }, [content, editor])
+    }, [content, editor, onEditorReady])
 
     if (!editor) {
         return null
