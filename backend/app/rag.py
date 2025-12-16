@@ -590,14 +590,30 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
             ui_score = 99 # Near perfect interaction
         elif final_score_logit > 2.5:
              # Aggressive sigmoid for good matches
-             # Logit 2.5 -> 1 / (1 + exp(-(2.5))) = 92%
              ui_score = 1 / (1 + math.exp(-(final_score_logit - 0.0))) * 100
         else:
              # Standard curve for weaker matches
-             # Logit 0.0 -> 50%
-             # Logit 1.8 (our case) -> 86%
              ui_score = 1 / (1 + math.exp(-(final_score_logit - 0.0))) * 100
         
+        # 4. Length-Based Precision Decay (Tuning Phase 8)
+        # Cross-Lingual Levenshtein is invalid. We use Length Ratio as a proxy for omissions.
+        # Normal expansion En<->De is ~1.1-1.3.
+        # If ratio > 1.35, it implies significant content mismatch (truncation or hallucination).
+        try:
+            l_query = len(segment_text)
+            l_chunk = len(chunk.content)
+            ratio = l_chunk / max(l_query, 1) if l_chunk > l_query else l_query / max(l_chunk, 1)
+            
+            THRESHOLD = 1.25
+            if ratio > THRESHOLD:
+                # Linear decay: 
+                # Ratio 1.3 (Truncated "modern") -> (1.3 - 1.25) * 100 = 5% penalty. 99 -> 94.
+                # Ratio 1.5 (Truncated word) -> (1.5 - 1.25) * 100 = 25% penalty. 99 -> 74.
+                len_penalty = (ratio - THRESHOLD) * 100
+                ui_score -= len_penalty
+        except:
+            pass
+
         if final_score_logit < -2.0: 
             continue # Filter out completely
             
