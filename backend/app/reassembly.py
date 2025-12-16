@@ -7,7 +7,181 @@ import re
 from docx.enum.text import WD_COLOR_INDEX
 from docx.oxml.ns import qn
 import copy
+from lxml import etree
 from .schemas import SegmentInternal, TagModel
+
+def _inject_comments(doc: Document, segments: List[SegmentInternal]):
+    """
+    Updates the comments.xml part of the document with translated text.
+    """
+    # 1. Map segments by comment_id
+    comment_segs = {s.metadata["comment_id"]: s for s in segments if s.metadata.get("type") == "comment"}
+    
+    if not comment_segs:
+        return
+
+    try:
+        part = doc.part
+        comments_part = None
+        for rel in part.rels.values():
+             if "comments" in rel.reltype and not "commentsExtended" in rel.reltype and not "commentsIds" in rel.reltype:
+                 comments_part = rel.target_part
+                 break
+                 
+        if not comments_part:
+            print("Warning: No comments part found to update.")
+            return
+            
+        xml_data = comments_part.blob
+        root = etree.fromstring(xml_data)
+        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        
+        updated_count = 0
+        
+        for comment in root.findall('.//w:comment', namespaces):
+             cid = comment.get(qn('w:id'))
+             if cid in comment_segs:
+                 seg = comment_segs[cid]
+                 target_text = seg.target_content if seg.target_content is not None else seg.source_text
+                 
+                 # Replace content
+                 # Clear existing paragraphs/runs in XML
+                 # Usually comments have w:p -> w:r -> w:t
+                 # We can just replace the text of the first run and delete others?
+                 # Or better: clear all children, create new w:p/w:r/w:t?
+                 # Since this is low-level XML, let's keep it simple:
+                 # Find all w:t and replace valid text?
+                 # But target might be shorter/longer or have formatting?
+                 # For MVP: Flatten text.
+                 
+                 # Remove existing content children (p)
+                 for child in list(comment):
+                     if child.tag == qn('w:p'):
+                        comment.remove(child)
+                        
+                 # Create new simple paragraph
+                 # <w:p><w:r><w:t>TEXT</w:t></w:r></w:p>
+                 wp = etree.SubElement(comment, qn('w:p'))
+                 wr = etree.SubElement(wp, qn('w:r'))
+                 wt = etree.SubElement(wr, qn('w:t'))
+                 wt.text = target_text
+                 
+                 updated_count += 1
+                 
+        if updated_count > 0:
+            # Save back
+            new_xml = etree.tostring(root, encoding='utf-8', standalone=True)
+            comments_part._blob = new_xml
+            print(f"Updated {updated_count} comments in comments.xml")
+            
+    except Exception as e:
+        print(f"Error updating comments: {e}")
+
+def _inject_footnotes(doc: Document, segments: List[SegmentInternal]):
+    """
+    Updates the footnotes.xml part of the document with translated text.
+    Similar to comments strategy.
+    """
+    footnote_segs = {s.metadata["footnote_id"]: s for s in segments if s.metadata.get("type") == "footnote"}
+    
+    if not footnote_segs:
+        return
+
+    try:
+        part = doc.part
+        footnotes_part = None
+        for rel in part.rels.values():
+             if "footnotes" in rel.reltype:
+                 footnotes_part = rel.target_part
+                 break
+                 
+        if not footnotes_part:
+            print("Warning: No footnotes part found to update.")
+            return
+            
+        xml_data = footnotes_part.blob
+        root = etree.fromstring(xml_data)
+        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        
+        updated_count = 0
+        
+        for footnote in root.findall('.//w:footnote', namespaces):
+             fid = footnote.get(qn('w:id'))
+             if fid in footnote_segs:
+                 seg = footnote_segs[fid]
+                 target_text = seg.target_content if seg.target_content is not None else seg.source_text
+                 
+                 # Replace content (Flattened)
+                 for child in list(footnote):
+                     if child.tag == qn('w:p'):
+                        footnote.remove(child)
+                 
+                 # Create proper paragraph structure with style if needed
+                 # Footnote Text style usually
+                 wp = etree.SubElement(footnote, qn('w:p'))
+                 
+                 # Optional: Set style
+                 # pStyle = etree.SubElement(wp, qn('w:pPr'))
+                 # pStyleVal = etree.SubElement(pStyle, qn('w:pStyle'))
+                 # pStyleVal.set(qn('w:val'), 'FootnoteText')
+                 
+                 wr = etree.SubElement(wp, qn('w:r'))
+                 # Add Footnote Reference char if this is the first run? 
+                 # Usually footnotes start with <w:r><w:footnoteRef/></w:r>
+                 # We should preserve the reference marker! 
+                 # Our simple "remove all paragraphs" logic destroys the footnote reference marker.
+                 # The marker is usually in the first run of the first paragraph.
+                 
+                 # Improved strategy:
+                 # Iterate existing paragraphs. Find the one with text?
+                 # Footnotes structure:
+                 # <w:p>
+                 #   <w:pPr>...</w:pPr>
+                 #   <w:r><w:footnoteRef/></w:r>
+                 #   <w:r><w:t>Actual text</w:t></w:r>
+                 # </w:p>
+                 
+                 # MVP Fix: Re-create the reference.
+                 wr_ref = etree.SubElement(wp, qn('w:r'))
+                 etree.SubElement(wr_ref, qn('w:rPr')).append(etree.Element(qn('w:rStyle'), {qn('w:val'): 'FootnoteReference'}))
+                 etree.SubElement(wr_ref, qn('w:footnoteRef'))
+                 # Actually w:footnoteRef usually is solitary?
+                 # Let's clean up logic:
+                 # We insert a run with the text AFTER the reference?
+                 # OR simpler: Find existing w:t elements and replace their text, 
+                 # if multiple w:t, join them or clear subsequent ones.
+                 
+                 # Let's go with "Modify w:t" strategy for footnotes to preserve structure better.
+                 # This is safer than rebuilding the whole paragraph.
+                 
+                 # Remove rebuild logic above, use traversal.
+                 footnote.remove(wp) # cleanup my previous lines
+                 
+                 text_elements = footnote.findall('.//w:t', namespaces)
+                 if text_elements:
+                     # Set first text element to target_text
+                     text_elements[0].text = target_text
+                     # Clear others
+                     for t in text_elements[1:]:
+                         t.text = ""
+                 else:
+                     # No text found? Create one.
+                     # Fallback to appending a paragraph
+                     wp = etree.SubElement(footnote, qn('w:p'))
+                     wr = etree.SubElement(wp, qn('w:r'))
+                     wt = etree.SubElement(wr, qn('w:t'))
+                     wt.text = target_text
+
+                 updated_count += 1
+                 
+        if updated_count > 0:
+            # Save back
+            new_xml = etree.tostring(root, encoding='utf-8', standalone=True)
+            footnotes_part._blob = new_xml
+            print(f"Updated {updated_count} footnotes in footnotes.xml")
+            
+    except Exception as e:
+        print(f"Error updating footnotes: {e}")
 
 def reassemble_docx(original_path: str, output_path: str, segments: List[SegmentInternal]):
     """
@@ -35,6 +209,12 @@ def reassemble_docx(original_path: str, output_path: str, segments: List[Segment
             _inject_into_container(section.header, {"type": "header", "section_index": s_idx}, segments)
         if section.footer:
              _inject_into_container(section.footer, {"type": "footer", "section_index": s_idx}, segments)
+
+    # 3. Comments (Update comments.xml)
+    _inject_comments(doc, segments)
+
+    # 4. Footnotes
+    _inject_footnotes(doc, segments)
 
     doc.save(output_path)
 
@@ -181,7 +361,7 @@ def _inject_tagged_text(paragraph, text, tags_map):
     # Tokenize
     tokens = re.split(r'(<[^>]+>)', text)
     
-    active_style = {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': False}
+    active_style = {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': False, 'superscript': False, 'subscript': False}
     
     for token in tokens:
         if not token:
@@ -206,6 +386,18 @@ def _inject_tagged_text(paragraph, text, tags_map):
                         active_style['italic'] += -1 if is_closing else 1
                     elif tag.type == 'underline':
                         active_style['underline'] += -1 if is_closing else 1
+                    elif tag.type == 'superscript':
+                        active_style['superscript'] = not is_closing
+                    elif tag.type == 'subscript':
+                        active_style['subscript'] = not is_closing
+                    elif tag.type == 'color':
+                        # Handle color application
+                        if is_closing:
+                             active_style.pop('color', None)
+                        else:
+                             if tag.xml_attributes and 'color' in tag.xml_attributes:
+                                 active_style['color'] = tag.xml_attributes['color']
+                                 
                     elif tag.type == 'comment':
                         active_style['highlight'] = not is_closing
                     elif tag.type == 'shape' and not is_closing:
@@ -243,6 +435,15 @@ def _inject_tagged_text(paragraph, text, tags_map):
                 if active_style['bold'] > 0: run.bold = True
                 if active_style['italic'] > 0: run.italic = True
                 if active_style['underline'] > 0: run.underline = True
+                if active_style['superscript']: run.font.superscript = True
+                if active_style['subscript']: run.font.subscript = True
+                
+                if 'color' in active_style:
+                     try:
+                         run.font.color.rgb = docx.shared.RGBColor.from_string(active_style['color'])
+                     except:
+                         pass # Warning: invalid color ignored
+                         
                 if active_style['highlight']: 
                     run.font.highlight_color = WD_COLOR_INDEX.YELLOW
             

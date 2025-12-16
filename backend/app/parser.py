@@ -60,7 +60,93 @@ def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List
                  "type": "footer", 
                  "section_index": s_idx
              }, context))
+             
+    # 3. Comments (Separate Segments)
+    # Strategy: Expose comments as translatable segments.
+    # We use valid IDs from the map.
+    # Note: This list might include comments not referenced in the document body if they are zombies,
+    # but that's acceptable.
+    for cid, ctext in comments_map.items():
+        if not ctext.strip():
+            continue
+            
+        # Create a SegmentInternal for the comment
+        # Metadata distinguishes it
+        seg = SegmentInternal(
+            id=str(uuid.uuid4()),
+            segment_id=str(uuid.uuid4()),
+            source_text=ctext,
+            target_content=None,
+            status="draft",
+            tags={},
+            metadata={
+                "type": "comment",
+                "comment_id": cid
+            }
+        )
+        segments.append(seg)
+
+    # 4. Footnotes
+    segments.extend(_extract_footnotes(doc, context))
     
+    return segments
+
+def _extract_footnotes(doc, context) -> List[SegmentInternal]:
+    """
+    Extracts footnotes as separate segments.
+    """
+    segments = []
+    try:
+        part = doc.part
+        footnotes_part = None
+        for rel in part.rels.values():
+             if "footnotes" in rel.reltype:
+                 footnotes_part = rel.target_part
+                 break
+                 
+        if not footnotes_part:
+            return []
+            
+        xml_data = footnotes_part.blob
+        root = etree.fromstring(xml_data)
+        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        
+        for footnote in root.findall('.//w:footnote', namespaces):
+            fid = footnote.get(qn('w:id'))
+            # Skip separator/continuation separator (usually id -1, 0 etc or type attribute)
+            ftype = footnote.get(qn('w:type'))
+            if ftype in ["separator", "continuationSeparator"]:
+                continue
+                
+            # Extract text
+            # Footnotes are containers like body
+            # We can reuse _process_container if we wrap footnote as a container object?
+            # Footnote object in python-docx is available?
+            # doc.part.related_parts ...
+            # Actually python-docx doesn't fully support iterating footnotes easily without hacking.
+            # But let's try manual XML extraction for MVP text fidelity.
+            
+            ftext = "".join([t.text for t in footnote.findall('.//w:t', namespaces) if t.text])
+            if not ftext.strip():
+                continue
+                
+            seg = SegmentInternal(
+                id=str(uuid.uuid4()),
+                segment_id=str(uuid.uuid4()),
+                source_text=ftext,
+                target_content=None,
+                status="draft",
+                tags={},
+                metadata={
+                    "type": "footnote",
+                    "footnote_id": fid
+                }
+            )
+            segments.append(seg)
+            
+    except Exception as e:
+        print(f"Warning: Could not load footnotes: {e}")
+        
     return segments
 
 def _process_container(container, base_metadata: dict, context: dict) -> List[SegmentInternal]:
@@ -340,7 +426,7 @@ def _split_sentences(text: str, segmentation_func=None, lang="en") -> List[str]:
 
 def _extract_tags(run) -> List[TagModel]:
     """
-    Inspects a run for Bold, Italic, Underline.
+    Inspects a run for Bold, Italic, Underline, Superscript, Subscript, Color.
     Returns a list of detected TagModels.
     """
     found = []
@@ -352,8 +438,22 @@ def _extract_tags(run) -> List[TagModel]:
     if run.underline:
         found.append(TagModel(type="underline"))
         
-    # TODO: Comments, Superscript, Subscript
+    # Superscript / Subscript
+    if run.font.superscript:
+        found.append(TagModel(type="superscript"))
+    if run.font.subscript:
+        found.append(TagModel(type="subscript"))
         
+    # Color
+    # run.font.color.rgb -> RGBColor object (can be converted to hex)
+    # run.font.color.theme_color -> checking presence
+    if run.font.color and run.font.color.rgb:
+        # Convert RGB to hex string
+        rgb = run.font.color.rgb
+        if rgb:
+            hex_color = str(rgb) # usually returns 'FF0000'
+            found.append(TagModel(type="color", xml_attributes={"color": hex_color}))
+            
     return found
 
 def _process_run_element(run_element, para, add_tag_func, context) -> str:
