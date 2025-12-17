@@ -231,6 +231,9 @@ def _inject_into_container(container, base_metadata, source_segments):
         segs_for_para.sort(key=lambda x: x.metadata.get("sub_index", 0))
         for s in segs_for_para:
             text = s.target_content if s.target_content is not None else s.source_text
+            # Restore whitespaces
+            text = _restore_whitespaces(text, s.metadata)
+            
             full_text += text
             if s.tags:
                 combined_tags.update(s.tags)
@@ -241,6 +244,42 @@ def _inject_into_container(container, base_metadata, source_segments):
         full_text = re.sub(r'</(\d+)><\1>', '', full_text)
         
         return full_text, combined_tags
+
+    def _restore_whitespaces(text: str, metadata: dict) -> str:
+        if not text or not metadata:
+            return text
+            
+        ws = metadata.get("whitespaces")
+        if not ws:
+            return text
+            
+        leading = ws.get("leading", "")
+        trailing = ws.get("trailing", "")
+        
+        # Restore Leading
+        if leading:
+             # Check if already present
+             if not text.startswith(leading):
+                 # If text starts with SOME whitespace, do we replace or append?
+                 # Strategy: Ensure the EXACT whitespace exists.
+                 # If text starts with stripped text, prepend.
+                 # If text starts with different whitespace, maybe AI changed it?
+                 # User wants to FIX truncation.
+                 current_leading = re.match(r'^(\s+)', text)
+                 if not current_leading:
+                     text = leading + text
+                 # If it has whitespace, but different? We trust AI or Source?
+                 # User says "Model cuts them off".
+                 # Providing the source leading space is usually safe for layout.
+        
+        # Restore Trailing
+        if trailing:
+             if not text.endswith(trailing):
+                 current_trailing = re.search(r'(\s+)$', text)
+                 if not current_trailing:
+                     text = text + trailing
+                     
+        return text
 
     # 1. Build Grouped Segments from the flat list
     grouped_segments = {}
@@ -284,6 +323,20 @@ def _inject_into_container(container, base_metadata, source_segments):
         if key in grouped_segments:
             try:
                 text, tags = get_merged_content(grouped_segments[key])
+                # Restore whitespaces from the FIRST segment of the group (assuming 1:1 or first has info)
+                # Actually, merged content might span multiple source segments?
+                # Usually 1 paragraph = 1 or more segments.
+                # If we merged them, `text` is the concatenation.
+                # `grouped_segments[key]` is list of segments.
+                # We should apply restoration to individual segments BEFORE merging?
+                # No, get_merged_content merges TARGET content.
+                # We need to apply whitespace logic PER SEGMENT.
+                # But here we are injecting the whole paragraph.
+                # Let's apply it using the metadata of the segments.
+                
+                # REVISION: `get_merged_content` concatenates raw target_contents.
+                # If we modify `get_merged_content` to apply restoration internally loop?
+                
                 _inject_tagged_text(para, text, tags)
                 with open("debug_reassembly_keys.log", "a") as f: f.write(f"Inject Para {key}: OK\n")
             except Exception as e:

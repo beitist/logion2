@@ -7,6 +7,7 @@ import InvisibleCharacters, { InvisibleCharacter, SpaceCharacter, HardBreakNode,
 import { Node, Extension, mergeAttributes } from '@tiptap/core'
 
 import './TiptapStyles.css';
+import { getTagLabel, mergeAdjacentTags } from '../utils/tagUtils';
 
 // Custom Node for Tags (Atom/Inline)
 // This represents a single tag marker (Start OR End is determined by context)
@@ -33,10 +34,11 @@ const TagNode = Node.create({
                 default: '?',
                 parseHTML: element => element.getAttribute('data-label'),
                 renderHTML: attributes => {
+                    const lbl = getTagLabel(attributes.label);
                     return {
-                        'data-label': attributes.label,
+                        'data-label': lbl,
                         // CSS var for content
-                        'style': `--tag-label: "${attributes.label}"`
+                        'style': `--tag-label: "${lbl}"`
                     }
                 },
             }
@@ -203,11 +205,21 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                     // Suppress tab tags that weren't caught by pre-pass
                     return "";
                 }
-                else if (tagInfo.type === 'comment') label = '💬';
+                // REMOVED: Speechbubble override for comments (User Request 1)
+                // else if (tagInfo.type === 'comment') label = '💬';
             }
             return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
         });
-        // 3. Fallback
+
+        // 3. Post-Pass: Merge Adjacent Tags (Combo Tags) (User Request 2)
+        // We look for adjacent spans and merge them into one.
+        // Example: <span id="1"></span><span id="2"></span> -> <span id="1,2"></span>
+        // We do this loop until no more merges occur to handle N tags.
+        // 3. Post-Pass: Merge Adjacent Tags (Combo Tags) (User Request 2)
+        // Refactored to Utils
+        hydrated = mergeAdjacentTags(hydrated);
+
+        // 4. Fallback
         hydrated = hydrated.replace(/\[TAB\]/g, "\t");
         return hydrated;
     };

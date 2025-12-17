@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft, getGlossaryTerms } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
+import { mergeXmlTags, getTagLabel } from '../utils/tagUtils';
 
 // GLOBAL DEBUG FLAG
 // GLOBAL DEBUG FLAG REMOVED - now strict state controlled
@@ -194,10 +195,24 @@ export function SplitView({ projectId }) {
                     // Start/End tag for a specific TAB (if not caught by pre-pass for some reason)
                     return "";
                 }
-                else if (tagInfo.type === 'comment') label = '💬';
+                // REMOVED: Speechbubble override for comments (User Request 1)
+                // else if (tagInfo.type === 'comment') label = '💬';
             }
             return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
         });
+
+        // Post-Pass: Merge Combo Tags (Like in TiptapEditor)
+        let mergeChanged = true;
+        while (mergeChanged) {
+            mergeChanged = false;
+            const regex = /<span data-type="tag-node" data-id="([^"]+)" data-label="([^"]+)"><\/span>(<span data-type="tag-node" data-id="([^"]+)" data-label="([^"]+)"><\/span>)/g;
+            hydrated = hydrated.replace(regex, (match, id1, label1, secondSpan, id2, label2) => {
+                mergeChanged = true;
+                const newId = `${id1},${id2}`;
+                const newLabel = `${label1},${label2}`;
+                return `<span data-type="tag-node" data-id="${newId}" data-label="${newLabel}"></span>`;
+            });
+        }
 
         return hydrated;
     };
@@ -237,28 +252,36 @@ export function SplitView({ projectId }) {
             const idMatch = attrs.match(/data-id="([^"]+)"/);
             if (!idMatch) return match;
 
-            const nodeId = idMatch[1];
-            let realId = nodeId;
+            const fullNodeId = idMatch[1];
+            const ids = fullNodeId.split(',').map(s => s.trim());
+            let replacement = "";
 
-            // Handle Generic TAB
-            if (nodeId === 'TAB') {
-                if (tabIndex < tabIds.length) {
-                    realId = String(tabIds[tabIndex]);
-                    tabIndex++;
-                    return `<${realId}>[TAB]</${realId}>`;
+            for (let i = 0; i < ids.length; i++) {
+                let realId = ids[i];
+
+                // Handle Generic TAB
+                if (realId === 'TAB') {
+                    if (tabIndex < tabIds.length) {
+                        realId = String(tabIds[tabIndex]);
+                        tabIndex++;
+                        replacement += `<${realId}>[TAB]</${realId}>`;
+                        continue;
+                    } else {
+                        replacement += "[TAB]";
+                        continue;
+                    }
+                }
+
+                // Standard Logic for other IDs (1, 2, C...)
+                if (openTags.has(realId)) {
+                    openTags.delete(realId);
+                    replacement += `</${realId}>`;
                 } else {
-                    return "[TAB]";
+                    openTags.add(realId);
+                    replacement += `<${realId}>`;
                 }
             }
-
-            // Standard Logic for other IDs (1, 2, C...)
-            if (openTags.has(realId)) {
-                openTags.delete(realId);
-                return `</${realId}>`;
-            } else {
-                openTags.add(realId);
-                return `<${realId}>`;
-            }
+            return replacement;
         });
 
         // Serialize Tabs/Comments Visuals back to markers
@@ -423,23 +446,48 @@ export function SplitView({ projectId }) {
         visibleContent = visibleContent.replace(/\t/g, '<span class="Tiptap-invisible-character Tiptap-invisible-character--tab"></span>');
 
         // 2. Badge Replacement (Smart) for Raw HTML View (Legacy/Fallback)
-        // Start Tags <n>
-        let formatted = visibleContent.replace(/<(\d+)>/g, (match, id) => {
+        // User Request 2: Combo Tags for Source/Sidebar
+
+        // Helper to build badge HTML
+        const createBadge = (id, isClose) => {
             const t = tags ? tags[id] : null;
-            if (t && (t.type === 'tab' || t.type === 'comment')) {
-                return ""; // Hide start tag wrapper
+            if (t && (t.type === 'tab' || t.type === 'comment')) return "";
+
+            const colorClass = isClose ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800";
+            const title = isClose ? "End Tag" : "Start Tag";
+            const label = isClose ? `/${id}` : id;
+            return `<span class="inline-flex items-center justify-center ${colorClass} text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="${title}">${label}</span>`;
+        };
+
+        // Pre-Pass: Merge IDs in the string or just handling the replacement?
+        // Replacing iteratively is safer for string manipulation.
+
+        // Merge adjacent tags in XML format first? e.g. <1><2> -> <1,2>
+        // Start Tags
+        // Pre-Pass: Merge adjacent tags in XML format
+        // Refactored to Utils
+        let formatted = mergeXmlTags(visibleContent);
+
+        // Now render badges for (comma-separated) IDs
+        // Matches <1,2,3... > or </1,2,3... >
+        formatted = formatted.replace(/<([0-9,]+)>/g, (match, ids) => {
+            if (ids.includes(',')) {
+                // Combo Start: Show Range (1-3)
+                const label = getTagLabel(ids);
+                return `<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[24px] rounded mx-0.5 select-none" title="Start Tags ${ids}">${label}</span>`;
             }
-            return `<span class="inline-flex items-center justify-center bg-blue-100 text-blue-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="Start Tag">${id}</span>`;
+            return createBadge(ids, false);
         });
 
-        // End Tags </n>
-        formatted = formatted.replace(/<\/(\d+)>/g, (match, id) => {
-            const t = tags ? tags[id] : null;
-            if (t && (t.type === 'tab' || t.type === 'comment')) {
-                return ""; // Hide end tag
+        formatted = formatted.replace(/<\/([0-9,]+)>/g, (match, ids) => {
+            if (ids.includes(',')) {
+                // Combo End: Show Range per utility
+                const label = `/${getTagLabel(ids)}`;
+                return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[24px] rounded mx-0.5 select-none" title="End Tags ${ids}">${label}</span>`;
             }
-            return `<span class="inline-flex items-center justify-center bg-orange-100 text-orange-800 text-[10px] font-mono h-4 min-w-[16px] rounded mx-0.5 select-none" title="End Tag">/${id}</span>`;
+            return createBadge(ids, true);
         });
+
 
         // Replace [TAB] -> Visible Arrow [⇥] for sidebar/raw view
         formatted = formatted.replace(/\t|\[TAB\]/g, '<span class="text-gray-400 font-mono select-none">⇥</span>');

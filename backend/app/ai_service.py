@@ -21,6 +21,136 @@ from sqlalchemy.orm import Session
 API_KEY = os.getenv("GOOGLE_API_KEY")
 if API_KEY:
     genai.configure(api_key=API_KEY)
+import re
+
+# --- Tag Compression Logic (Simulated Tag Groups) ---
+# Compresses sequences of adjacent tags <1><2>... into single tokens <901>
+# Decompresses them back after AI processing.
+
+def _compress_tags(text: str) -> tuple[str, dict]:
+    """
+    Finds sequences of XML tags (e.g. <1><2>) and replaces them with <90X>.
+    Uses stack-based matching to ensure <901>...<901> pairing where possible.
+    """
+    if not text:
+        return text, {}
+        
+    mapping = {}
+    counter = 901
+    
+    # We need to process the string linearly to handle nesting/pairing.
+    # Regex to find ANY sequence of tags
+    # Group 1: The full sequence
+    tag_seq_pattern = re.compile(r'((?:</?\d+>)+)')
+    
+    matches = []
+    for m in tag_seq_pattern.finditer(text):
+        matches.append({
+            "start": m.start(),
+            "end": m.end(),
+            "text": m.group(1),
+            "is_close": "</" in m.group(1),
+            "ids": re.findall(r'\d+', m.group(1))
+        })
+        
+    # Stack for Open Tags: stores { "ids": [...], "syn_id": "901" }
+    stack = []
+    
+    # We build the new string by slicing
+    last_pos = 0
+    new_text = ""
+    
+    for m in matches:
+        # Append text before this tag match
+        new_text += text[last_pos:m["start"]]
+        
+        assigned_id = None
+        
+        if not m["is_close"]:
+            # OPEN TAG (or sequence)
+            # Assign new ID
+            assigned_id = str(counter)
+            counter += 1
+            
+            # Use raw ID for mapping (no slash)
+            mapping[assigned_id] = m["text"]
+            
+            # Push to stack
+            stack.append({"ids": m["ids"], "syn_id": assigned_id})
+            
+            # Append replacement
+            new_text += f"<{assigned_id}>"
+            
+        else:
+            # CLOSE TAG (or sequence)
+            # Try to match with top of stack
+            # Logic: Close IDs [2, 1] should match Open IDs [1, 2] (Reversed)
+            # But sometimes partial matches happen. 
+            # Strict Exact Match is safest for "Group" logic.
+            
+            is_match = False
+            if stack:
+                top = stack[-1]
+                # Check if IDs correspond (Reverse check)
+                # match["ids"] are strings.
+                if top["ids"] == m["ids"][::-1]:
+                    # Match!
+                    assigned_id = top["syn_id"]
+                    stack.pop()
+                    is_match = True
+            
+            if is_match:
+                # Use same ID
+                mapping[f"/{assigned_id}"] = m["text"]
+                # XML style close
+                new_text += f"</{assigned_id}>"
+            else:
+                # No match (Crossing or Orphan or Unbalanced)
+                # Assign NEW unique ID to avoid confusion
+                assigned_id = str(counter)
+                counter += 1
+                mapping[f"/{assigned_id}"] = m["text"]
+                new_text += f"</{assigned_id}>"
+                
+        last_pos = m["end"]
+        
+    # Append rest of text
+    new_text += text[last_pos:]
+    
+    return new_text, mapping
+
+def _decompress_tags(text: str, mapping: dict) -> str:
+    """
+    Restores tags from <90X> or </90X> using the mapping.
+    """
+    if not text or not mapping:
+        return text
+        
+    # We iterate the known keys in the mapping and replace?
+    # Or strict regex for 900s?
+    # Strict regex is better to finding what the AI outputted.
+    
+    def repl(match):
+        token = match.group(1) # "901" or "/901"
+        is_close = token.startswith("/")
+        
+        # Cleanup token to key
+        key = token
+        
+        if key in mapping:
+            return mapping[key]
+        
+        # Fallback: If AI made up a tag <999>, we strip it or leave it?
+        # If we leave it, it breaks XML parsing likely.
+        # But if it's unknown, maybe it corresponds to a lost tag.
+        return "" # Remove hallucinated system tags
+        
+    return re.sub(r'<([/]?9\d\d)>', repl, text)
+
+# Export for use in other modules
+def compress_tags_for_ai(text): return _compress_tags(text)
+def decompress_tags_from_ai(text, mapping): return _decompress_tags(text, mapping)
+
 
 def get_ai_response(project_title: str, user_message: str, history: list):
     """

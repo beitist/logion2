@@ -385,11 +385,30 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
     for idx, sentence in enumerate(repaired_sentences):
          segments_to_create.append((sentence, idx))
 
-    final_segments = []
     for content, sub_index in segments_to_create:
         # Create unique location
         seg_loc = location.copy()
         seg_loc["sub_index"] = sub_index
+
+        # Detect Leading/Trailing Spaces
+        src_leading = ""
+        src_trailing = ""
+        
+        # Leading
+        m_lead = re.match(r'^(\s+)', content)
+        if m_lead:
+            src_leading = m_lead.group(1)
+            
+        # Trailing
+        m_trail = re.search(r'(\s+)$', content)
+        if m_trail:
+            src_trailing = m_trail.group(1)
+            
+        if src_leading or src_trailing:
+            seg_loc["whitespaces"] = {
+                "leading": src_leading,
+                "trailing": src_trailing
+            }
         
         final_segments.append(SegmentInternal(
             id=str(uuid.uuid4()),

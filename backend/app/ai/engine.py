@@ -84,6 +84,19 @@ class AITranslator:
                     for m in glossary_matches
                 ])
 
+            # Compress Tags (User Request: Simplify for MT)
+            # We compress the current segment text. Context segments are passed as strings.
+            # Ideally context should also be compressed? But mixing compressed/uncompressed might confuse AI?
+            # AI sees compressed current but uncompressed context?
+            # It might hallucinate uncompressed tags into compressed text.
+            # Best is to compress ALL context too.
+            # For MVP: Focus on current_text (Risk: AI sees mismatch).
+            # Better MVP: Compress current_text ONLY and tell AI "Tags are encoded as <9xx>".
+            
+            from ..ai_service import compress_tags_for_ai, decompress_tags_from_ai
+            
+            compressed_source, tag_map = compress_tags_for_ai(current_text)
+            
             # System Prompt
             system_text = (
                 f"You are a professional translator translating from Source to {target_lang}.\n"
@@ -94,7 +107,8 @@ class AITranslator:
                 "3. Preserve <n>LinkText</n> tags.\n"
                 "4. Use GLOSSARY terms strictly if they appear in the source.\n"
                 "5. Do NOT add tags if the source text does not contain any. Only preserve existing ones.\n"
-                "6. Output must be valid JSON.\n"
+                "6. Note: Some tag sequences may be compressed into tags like <9xx>. Treat them as atomic blocks.\n"
+                "7. Output must be valid JSON.\n"
             )
             
             # User Prompt
@@ -134,9 +148,38 @@ class AITranslator:
                 "prev_context": prev_context_str,
                 "next_context": next_context_str,
                 "glossary_str": glossary_str,
-                "current_text": current_text,
+                "current_text": compressed_source, # Use Compressed
                 "format_instructions": self.parser.get_format_instructions()
             })
+            
+            # Decompress Result
+            if isinstance(result, dict) and "translation_text" in result:
+                raw_translation = result["translation_text"]
+                decompressed = decompress_tags_from_ai(raw_translation, tag_map)
+                
+                # --- Post-Process: Whitespace Synchronization ---
+                # Fixes issue where AI outputs logical Tab instead of Space at end of segment.
+                # We enforce that if Source ends with Space, Target should likely end with Space.
+                
+                # 1. Trailing Whitespace
+                if current_text.endswith(' '):
+                    # Source ends with space
+                    if decompressed.endswith('\t'):
+                        # Replace hallucinated Tab with Space
+                        decompressed = decompressed[:-1] + ' '
+                    elif not decompressed.endswith(' '):
+                        # Restore missing Space
+                        decompressed += ' '
+                elif current_text.endswith('\t'):
+                    # Source ends with Tab
+                    if not decompressed.endswith('\t'):
+                        decompressed += '\t'
+                else:
+                    # Source ends with non-whitespace (usually).
+                    # Trim unexpected trailing whitespace from AI
+                    decompressed = decompressed.rstrip()
+                    
+                result["translation_text"] = decompressed
             
             return result
             
