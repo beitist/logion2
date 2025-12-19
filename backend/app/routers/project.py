@@ -383,7 +383,7 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
 # --- Segment Operations ---
 
 @router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
-def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
+def generate_draft_endpoint(segment_id: str, mode: str = "translate", db: Session = Depends(get_db)):
     segment = db.query(Segment).filter(Segment.id == segment_id).first()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
@@ -400,22 +400,17 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     
     from ..rag import generate_segment_draft
     
-    # We strip XML tags for embedding query? 
-    # Actually rag.py should handle cleaning or we assume tags don't break embedding too much.
-    # But clean text is better for retrieval.
-    # Let's keep source_content as is, `rag.py` logic calls `embed_content`.
-    
-    # Read config
-    config = project.config or {}
-    ai_settings = config.get("ai_settings", {})
-    threshold = float(ai_settings.get("similarity_threshold", 0.4))
-    
     # Extract tags for Tab handling
     tags_data = None
     existing_matches = None
     if segment.metadata_json:
         tags_data = segment.metadata_json.get("tags")
         existing_matches = segment.metadata_json.get("context_matches")
+
+    # If mode is 'analyze', we skip AI generation in RAG (we need to pass this down)
+    # OR we handle it here by passing a flag to skip_generation?
+    # Let's pass 'skip_ai' arg to generate_segment_draft
+    skip_ai = (mode == "analyze")
 
     result = generate_segment_draft(
         segment_text=segment.source_content,
@@ -426,18 +421,30 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
         threshold=threshold,
         model_name=model_name,
         tags=tags_data,
-        cached_matches=existing_matches
+        cached_matches=existing_matches,
+        skip_ai=skip_ai
     )
     
-    # Update Segment with Draft and Matches
-    # We assume 'target_content' gets the draft if it's currently empty or draft status?
-    # User might overwrite.
-    # If we overwrite `target_content`, user sees it immediately.
-    segment.target_content = result["target_text"]
+    # Update Segment based on Mode
     
-    # Let's use metadata_json for now.
+    # 1. Update Metadata (Always)
     current_meta = dict(segment.metadata_json or {})
     current_meta['context_matches'] = result["context_matches"]
+    
+    if mode == "translate":
+        # Full Overwrite of Target
+        segment.target_content = result["target_text"]
+        current_meta['ai_draft'] = result["target_text"]
+    
+    elif mode == "draft":
+        # Only save draft to metadata (suggestion)
+        current_meta['ai_draft'] = result["target_text"]
+        # Do NOT touch target_content
+        
+    elif mode == "analyze":
+        # No draft generated (usually), just context matches updated
+        pass
+
     segment.metadata_json = current_meta
     
     from sqlalchemy.orm.attributes import flag_modified

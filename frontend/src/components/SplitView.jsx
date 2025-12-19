@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft, getGlossaryTerms } from "../api/client";
+import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft, getGlossaryTerms, reingestProject } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
 import { mergeXmlTags, getTagLabel } from '../utils/tagUtils';
 
@@ -10,6 +10,8 @@ import { RAGSettingsTab } from './settings/RAGSettingsTab';
 import { AISettingsTab } from './settings/AISettingsTab';
 import { GlossarySettingsTab } from './settings/GlossarySettingsTab';
 import { StatisticsSettingsTab } from './settings/StatisticsSettingsTab';
+import { WorkflowsTab } from './settings/WorkflowsTab';
+import { ProjectSettingsTab } from './settings/ProjectSettingsTab';
 import { GlossaryAddModal } from './GlossaryAddModal';
 
 import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft } from 'lucide-react';
@@ -71,21 +73,27 @@ export function SplitView({ projectId, onBack }) {
     }, [segments]);
 
     // Helper to add to queue safely
-    const queueSegments = (ids) => {
+    const queueSegments = (ids, mode = "translate") => {
         let added = false;
         ids.forEach(id => {
-            if (draftQueue.current.includes(id)) return;
+            // Check if already in queue (compare IDs)
+            if (draftQueue.current.find(item => item.id === id)) return;
 
             // Check if already done (using Ref for latest)
             const seg = segmentsRef.current.find(s => s.id === id);
             if (!seg) return;
 
-            // CRITICAL: Only add if EMPTY/Draft and NOT locked. Avoid Double-Loading.
+            // Mode Logic:
+            // "translate" (MT): Skip if not empty (unless force? assume empty check for now)
+            // "draft": Skip if ai_draft exists? Or just run it. 
+            // "analyze": Skip if matches exist?
+
             const hasContent = seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
-            if (hasContent) return; // Skip finished ones
+
+            if (mode === "translate" && hasContent) return;
             if (seg.locked) return;
 
-            draftQueue.current.push(id);
+            draftQueue.current.push({ id, mode });
             added = true;
         });
 
@@ -100,23 +108,24 @@ export function SplitView({ projectId, onBack }) {
         isProcessingQueue.current = true;
 
         while (draftQueue.current.length > 0) {
-            const nextId = draftQueue.current.shift();
+            const item = draftQueue.current.shift();
+            const { id: nextId, mode } = item;
 
             // Double-check just before execution
             const seg = segmentsRef.current.find(s => s.id === nextId);
-            const hasContent = seg && seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
 
-            if (!seg || hasContent || seg.locked) {
-                continue; // Skip
-            }
+            // Re-check conditions as state might have changed
+            const hasContent = seg && seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
+            if (!seg || seg.locked) continue;
+            if (mode === "translate" && hasContent) continue;
 
             try {
-                await handleAiDraft(nextId, true); // true = isAuto
+                await handleAiDraft(nextId, true, mode); // true = isAuto
             } catch (e) {
                 console.warn("Queue item failed", nextId, e);
             }
-            // Sequential delay for context connectivity
-            await new Promise(r => setTimeout(r, 200));
+            // Rate Limit Protection: Wait 20ms (User confirmed not rate limit issue)
+            await new Promise(r => setTimeout(r, 20));
         }
 
         isProcessingQueue.current = false;
@@ -599,17 +608,27 @@ export function SplitView({ projectId, onBack }) {
         }
     };
 
+    const handleReingest = async () => {
+        if (!confirm("This will clear all existing context vectors and re-process all files. Continue?")) return;
+
+        try {
+            await reingestProject(projectId);
+            alert("Re-ingestion started in background. Check logs or wait a few minutes.");
+        } catch (e) {
+            alert("Failed to trigger re-ingest: " + e.message);
+        }
+    };
+
     // Handler for manual AI Draft triggers
-    // Handler for manual AI Draft triggers
-    const handleAiDraft = async (segmentId, isAuto = false) => {
+    const handleAiDraft = async (segmentId, isAuto = false, mode = "translate") => {
         const seg = segmentsRef.current.find(s => s.id === segmentId); // Use Ref for safety
         if (!isAuto) {
-            log(`Generating draft for segment #${seg?.index + 1}...`, 'info', { segmentId });
+            log(`Generating draft (${mode}) for segment #${seg?.index + 1}...`, 'info', { segmentId });
         }
 
         try {
             const start = performance.now();
-            const updated = await generateDraft(segmentId);
+            const updated = await generateDraft(segmentId, mode);
             const duration = Math.round(performance.now() - start);
 
             if (!isAuto) {
@@ -623,14 +642,21 @@ export function SplitView({ projectId, onBack }) {
             setSegments(prev => prev.map(s => {
                 if (s.id !== segmentId) return s;
 
-                // For Auto (Pre-cache), we WANT the draft content (that's the point of pre-translation)
-                if (isAuto) {
-                    return { ...s, ...updated };
-                }
+                // Mode-based update override
+                // "analyze": Only context_matches
+                // "draft": ai_draft + context_matches (backend handles field populating, we just merge)
+                // "translate": target_content + context_matches
 
-                // For Manual Shortcut (Legacy Request): "Do NOT auto-insert text. Only update Matches sidebar."
-                // Only update context_matches (and maybe metadata?)
-                return { ...s, context_matches: updated.context_matches };
+                // Since `updated` comes from backend with correct fields set/unset based on mode:
+                // We can just merge everything relevant.
+
+                // NOTE: If mode is "analyze", target_content in `updated` might be OLD or EMPTY depending on backend response.
+                // Backend `generate_draft_endpoint`:
+                // returns `segment.__dict__` copy.
+                // If mode="analyze", target_content is untouched on DB.
+                // So `updated` has the CURRENT DB state.
+
+                return { ...s, ...updated };
             }));
 
             return updated.context_matches;
@@ -754,6 +780,12 @@ export function SplitView({ projectId, onBack }) {
                                 <h2 className="text-xl font-bold text-gray-800">Project Settings</h2>
                                 <div className="flex gap-1 bg-gray-200 p-1 rounded-lg">
                                     <button
+                                        onClick={() => setActiveSettingsTab('workflows')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'workflows' ? 'bg-white shadow text-pink-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        ⚡ Workflows
+                                    </button>
+                                    <button
                                         onClick={() => setActiveSettingsTab('files')}
                                         className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'files' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
                                     >
@@ -776,6 +808,12 @@ export function SplitView({ projectId, onBack }) {
                                         className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'glossary' ? 'bg-white shadow text-green-600' : 'text-gray-500 hover:text-gray-700'}`}
                                     >
                                         📚 Glossary
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveSettingsTab('project')}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeSettingsTab === 'project' ? 'bg-white shadow text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        ⚙️ Project
                                     </button>
                                     <button
                                         onClick={() => setActiveSettingsTab('stats')}
@@ -855,6 +893,15 @@ export function SplitView({ projectId, onBack }) {
                                     <GlossarySettingsTab project={project} onUpdate={setProject} />
                                 ) : activeSettingsTab === 'stats' ? (
                                     <StatisticsSettingsTab project={{ ...project, segments: segments }} />
+                                ) : activeSettingsTab === 'workflows' ? (
+                                    <WorkflowsTab
+                                        project={project}
+                                        segments={segments}
+                                        onQueueAll={queueSegments}
+                                        onReingest={handleReingest}
+                                    />
+                                ) : activeSettingsTab === 'project' ? (
+                                    <ProjectSettingsTab project={project} onUpdate={setProject} />
                                 ) : null}
                             </div>
 

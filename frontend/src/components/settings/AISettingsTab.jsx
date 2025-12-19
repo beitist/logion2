@@ -145,24 +145,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                         </div>
                     </div>
 
-                    {settings.preload_mode && (
-                        <div className="pt-2 border-t border-blue-200/50">
-                            <button
-                                onClick={async () => {
-                                    if (!confirm("Start batch generation for ALL segments? This runs in your browser queue.")) return;
-                                    try {
-                                        if (onQueueAll) onQueueAll();
-                                        alert("Batch job queued! Segments will fill in one by one.");
-                                    } catch (e) {
-                                        alert("Error: " + e.message);
-                                    }
-                                }}
-                                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium"
-                            >
-                                <RefreshCw size={14} /> Queue All Drafts Now
-                            </button>
-                        </div>
-                    )}
+
                 </div>
             </div>
 

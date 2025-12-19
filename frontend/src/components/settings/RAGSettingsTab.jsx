@@ -117,17 +117,7 @@ export function RAGSettingsTab({ project, onUpdate }) {
                 </div>
             </div>
 
-            <div className="pt-4 border-t border-gray-100 flex justify-between items-center">
-                <button
-                    onClick={handleReingest}
-                    disabled={isReingesting}
-                    className="flex items-center gap-2 px-4 py-2 text-yellow-700 bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 rounded transition-colors text-sm font-medium"
-                    title="Reloads all files into the Vector Database"
-                >
-                    <RefreshCw size={16} className={isReingesting ? "animate-spin" : ""} />
-                    {isReingesting ? "Processing..." : "Re-ingest Context"}
-                </button>
-
+            <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                     onClick={handleSave}
                     className="flex items-center gap-2 px-6 py-2 bg-gray-900 text-white rounded hover:bg-black transition-colors shadow-sm font-medium"

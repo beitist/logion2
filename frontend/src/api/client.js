@@ -71,12 +71,18 @@ export async function deleteProject(projectId) {
     return res.json();
 }
 
-export async function generateDraft(segmentId) {
-    const res = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft`, {
-        method: "POST",
+// Generate AI Draft for a single segment
+export async function generateDraft(segmentId, mode = "translate") {
+    // Mode: 'translate' (rewrite target), 'draft' (suggestion only), 'analyze' (retrieval only)
+    const response = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft?mode=${mode}`, {
+        method: 'POST',
     });
-    if (!res.ok) throw new Error("Failed to generate draft");
-    return res.json();
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Generate Draft Failed [${response.status}]:`, errorText);
+        throw new Error(`Failed to generate draft: ${response.status}`);
+    }
+    return response.json();
 }
 
 export async function generateProjectDrafts(projectId) {

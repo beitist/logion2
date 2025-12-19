@@ -1,4 +1,5 @@
 from .tmx import compute_hash, normalize_text
+import logging
 from .models import TranslationUnit, TranslationOrigin
 import os
 import math
@@ -582,19 +583,21 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # Return Top 5 for Display
     return final_matches[:5]
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None, cached_matches=None):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None, cached_matches=None, skip_ai=False):
     """
     Generates a draft translation using aligned context.
     If cached_matches is provided, it skips expensive retrieval.
+    If skip_ai is True, it returns context matches without generating a draft.
     """
     if not model_name:
         model_name = get_default_model_id()
 
     # 1. Retrieve Context
     matches = []
+    gloss_hits = []
     
     # Use Cache if Available
-    if cached_matches and len(cached_matches) > 0:
+    if cached_matches is not None:
         matches = cached_matches
         # Ensure we don't duplicate existing MT if re-running
         matches = [m for m in matches if m.get('type') != 'mt']
@@ -603,7 +606,6 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
         matches = search_context_for_segment(segment_text, project_id, db)
         
         # 1.5 Glossary Matches
-        gloss_hits = []
         try:
             matcher = GlossaryMatcher(project_id, db)
             gloss_hits = matcher.find_matches(segment_text)
@@ -636,6 +638,13 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
         }
 
     # 3. HyDE / Machine Translation Feature
+    if skip_ai:
+        return {
+            "target_text": "", 
+            "context_matches": matches,
+            "is_exact": False
+        }
+
     mt_draft = ""
     try:
         # Construct dynamic system instruction

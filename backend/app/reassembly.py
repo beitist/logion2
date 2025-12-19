@@ -179,6 +179,93 @@ def _inject_footnotes(doc: Document, segments: List[SegmentInternal]):
         import traceback
         traceback.print_exc()
 
+def _inject_endnotes(doc: Document, segments: List[SegmentInternal]):
+    """
+    Updates the endnotes.xml part of the document with translated text.
+    """
+    # 1. Map segments by endnote_id
+    endnote_segs = {s.metadata["endnote_id"]: s for s in segments if s.metadata.get("type") == "endnote"}
+    
+    if not endnote_segs:
+        return
+        
+    try:
+        # 2. Find endnotes part
+        part = doc.part
+        endnotes_part = None
+        for rel in part.rels.values():
+             if "endnotes" in rel.reltype:
+                 endnotes_part = rel.target_part
+                 break
+                 
+        if not endnotes_part:
+            print("No endnotes part found")
+            return
+            
+        # 3. Parse and Updates
+        xml_data = endnotes_part.blob
+        root = etree.fromstring(xml_data)
+        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        
+        updated_count = 0
+        
+        for endnote in root.findall('.//w:endnote', namespaces):
+            eid = endnote.get(qn('w:id'))
+            if eid in endnote_segs:
+                 seg = endnote_segs[eid]
+                 target_text = seg.target_content if seg.target_content else seg.source_text
+                 
+                 # Clear existing content
+                 endnote.clear()
+                 # But we might lose attributes?
+                 # Actually clearer is: find <w:p> children and clear/replace them.
+                 
+                 # Better Strategy:
+                 # Endnotes usually contain one or more paragraphs.
+                 # Our parser extracted ALL text from ALL paragraphs into one String.
+                 # This is a limitation: multi-paragraph footnotes/endnotes are flattened.
+                 # For MVP, we recreate ONE paragraph with the full content.
+                 
+                 # Set attributes back? no, we cleared children, not attributes of 'endnote' itself.
+                 # Wait, `element.clear()` removes children and text, keeps attributes.
+                 
+                 # 1. Add Paragraph
+                 wp = etree.SubElement(endnote, qn('w:p'))
+                 pPr = etree.SubElement(wp, qn('w:pPr'))
+                 pStyle = etree.SubElement(pPr, qn('w:pStyle'))
+                 pStyle.set(qn('w:val'), 'EndnoteText')
+                 
+                 # Wrap in docx Object
+                 from docx.text.paragraph import Paragraph
+                 proxy_para = Paragraph(wp, endnotes_part)
+                 
+                 # 2. Inject Content
+                 _inject_tagged_text(proxy_para, target_text, seg.tags)
+                 
+                 # 3. Prepend Endnote Reference
+                 ref_run = etree.Element(qn('w:r'))
+                 ref_rPr = etree.SubElement(ref_run, qn('w:rPr'))
+                 ref_style = etree.SubElement(ref_rPr, qn('w:rStyle'))
+                 ref_style.set(qn('w:val'), 'EndnoteReference')
+                 etree.SubElement(ref_run, qn('w:endnoteRef'))
+                 
+                 if len(wp) > 0 and wp[0].tag == qn('w:pPr'):
+                     wp.insert(1, ref_run)
+                 else:
+                     wp.insert(0, ref_run)
+
+                 updated_count += 1
+                 
+        if updated_count > 0:
+            new_xml = etree.tostring(root, encoding='utf-8', standalone=True)
+            endnotes_part._blob = new_xml
+            print(f"Updated {updated_count} endnotes in endnotes.xml")
+            
+    except Exception as e:
+        print(f"Error updating endnotes: {e}")
+        import traceback
+        traceback.print_exc()
+
 def reassemble_docx(original_path: str, output_path: str, segments: List[SegmentInternal]):
     """
     Takes original DOCX and a list of TRANSLATED segments.
@@ -211,6 +298,9 @@ def reassemble_docx(original_path: str, output_path: str, segments: List[Segment
 
     # 4. Footnotes
     _inject_footnotes(doc, segments)
+
+    # 5. Endnotes
+    _inject_endnotes(doc, segments)
 
     doc.save(output_path)
 
@@ -400,7 +490,13 @@ def _inject_tagged_text(paragraph, text, tags_map):
                 print(f"Warning: Failed to preserve shape: {e}")
 
     # 2. Clear existing content
-    p_element.clear_content()
+    # 2. Clear existing content (Safe Mode)
+    # Replaces p_element.clear_content() which fails on raw lxml elements
+    # AND ensures we don't delete paragraph properties (w:pPr)
+    for child in list(p_element):
+        if child.tag == qn('w:pPr'):
+            continue
+        p_element.remove(child)
 
     # DEBUG LOGGING
     with open("debug_reassembly.txt", "a") as f:
@@ -543,6 +639,18 @@ def _inject_tagged_text(paragraph, text, tags_map):
                     rStyle = docx.oxml.shared.OxmlElement('w:rStyle')
                     rStyle.set(qn('w:val'), 'Hyperlink')
                     rPr.append(rStyle)
+                    
+                    # FORCE VISIBLE STYLE (Blue + Underline) because "Hyperlink" style might be missing
+                    # Color: Blue (0000FF)
+                    color = docx.oxml.shared.OxmlElement('w:color')
+                    color.set(qn('w:val'), '0563C1') # Standard Word Hyperlink Blue
+                    rPr.append(color)
+                    
+                    # Underline: Single
+                    u = docx.oxml.shared.OxmlElement('w:u')
+                    u.set(qn('w:val'), 'single')
+                    rPr.append(u)
+                    
                     has_style = True
                         
                     if has_style:

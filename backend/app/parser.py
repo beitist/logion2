@@ -89,6 +89,9 @@ def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List
     # 4. Footnotes
     segments.extend(_extract_footnotes(doc, context))
     
+    # 5. Endnotes
+    segments.extend(_extract_endnotes(doc, context))
+    
     return segments
 
 def _extract_footnotes(doc, context) -> List[SegmentInternal]:
@@ -118,14 +121,6 @@ def _extract_footnotes(doc, context) -> List[SegmentInternal]:
             if ftype in ["separator", "continuationSeparator"]:
                 continue
                 
-            # Extract text
-            # Footnotes are containers like body
-            # We can reuse _process_container if we wrap footnote as a container object?
-            # Footnote object in python-docx is available?
-            # doc.part.related_parts ...
-            # Actually python-docx doesn't fully support iterating footnotes easily without hacking.
-            # But let's try manual XML extraction for MVP text fidelity.
-            
             ftext = "".join([t.text for t in footnote.findall('.//w:t', namespaces) if t.text])
             if not ftext.strip():
                 continue
@@ -146,6 +141,56 @@ def _extract_footnotes(doc, context) -> List[SegmentInternal]:
             
     except Exception as e:
         print(f"Warning: Could not load footnotes: {e}")
+        
+    return segments
+
+def _extract_endnotes(doc, context) -> List[SegmentInternal]:
+    """
+    Extracts endnotes as separate segments.
+    """
+    segments = []
+    try:
+        part = doc.part
+        endnotes_part = None
+        for rel in part.rels.values():
+             if "endnotes" in rel.reltype:
+                 endnotes_part = rel.target_part
+                 break
+                 
+        if not endnotes_part:
+            return []
+            
+        xml_data = endnotes_part.blob
+        root = etree.fromstring(xml_data)
+        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        
+        for endnote in root.findall('.//w:endnote', namespaces):
+            eid = endnote.get(qn('w:id'))
+            # Skip separator/continuation separator
+            etype = endnote.get(qn('w:type'))
+            if etype in ["separator", "continuationSeparator"]:
+                continue
+                
+            etext = "".join([t.text for t in endnote.findall('.//w:t', namespaces) if t.text])
+            if not etext.strip():
+                continue
+                
+            seg = SegmentInternal(
+                id=str(uuid.uuid4()),
+                segment_id=str(uuid.uuid4()),
+                source_text=etext,
+                target_content=None,
+                status="draft",
+                tags={},
+                metadata={
+                    "type": "endnote",
+                    "endnote_id": eid
+                }
+            )
+            segments.append(seg)
+            
+    except Exception as e:
+        print(f"Warning: Could not load endnotes: {e}")
         
     return segments
 
