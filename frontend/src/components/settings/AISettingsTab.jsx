@@ -4,7 +4,7 @@ import { Zap, Command, RefreshCw, Save, Terminal } from 'lucide-react';
 
 export function AISettingsTab({ project, onUpdate }) {
     const [settings, setSettings] = useState({
-        model: 'gemini-2.0-flash',
+        model: '',
         custom_prompt: '',
         pre_translate_count: 0,
         preload_mode: false
@@ -18,7 +18,7 @@ export function AISettingsTab({ project, onUpdate }) {
         if (project && project.config) {
             const ai = project.config.ai_settings || {};
             setSettings({
-                model: ai.model || 'gemini-2.0-flash',
+                model: ai.model || '',
                 custom_prompt: ai.custom_prompt || '',
                 pre_translate_count: ai.pre_translate_count || 0,
                 preload_mode: ai.preload_mode || false
@@ -32,11 +32,14 @@ export function AISettingsTab({ project, onUpdate }) {
                 const data = await getAiModels();
                 if (data.models) {
                     setAvailableModels(data.models);
+                    if (!settings.model && data.models.length > 0) {
+                        setSettings(s => ({ ...s, model: data.models[0].id }));
+                    }
                 }
             } catch (e) {
                 console.error("Failed to load models", e);
                 // Fallback
-                setAvailableModels([{ id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Fallback)' }]);
+                setAvailableModels([{ id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fallback)' }]);
             } finally {
                 setLoadingModels(false);
             }

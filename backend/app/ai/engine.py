@@ -5,6 +5,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from .memory import TranslationMemory
+from ..config import get_default_model_id
 
 # --- Structured Output Schema ---
 class TranslationResponse(BaseModel):
@@ -13,10 +14,10 @@ class TranslationResponse(BaseModel):
     alternatives: List[str] = Field(description="1-2 alternative translations if impactful differences exist, or empty list.")
 
 class AITranslator:
-    def __init__(self, default_model: str = "gemini-2.5-pro"):
+    def __init__(self, default_model: Optional[str] = None):
         self.memory = TranslationMemory()
         self.api_key = os.getenv("GOOGLE_API_KEY")
-        self.default_model = default_model
+        self.default_model = default_model or get_default_model_id()
         self.parser = JsonOutputParser(pydantic_object=TranslationResponse)
         
         # Cache specific LLM instances by model_name to avoid re-init overhead

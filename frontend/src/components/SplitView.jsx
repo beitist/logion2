@@ -213,7 +213,7 @@ export function SplitView({ projectId, onBack }) {
                 // REMOVED: Speechbubble override for comments (User Request 1)
                 // else if (tagInfo.type === 'comment') label = '💬';
             }
-            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
+            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}" class="tag-node tag-node-${finalId}" style="--tag-label: '${label}'"></span>`;
         });
 
         // Post-Pass: Merge Combo Tags (Like in TiptapEditor)
@@ -225,7 +225,7 @@ export function SplitView({ projectId, onBack }) {
                 mergeChanged = true;
                 const newId = `${id1},${id2}`;
                 const newLabel = `${label1},${label2}`;
-                return `<span data-type="tag-node" data-id="${newId}" data-label="${newLabel}"></span>`;
+                return `<span data-type="tag-node" data-id="${newId}" data-label="${newLabel}" class="tag-node tag-node-${newId}" style="--tag-label: '${newLabel}'"></span>`;
             });
         }
 
@@ -233,7 +233,7 @@ export function SplitView({ projectId, onBack }) {
     };
 
     const handleSave = async (id, htmlContent) => {
-        console.log("Saving segment", id);
+        // console.log("Saving segment", id); // Debug removed
         setSavingId(id);
 
         // Serialization: Convert TagNodes back to <1>...</1>

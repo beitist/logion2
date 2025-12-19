@@ -13,6 +13,7 @@ from datetime import datetime
 from ..database import get_db, SessionLocal, engine
 from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse, ProjectFileSchema
 from ..parser import parse_docx
+from ..config import get_default_model_id
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, GlossaryEntry
 
 UPLOAD_DIR = "uploads"
@@ -395,7 +396,7 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     config = project.config if project.config else {}
     ai_settings = config.get("ai_settings", {})
     threshold = float(ai_settings.get("similarity_threshold", 0.40))
-    model_name = ai_settings.get("model", "gemini-2.0-flash") # Default to Flash
+    model_name = ai_settings.get("model") or get_default_model_id()
     
     from ..rag import generate_segment_draft
     

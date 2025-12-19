@@ -61,6 +61,6 @@ def get_ai_models():
                 
     # Fallback
     return {
-        "models": [{"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash (Fallback - File Not Found)", "provider": "google"}],
+        "models": [{"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash (Fallback - File Not Found)", "provider": "google"}],
         "debug_searched": candidates
     }

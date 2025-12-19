@@ -173,6 +173,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     const contextMatchesRef = React.useRef(contextMatches);
     const availableTagsRef = React.useRef(availableTags);
     const onNavigateRef = React.useRef(onNavigate);
+    const isSavingRef = React.useRef(false);
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
@@ -208,7 +209,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                 // REMOVED: Speechbubble override for comments (User Request 1)
                 // else if (tagInfo.type === 'comment') label = '💬';
             }
-            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}"></span>`;
+            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}" class="tag-node tag-node-${finalId}" style="--tag-label: '${label}'"></span>`;
         });
 
         // 3. Post-Pass: Merge Adjacent Tags (Combo Tags) (User Request 2)
@@ -351,11 +352,14 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                         },
                         'Mod-Enter': () => {
                             if (onSave && segmentId) {
-                                onSave(segmentId, this.editor.getHTML())
+                                // Block onBlur from firing a second save immediately
+                                isSavingRef.current = true;
+                                setTimeout(() => { isSavingRef.current = false; }, 500);
+
+                                onSave(segmentId, this.editor.getHTML());
+
                                 // User requested "Confirm & Next" behavior
                                 if (onNavigateRef.current) {
-                                    // Small delay to allow save state to settle or nice UX feeling?
-                                    // Immediate is better for power users.
                                     onNavigateRef.current('next');
                                 }
                                 return true
@@ -391,6 +395,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             }
         },
         onBlur: ({ editor }) => {
+            if (isSavingRef.current) return;
             if (onSave && segmentId) {
                 onSave(segmentId, editor.getHTML())
             }
@@ -402,6 +407,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onEditorReady) onEditorReady(editor);
 
             if (content && content !== editor.getHTML()) {
+                // console.log(`[Tiptap] Content Mismatch for ${segmentId || '?'}. Updating...`);
                 editor.commands.setContent(content, false, { preserveWhitespace: 'full' })
             }
         }

@@ -375,6 +375,7 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
     # Always split sentences, then repair tags across boundaries.
     
     segments_to_create = []
+    final_segments = []
 
     # 1. Split (using SemanticAligner which protects tags from breaking splitting logic)
     sentences = _split_sentences(full_text, context.get("segmentation_func"), lang=context.get("source_lang", "en"))

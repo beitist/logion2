@@ -17,6 +17,7 @@ load_dotenv()
 
 # Konfiguration aus .env
 from . import models
+from .config import get_default_model_id
 from sqlalchemy.orm import Session
 API_KEY = os.getenv("GOOGLE_API_KEY")
 if API_KEY:
@@ -181,7 +182,7 @@ def get_ai_response(project_title: str, user_message: str, history: list):
                 chat_history.append({"role": role, "parts": parts})
 
     # 2. Modell initialisieren mit System Instruction
-    model = genai.GenerativeModel('gemini-2.0-flash', system_instruction=system_instruction)
+    model = genai.GenerativeModel(get_default_model_id(), system_instruction=system_instruction)
 
     # 3. Chat starten
     chat = model.start_chat(history=chat_history)
@@ -228,7 +229,7 @@ def generate_description(data: dict):
         return {"suggestion": "Error: No API Key configured."}
 
     # 1. Setup Model
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=API_KEY, temperature=0.7)
+    llm = ChatGoogleGenerativeAI(model=get_default_model_id(), google_api_key=API_KEY, temperature=0.7)
     
     # 2. Setup Parser
     parser = JsonOutputParser(pydantic_object=DescriptionSuggestion)
@@ -295,7 +296,7 @@ def generate_indicator_suggestion(data: dict):
     if not API_KEY:
         return {"description": "Error: No API Key", "reasoning": "Configuration missing"}
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=API_KEY, temperature=0.7)
+    llm = ChatGoogleGenerativeAI(model=get_default_model_id(), google_api_key=API_KEY, temperature=0.7)
     parser = JsonOutputParser(pydantic_object=IndicatorSuggestion)
 
     mode = data.get('mode', 'create') # create, find, match
@@ -380,7 +381,7 @@ def analyze_risks(data: dict):
     if not API_KEY:
         return {"risks": []}
         
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=API_KEY, temperature=0.7)
+    llm = ChatGoogleGenerativeAI(model=get_default_model_id(), google_api_key=API_KEY, temperature=0.7)
     parser = JsonOutputParser(pydantic_object=RiskAnalysisResult)
     
     template = """
@@ -429,7 +430,7 @@ def generate_plural(word: str, db: Session = None):
     if not API_KEY:
         return {"plural": word + "s", "language": "unknown"} # Fallback
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=API_KEY, temperature=0.1)
+    llm = ChatGoogleGenerativeAI(model=get_default_model_id(), google_api_key=API_KEY, temperature=0.1)
     parser = JsonOutputParser(pydantic_object=PluralResponse)
 
     template = """
@@ -485,7 +486,7 @@ def improve_narrative_text(data: dict):
     if not API_KEY:
         return {"improved_text": data.get('text', ''), "reasoning": "Error: No API Key configured."}
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=API_KEY, temperature=0.7)
+    llm = ChatGoogleGenerativeAI(model=get_default_model_id(), google_api_key=API_KEY, temperature=0.7)
     parser = JsonOutputParser(pydantic_object=NarrativeImprovementResponse)
 
     # Context Extraction

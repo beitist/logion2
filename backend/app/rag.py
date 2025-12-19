@@ -19,6 +19,7 @@ import numpy as np
 
 # Use shared parser
 from .parser import parse_docx
+from .config import get_default_model_id
 
 load_dotenv()
 
@@ -581,10 +582,13 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # Return Top 5 for Display
     return final_matches[:5]
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name="gemini-2.0-flash", custom_prompt="", tags=None):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None):
     """
     Generates a draft translation using aligned context.
     """
+    if not model_name:
+        model_name = get_default_model_id()
+
     # 1. Retrieve Context
     matches = search_context_for_segment(segment_text, project_id, db)
     
@@ -760,7 +764,7 @@ def generate_project_drafts(project_id: str):
         segments = db.query(Segment).filter(Segment.project_id == project_id).all()
         config = project.config or {}
         ai_settings = config.get("ai_settings", {})
-        model = ai_settings.get("model", "gemini-2.0-flash")
+        model = ai_settings.get("model") or get_default_model_id()
         custom_prompt = ai_settings.get("custom_prompt", "")
         
         print(f"Generating drafts for project {project_id} (Model: {model})...")
