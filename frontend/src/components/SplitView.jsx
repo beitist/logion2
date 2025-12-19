@@ -232,6 +232,8 @@ export function SplitView({ projectId, onBack }) {
         return hydrated;
     };
 
+
+
     const handleSave = async (id, htmlContent) => {
         // console.log("Saving segment", id); // Debug removed
         setSavingId(id);
@@ -844,7 +846,11 @@ export function SplitView({ projectId, onBack }) {
                                 ) : activeSettingsTab === 'rag' ? (
                                     <RAGSettingsTab project={project} onUpdate={setProject} />
                                 ) : activeSettingsTab === 'ai' ? (
-                                    <AISettingsTab project={project} onUpdate={setProject} />
+                                    <AISettingsTab
+                                        project={project}
+                                        onUpdate={setProject}
+                                        onQueueAll={() => queueSegments(segments.map(s => s.id))}
+                                    />
                                 ) : activeSettingsTab === 'glossary' ? (
                                     <GlossarySettingsTab project={project} onUpdate={setProject} />
                                 ) : activeSettingsTab === 'stats' ? (
@@ -1081,7 +1087,7 @@ export function SplitView({ projectId, onBack }) {
 
                                     <div className="flex-grow">
                                         <TiptapEditor
-                                            content={hydrateContent(seg.target_content, seg.tags)}
+                                            content={hydrateContent(seg.target_content || seg.context_matches?.find(m => m.type === 'mt')?.content, seg.tags)}
                                             segmentId={seg.id}
                                             availableTags={seg.tags}
                                             contextMatches={seg.context_matches || (seg.metadata && seg.metadata.context_matches)}

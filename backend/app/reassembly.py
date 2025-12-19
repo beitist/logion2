@@ -80,7 +80,7 @@ def _inject_comments(doc: Document, segments: List[SegmentInternal]):
 def _inject_footnotes(doc: Document, segments: List[SegmentInternal]):
     """
     Updates the footnotes.xml part of the document with translated text.
-    Similar to comments strategy.
+    Uses _inject_tagged_text to preserve formatting/links.
     """
     footnote_segs = {s.metadata["footnote_id"]: s for s in segments if s.metadata.get("type") == "footnote"}
     
@@ -111,66 +111,60 @@ def _inject_footnotes(doc: Document, segments: List[SegmentInternal]):
                  seg = footnote_segs[fid]
                  target_text = seg.target_content if seg.target_content is not None else seg.source_text
                  
-                 # Replace content (Flattened)
+                 # 1. Clear existing content (paragraphs)
                  for child in list(footnote):
                      if child.tag == qn('w:p'):
                         footnote.remove(child)
                  
-                 # Create proper paragraph structure with style if needed
-                 # Footnote Text style usually
+                 # 2. Create new Paragraph
+                 # We need to wrap it in a python-docx Paragraph object to use our helper
+                 # But we are operating on lxml elements here.
+                 # _inject_tagged_text expects a docx.text.paragraph.Paragraph!
+                 
+                 # Trick: We can create a dummy docx Paragraph wrapper around our new element?
+                 # element = etree.SubElement(footnote, qn('w:p'))
+                 # para = docx.text.paragraph.Paragraph(element, part) 
+                 # We need 'part' (footnotes_part) which is a Part object.
+                 
                  wp = etree.SubElement(footnote, qn('w:p'))
+                 # Set style? FootnoteText is standard.
+                 pPr = etree.SubElement(wp, qn('w:pPr'))
+                 pStyle = etree.SubElement(pPr, qn('w:pStyle'))
+                 pStyle.set(qn('w:val'), 'FootnoteText')
+
+                 # Wrap in docx Object
+                 from docx.text.paragraph import Paragraph
+                 # footnotes_part is a regular Part, but Paragraph expects a parent? 
+                 # actually Paragraph(element, parent)
+                 # parent is usually the defined parent object (Body, Cell etc).
+                 # We can pass None or a mock if _inject_tagged_text only uses .add_run / .clear_content
+                 # _inject_tagged_text uses: paragraph._element, paragraph.add_run()
+                 # .add_run() needs self._parent to be valid?
+                 # Let's check docx source code mental model...
+                 # add_run creates Run(r, self). It appends r to p element.
+                 # It doesn't seem to strictly require parent for basic operations.
                  
-                 # Optional: Set style
-                 # pStyle = etree.SubElement(wp, qn('w:pPr'))
-                 # pStyleVal = etree.SubElement(pStyle, qn('w:pStyle'))
-                 # pStyleVal.set(qn('w:val'), 'FootnoteText')
+                 # Let's try constructing it with the part as parent (standard behavior usually)
+                 proxy_para = Paragraph(wp, footnotes_part)
                  
-                 wr = etree.SubElement(wp, qn('w:r'))
-                 # Add Footnote Reference char if this is the first run? 
-                 # Usually footnotes start with <w:r><w:footnoteRef/></w:r>
-                 # We should preserve the reference marker! 
-                 # Our simple "remove all paragraphs" logic destroys the footnote reference marker.
-                 # The marker is usually in the first run of the first paragraph.
+                 # 3. Inject Content
+                 _inject_tagged_text(proxy_para, target_text, seg.tags)
                  
-                 # Improved strategy:
-                 # Iterate existing paragraphs. Find the one with text?
-                 # Footnotes structure:
-                 # <w:p>
-                 #   <w:pPr>...</w:pPr>
-                 #   <w:r><w:footnoteRef/></w:r>
-                 #   <w:r><w:t>Actual text</w:t></w:r>
-                 # </w:p>
+                 # 4. Prepend Footnote Reference
+                 # <w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r>
+                 # We insert this at the beginning of the paragraph element children
                  
-                 # MVP Fix: Re-create the reference.
-                 wr_ref = etree.SubElement(wp, qn('w:r'))
-                 etree.SubElement(wr_ref, qn('w:rPr')).append(etree.Element(qn('w:rStyle'), {qn('w:val'): 'FootnoteReference'}))
-                 etree.SubElement(wr_ref, qn('w:footnoteRef'))
-                 # Actually w:footnoteRef usually is solitary?
-                 # Let's clean up logic:
-                 # We insert a run with the text AFTER the reference?
-                 # OR simpler: Find existing w:t elements and replace their text, 
-                 # if multiple w:t, join them or clear subsequent ones.
+                 ref_run = etree.Element(qn('w:r'))
+                 ref_rPr = etree.SubElement(ref_run, qn('w:rPr'))
+                 ref_style = etree.SubElement(ref_rPr, qn('w:rStyle'))
+                 ref_style.set(qn('w:val'), 'FootnoteReference')
+                 etree.SubElement(ref_run, qn('w:footnoteRef'))
                  
-                 # Let's go with "Modify w:t" strategy for footnotes to preserve structure better.
-                 # This is safer than rebuilding the whole paragraph.
-                 
-                 # Remove rebuild logic above, use traversal.
-                 footnote.remove(wp) # cleanup my previous lines
-                 
-                 text_elements = footnote.findall('.//w:t', namespaces)
-                 if text_elements:
-                     # Set first text element to target_text
-                     text_elements[0].text = target_text
-                     # Clear others
-                     for t in text_elements[1:]:
-                         t.text = ""
+                 # Insert at correct position (after pPr if exists)
+                 if len(wp) > 0 and wp[0].tag == qn('w:pPr'):
+                     wp.insert(1, ref_run)
                  else:
-                     # No text found? Create one.
-                     # Fallback to appending a paragraph
-                     wp = etree.SubElement(footnote, qn('w:p'))
-                     wr = etree.SubElement(wp, qn('w:r'))
-                     wt = etree.SubElement(wr, qn('w:t'))
-                     wt.text = target_text
+                     wp.insert(0, ref_run)
 
                  updated_count += 1
                  
@@ -182,6 +176,8 @@ def _inject_footnotes(doc: Document, segments: List[SegmentInternal]):
             
     except Exception as e:
         print(f"Error updating footnotes: {e}")
+        import traceback
+        traceback.print_exc()
 
 def reassemble_docx(original_path: str, output_path: str, segments: List[SegmentInternal]):
     """
@@ -453,6 +449,15 @@ def _inject_tagged_text(paragraph, text, tags_map):
                                  
                     elif tag.type == 'comment':
                         active_style['highlight'] = not is_closing
+                    elif tag.type == 'highlight':
+                        if is_closing:
+                             active_style['highlight'] = False
+                        else:
+                             # Store specific color if available
+                             if tag.xml_attributes and 'color' in tag.xml_attributes:
+                                 active_style['highlight'] = tag.xml_attributes['color']
+                             else:
+                                 active_style['highlight'] = True
                     elif tag.type == 'shape' and not is_closing:
                         # Insert Shape
                         if preserved_shapes:
@@ -465,6 +470,25 @@ def _inject_tagged_text(paragraph, text, tags_map):
                             # Create a placeholder or ignore
                             run = paragraph.add_run("[MISSING SHAPE]")
                             run.font.color.rgb = docx.shared.RGBColor(255, 0, 0)
+                            
+                    # Reconstruct Hyperlinks
+                    elif tag.type == 'link':
+                         if is_closing:
+                             # Close hyperlink
+                             if 'hyperlink_el' in active_style:
+                                 active_style.pop('hyperlink_el')
+                         else:
+                             # Open Hyperlink
+                             # 1. Create w:hyperlink
+                             hyplink = docx.oxml.shared.OxmlElement('w:hyperlink')
+                             if tag.xml_attributes and 'rid' in tag.xml_attributes:
+                                 hyplink.set(qn('r:id'), tag.xml_attributes['rid'])
+                             
+                             # 2. Append to paragraph
+                             paragraph._element.append(hyplink)
+                             
+                             # 3. Set context
+                             active_style['hyperlink_el'] = hyplink
                         
             # Check HTML Tags
             else:
@@ -478,27 +502,80 @@ def _inject_tagged_text(paragraph, text, tags_map):
                    active_style['italic'] += -1 if is_closing else 1
                 elif lower_tag == 'u':
                    active_style['underline'] += -1 if is_closing else 1
-                
+                     
         else:
             # Generic Text
             
             # Helper to add run
             def add_styled_run(content):
-                run = paragraph.add_run(content)
-                if active_style['bold'] > 0: run.bold = True
-                if active_style['italic'] > 0: run.italic = True
-                if active_style['underline'] > 0: run.underline = True
-                if active_style['superscript']: run.font.superscript = True
-                if active_style['subscript']: run.font.subscript = True
-                
-                if 'color' in active_style:
-                     try:
-                         run.font.color.rgb = docx.shared.RGBColor.from_string(active_style['color'])
-                     except:
-                         pass # Warning: invalid color ignored
-                         
-                if active_style['highlight']: 
-                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                # context: where to add run?
+                # If inside hyperlink, add to hyperlink_el
+                if 'hyperlink_el' in active_style:
+                    parent = active_style['hyperlink_el']
+                    run = docx.oxml.shared.OxmlElement('w:r')
+                    t = docx.oxml.shared.OxmlElement('w:t')
+                    t.text = content
+                    # Space preserve
+                    if len(content.strip()) < len(content):
+                         t.set(qn('xml:space'), 'preserve')
+                    run.append(t)
+                    parent.append(run)
+                    
+                    # Apply styles to this new run
+                    # We need to construct rPr
+                    rPr = docx.oxml.shared.OxmlElement('w:rPr')
+                    has_style = False
+                    
+                    if active_style['bold'] > 0: 
+                        rPr.append(docx.oxml.shared.OxmlElement('w:b'))
+                        has_style = True
+                    if active_style['italic'] > 0: 
+                        rPr.append(docx.oxml.shared.OxmlElement('w:i'))
+                        has_style = True
+                    if active_style['underline'] > 0: 
+                        u = docx.oxml.shared.OxmlElement('w:u')
+                        u.set(qn('w:val'), 'single')
+                        rPr.append(u)
+                        has_style = True
+                    
+                    # Hyperlink style (usually Blue + Underline)
+                    # Use existing style if defined? "Hyperlink"
+                    rStyle = docx.oxml.shared.OxmlElement('w:rStyle')
+                    rStyle.set(qn('w:val'), 'Hyperlink')
+                    rPr.append(rStyle)
+                    has_style = True
+                        
+                    if has_style:
+                        run.append(rPr)
+
+                else:
+                    # Normal Run
+                    run = paragraph.add_run(content)
+                    if active_style['bold'] > 0: run.bold = True
+                    if active_style['italic'] > 0: run.italic = True
+                    if active_style['underline'] > 0: run.underline = True
+                    if active_style['superscript']: run.font.superscript = True
+                    if active_style['subscript']: run.font.subscript = True
+                    
+                    if 'color' in active_style:
+                         try:
+                             run.font.color.rgb = docx.shared.RGBColor.from_string(active_style['color'])
+                         except:
+                             pass 
+                             
+                    if active_style['highlight']: 
+                         # Parse highlight color or default to yellow
+                         hl_color = active_style['highlight']
+                         if isinstance(hl_color, str) and hl_color != 'True' and hl_color != '1' and hl_color != 'True':
+                              try:
+                                   if hasattr(WD_COLOR_INDEX, hl_color):
+                                        run.font.highlight_color = getattr(WD_COLOR_INDEX, hl_color)
+                                   else:
+                                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                              except:
+                                   run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                         else:
+                              run.font.highlight_color = WD_COLOR_INDEX.YELLOW
             
             # Handle [TAB]
             if "[TAB]" in token:

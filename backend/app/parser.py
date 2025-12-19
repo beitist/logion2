@@ -270,7 +270,15 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
         # 2. Hyperlink (w:hyperlink)
         elif tag_name == qn('w:hyperlink'):
             # Create a Link Tag wrapping the whole content
-            link_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True})
+            # We need to capture the relationship ID (r:id) to know the URL!
+            rid = child.get(qn('r:id'))
+            
+            # Helper to get URL from relationship if available
+            # We pass 'rid' in attributes so reassembly can try to re-link or at least we know it's a link.
+            # But wait, if we translate, the 'rid' points to original URL.
+            # We want to keep the same URL usually.
+            
+            link_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True, "rid": rid})
             tid = add_tag(link_tag)
             
             full_text += f"<{tid}>"
@@ -417,7 +425,7 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
             source_text=content,
             target_content=None, # Translation starts empty/null
             status="draft",
-            tags=tags if sub_index == 0 else {}, # Tags technically belong to the whole, but we only have them here if we didn't split.
+            tags=tags, # Pass tags to all segments so split parts can reference them
             metadata=seg_loc
         ))
 
@@ -473,6 +481,14 @@ def _extract_tags(run) -> List[TagModel]:
         if rgb:
             hex_color = str(rgb) # usually returns 'FF0000'
             found.append(TagModel(type="color", xml_attributes={"color": hex_color}))
+
+    # Highlighting
+    if run.font.highlight_color:
+        # highlight_color is an enum (WD_COLOR_INDEX)
+        # We store the value (integer or name?)
+        # Let's store the name if possible, or enum value.
+        # run.font.highlight_color returns WD_COLOR_INDEX member
+        found.append(TagModel(type="highlight", xml_attributes={"color": str(run.font.highlight_color)}))
             
     return found
 

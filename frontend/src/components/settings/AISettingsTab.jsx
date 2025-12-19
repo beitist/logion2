@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { updateProject, getAiModels, generateProjectDrafts } from '../../api/client';
 import { Zap, Command, RefreshCw, Save, Terminal } from 'lucide-react';
 
-export function AISettingsTab({ project, onUpdate }) {
+export function AISettingsTab({ project, onUpdate, onQueueAll }) {
     const [settings, setSettings] = useState({
         model: '',
         custom_prompt: '',
@@ -149,17 +149,17 @@ export function AISettingsTab({ project, onUpdate }) {
                         <div className="pt-2 border-t border-blue-200/50">
                             <button
                                 onClick={async () => {
-                                    if (!confirm("Start batch generation for ALL segments? This may take time.")) return;
+                                    if (!confirm("Start batch generation for ALL segments? This runs in your browser queue.")) return;
                                     try {
-                                        await generateProjectDrafts(project.id);
-                                        alert("Batch job started! Drafts will appear as they are ready. Please refresh periodically.");
+                                        if (onQueueAll) onQueueAll();
+                                        alert("Batch job queued! Segments will fill in one by one.");
                                     } catch (e) {
                                         alert("Error: " + e.message);
                                     }
                                 }}
                                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium"
                             >
-                                <RefreshCw size={14} /> Generate All Drafts Now
+                                <RefreshCw size={14} /> Queue All Drafts Now
                             </button>
                         </div>
                     )}

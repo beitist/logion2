@@ -412,8 +412,10 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
     
     # Extract tags for Tab handling
     tags_data = None
+    existing_matches = None
     if segment.metadata_json:
         tags_data = segment.metadata_json.get("tags")
+        existing_matches = segment.metadata_json.get("context_matches")
 
     result = generate_segment_draft(
         segment_text=segment.source_content,
@@ -423,7 +425,8 @@ def generate_draft_endpoint(segment_id: str, db: Session = Depends(get_db)):
         db=db,
         threshold=threshold,
         model_name=model_name,
-        tags=tags_data
+        tags=tags_data,
+        cached_matches=existing_matches
     )
     
     # Update Segment with Draft and Matches

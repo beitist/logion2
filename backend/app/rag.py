@@ -582,49 +582,45 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # Return Top 5 for Display
     return final_matches[:5]
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None, cached_matches=None):
     """
     Generates a draft translation using aligned context.
+    If cached_matches is provided, it skips expensive retrieval.
     """
     if not model_name:
         model_name = get_default_model_id()
 
     # 1. Retrieve Context
-    matches = search_context_for_segment(segment_text, project_id, db)
+    matches = []
     
-    # 1.1 Fetch Segment Object for Tag Access (needed for Tab Cleanups)
-    # We need to find the segment in DB to get its metadata/tags
-    # We don't have segment_id passed in? 
-    # Actually segment_text isn't enough to find unique segment.
-    # But this function is called by `generate_draft_endpoint` which has `segment` object.
-    # Refactor: Pass `segment` object or `tags` dict to this function?
-    # Modifying signature to accept Optional[Dict] tags or Segment object.
-    # But for now, let's just find the segment if possible or rely on passed arguments.
-    # Since I cannot easily change all callers without checking them, 
-    # and I see `generate_segment_draft` signature has `segment_text`.
-    
-    # Strategy: Add `tags` argument to `generate_segment_draft`
-    pass
-
-    # 1.5 Glossary Matches
-    gloss_hits = []
-    try:
-        matcher = GlossaryMatcher(project_id, db)
-        gloss_hits = matcher.find_matches(segment_text)
+    # Use Cache if Available
+    if cached_matches and len(cached_matches) > 0:
+        matches = cached_matches
+        # Ensure we don't duplicate existing MT if re-running
+        matches = [m for m in matches if m.get('type') != 'mt']
+    else:
+        # Expensive DB Search
+        matches = search_context_for_segment(segment_text, project_id, db)
         
-        for g in gloss_hits:
-            # {source, target, note}
-            matches.insert(0, {
-                 "id": f"glossary-{compute_hash(g['source'])}",
-                 "content": f"{g['source']} -> {g['target']}", # Display format
-                 "filename": "Glossary", 
-                 "type": "glossary",
-                 "category": "term",
-                 "score": 100,
-                 "note": g.get("note")
-            })
-    except Exception as e:
-        print(f"Glossary lookup error: {e}")
+        # 1.5 Glossary Matches
+        gloss_hits = []
+        try:
+            matcher = GlossaryMatcher(project_id, db)
+            gloss_hits = matcher.find_matches(segment_text)
+            
+            for g in gloss_hits:
+                # {source, target, note}
+                matches.insert(0, {
+                     "id": f"glossary-{compute_hash(g['source'])}",
+                     "content": f"{g['source']} -> {g['target']}", # Display format
+                     "filename": "Glossary", 
+                     "type": "glossary",
+                     "category": "term",
+                     "score": 100,
+                     "note": g.get("note")
+                })
+        except Exception as e:
+            print(f"Glossary lookup error: {e}")
     
     # 2. Check for Exact Match (Pre-Translation Optimization)
     # CRITICAL: Ignore glossary terms (they have score 100 but are not full translations)
