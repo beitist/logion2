@@ -27,12 +27,8 @@ function App() {
     // Editor View
     return (
       <div className="h-screen flex flex-col">
-        <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-4">
-          <button onClick={handleBack} className="text-sm text-gray-500 hover:text-gray-900">&larr; Back to Projects</button>
-          {/* We could show project name here if we fetched it or passed it */}
-        </div>
         <div className="flex-1 overflow-hidden">
-          <SplitView projectId={projectId} />
+          <SplitView projectId={projectId} onBack={handleBack} />
         </div>
       </div>
     )

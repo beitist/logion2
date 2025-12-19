@@ -12,12 +12,12 @@ import { GlossarySettingsTab } from './settings/GlossarySettingsTab';
 import { StatisticsSettingsTab } from './settings/StatisticsSettingsTab';
 import { GlossaryAddModal } from './GlossaryAddModal';
 
-import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy } from 'lucide-react';
+import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft } from 'lucide-react';
 import './TiptapStyles.css'; // Ensure invisible character styles are available
 import { LogConsole } from './LogConsole';
 import { ShortcutsPanel } from './ShortcutsPanel';
 
-export function SplitView({ projectId }) {
+export function SplitView({ projectId, onBack }) {
     // ... existing state ...
     const [segments, setSegments] = useState([]);
     const [project, setProject] = useState(null);
@@ -144,6 +144,21 @@ export function SplitView({ projectId }) {
                     // Direct call is fine as we set segmentsRef above.
                     // But queueSegments uses segmentsRef.
                     setTimeout(() => queueSegments(initialIds), 100);
+                }
+
+                // Auto-Focus First Draft Segment
+                if (s.length > 0) {
+                    const firstDraft = s.find(seg => seg.status === 'draft');
+                    if (firstDraft) {
+                        setTimeout(() => {
+                            const el = document.getElementById(`editor-${firstDraft.id}`);
+                            if (el) {
+                                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                // Also set as active for AI/Shortcuts context
+                                setActiveSegmentId(firstDraft.id);
+                            }
+                        }, 500); // Slight delay for rendering
+                    }
                 }
             } catch (err) {
                 console.error(err);
@@ -661,10 +676,34 @@ export function SplitView({ projectId }) {
     return (
         <div className="h-screen flex flex-col">
             <header className="p-4 bg-gray-100 border-b flex justify-between items-center">
-                <h1 className="font-bold text-lg text-gray-800 flex items-center gap-2">
-                    <span className="opacity-50">Project:</span> {project?.name || project?.filename}
-                </h1>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-3 w-1/3">
+                    <button
+                        onClick={onBack}
+                        className="p-1.5 rounded-full hover:bg-gray-200 text-gray-500 hover:text-gray-900 transition-colors"
+                        title="Back to Projects"
+                    >
+                        <ArrowLeft size={20} />
+                    </button>
+                    <h1 className="font-bold text-lg text-gray-800 flex items-center gap-2">
+                        <span className="opacity-50">Project:</span> {project?.name || project?.filename}
+                    </h1>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="flex flex-col items-center justify-center w-1/3 max-w-xs mx-4">
+                    <div className="flex justify-between w-full text-[10px] text-gray-500 mb-1 uppercase tracking-wider font-semibold">
+                        <span>Progress</span>
+                        <span>{segments.filter(s => s.status === 'translated').length} / {segments.length}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                            className="bg-green-500 h-full rounded-full transition-all duration-500 ease-out"
+                            style={{ width: `${segments.length > 0 ? (segments.filter(s => s.status === 'translated').length / segments.length) * 100 : 0}%` }}
+                        ></div>
+                    </div>
+                </div>
+
+                <div className="flex gap-2 w-1/3 justify-end">
                     <button
                         onClick={() => setShowConsole(!showConsole)}
                         className={`p-2 rounded hover:bg-gray-200 transition-colors ${showConsole ? 'bg-gray-800 text-green-400' : 'text-gray-600'}`}

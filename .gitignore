@@ -45,3 +45,4 @@ venv/*
 resource/*
 resource
 
+*.txt

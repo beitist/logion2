@@ -8,13 +8,19 @@
         },
         {
             "id": "gemini-2.5-flash",
-            "name": "Gemini 2.5 Flash (Fastest)",
+            "name": "Gemini 2.5 Flash (Fast)",
             "provider": "google",
             "context_window": 1000000
         },
         {
             "id": "gemini-3-pro-preview",
             "name": "Gemini 3 Pro (Preview, top model, most expensive)",
+            "provider": "google",
+            "context_window": 1000000
+        },
+        {
+            "id": "gemini-3-flash-preview",
+            "name": "Gemini 3 Flash (Fast Preview)",
             "provider": "google",
             "context_window": 1000000
         }
