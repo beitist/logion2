@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { updateProject } from '../../api/client';
-import { Settings, Save, Globe } from 'lucide-react';
+import { updateProject, reinitializeProject } from '../../api/client';
+import { Settings, Save, Globe, RefreshCw } from 'lucide-react';
 
 export function ProjectSettingsTab({ project, onUpdate }) {
     const [formData, setFormData] = useState({
@@ -40,6 +40,19 @@ export function ProjectSettingsTab({ project, onUpdate }) {
             alert("Project Settings saved!");
         } catch (e) {
             alert("Error saving settings: " + e.message);
+        }
+    };
+
+    const handleReinitialize = async () => {
+        if (!confirm("This will re-parse the source file. Existing translations will be preserved, but any segments not in the source will be deleted. Continue?")) return;
+        try {
+            await reinitializeProject(project.id);
+            alert("Project reinitialized successfully!");
+            // Trigger parent update if needed, but project object itself might not change much visually besides segments.
+            // Maybe reload page or refetch segments? 
+            if (onUpdate) onUpdate(project); // Optimistic
+        } catch (e) {
+            alert("Error: " + e.message);
         }
     };
 
@@ -106,6 +119,27 @@ export function ProjectSettingsTab({ project, onUpdate }) {
                     />
                 </div>
 
+            </div>
+
+            {/* 4. Advanced Actions */}
+            <div className="pt-4 border-t border-gray-100">
+                <h3 className="text-sm font-medium text-gray-900 mb-3">Advanced Actions</h3>
+
+                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
+                    <div>
+                        <label className="block text-sm font-bold text-gray-900">Reinitialize Source</label>
+                        <p className="text-xs text-gray-500 max-w-sm">
+                            Re-parse the source file to pick up external changes.
+                            Preserves existing translations where source text matches.
+                        </p>
+                    </div>
+                    <button
+                        onClick={handleReinitialize}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50 transition-colors shadow-sm"
+                    >
+                        <RefreshCw size={14} /> Reinitialize
+                    </button>
+                </div>
             </div>
 
             <div className="pt-4 border-t border-gray-100 flex justify-end">

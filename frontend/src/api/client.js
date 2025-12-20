@@ -107,6 +107,14 @@ export async function reingestProject(projectId) {
     return res.json();
 }
 
+export async function reinitializeProject(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/reinitialize`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to reinitialize project");
+    return res.json();
+}
+
 // Glossary API
 
 export async function addGlossaryTerm(projectId, source, target, note) {

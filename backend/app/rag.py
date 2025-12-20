@@ -33,7 +33,8 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 # --- LOAD LOCAL MODELS ---
 # We load them once at startup.
 # Check for MPS (Apple Silicon)
-device = "mps" if torch.backends.mps.is_available() else "cpu"
+# device = "mps" if torch.backends.mps.is_available() else "cpu"
+device = "cpu" # Force CPU due to MPS stability issues (SIGABRT in HeapAllocator)
 logger.info(f"Loading Models on {device}...")
 
 try:

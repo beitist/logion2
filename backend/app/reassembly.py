@@ -285,14 +285,25 @@ def reassemble_docx(original_path: str, output_path: str, segments: List[Segment
     # We now pass the full list of segments to _inject_into_container and let it group them properly.
     
     # 1. Body
-    _inject_into_container(doc, {"type": "body"}, segments)
+    # Filter for Shape Segments
+    shape_segments = [s for s in segments if s.metadata.get("type") == "shape"]
+    shape_map = {} # shape_id -> List[Segments]
+    
+    for s in shape_segments:
+        sid = s.metadata.get("shape_id")
+        if not sid: continue
+        if sid not in shape_map:
+             shape_map[sid] = []
+        shape_map[sid].append(s)
+        
+    _inject_into_container(doc, {"type": "body"}, segments, shape_map)
     
     # 2. Sections
     for s_idx, section in enumerate(doc.sections):
         if section.header:
-            _inject_into_container(section.header, {"type": "header", "section_index": s_idx}, segments)
+            _inject_into_container(section.header, {"type": "header", "section_index": s_idx}, segments, shape_map)
         if section.footer:
-             _inject_into_container(section.footer, {"type": "footer", "section_index": s_idx}, segments)
+             _inject_into_container(section.footer, {"type": "footer", "section_index": s_idx}, segments, shape_map)
 
     # 3. Comments (Update comments.xml)
     _inject_comments(doc, segments)
@@ -305,7 +316,7 @@ def reassemble_docx(original_path: str, output_path: str, segments: List[Segment
 
     doc.save(output_path)
 
-def _inject_into_container(container, base_metadata, source_segments):
+def _inject_into_container(container, base_metadata, source_segments, shape_map=None):
     # source_segments: List[SegmentInternal]
     
     # Helper to merge segments targeting the same paragraph
@@ -424,7 +435,7 @@ def _inject_into_container(container, base_metadata, source_segments):
                 # REVISION: `get_merged_content` concatenates raw target_contents.
                 # If we modify `get_merged_content` to apply restoration internally loop?
                 
-                _inject_tagged_text(para, text, tags)
+                _inject_tagged_text(para, text, tags, shape_map)
                 with open("debug_reassembly_keys.log", "a") as f: f.write(f"Inject Para {key}: OK\n")
             except Exception as e:
                 print(f"Error injecting segment {key}: {e}")
@@ -446,7 +457,7 @@ def _inject_into_container(container, base_metadata, source_segments):
                     if key in grouped_segments:
                         try:
                             text, tags = get_merged_content(grouped_segments[key])
-                            _inject_tagged_text(para, text, tags)
+                            _inject_tagged_text(para, text, tags, shape_map)
                             with open("debug_reassembly_keys.log", "a") as f: f.write(f"Inject Table {key}: OK\n")
                         except Exception as e:
                             print(f"Error injecting table segment {key}: {e}")
@@ -464,7 +475,7 @@ def _inject_segment(para, segment):
     # RE-INJECT
     _inject_tagged_text(para, target_text, segment.tags)
 
-def _inject_tagged_text(paragraph, text, tags_map):
+def _inject_tagged_text(paragraph, text, tags_map, shape_map=None):
     """
     Parses 'text' which may contain:
     1. Custom Tags: <1>...</1> (mapped to properties via tags_map)
@@ -559,6 +570,53 @@ def _inject_tagged_text(paragraph, text, tags_map):
                         # Insert Shape
                         if preserved_shapes:
                             shape_el = preserved_shapes.pop(0)
+                            
+                            # Handle Shape Injection if this tag has an ID
+                            if shape_map and tag.xml_attributes and 'id' in tag.xml_attributes:
+                                sid = tag.xml_attributes['id']
+                                if sid in shape_map:
+                                    # We have segments for this shape!
+                                    t_segs = shape_map[sid]
+                                    # Sort by p_index
+                                    t_segs.sort(key=lambda x: x.metadata.get("p_index", 0))
+                                    
+                                    # Find textboxes in this shape
+                                    # Shape might be a Group or Single
+                                    namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                                    txbx_contents = shape_el.findall('.//w:txbxContent', namespaces)
+                                    
+                                    # Heuristic: We map segments to paragraphs in order.
+                                    # Flatten all paragraphs in all textboxes found?
+                                    # Usually 1 shape = 1 textbox.
+                                    # But shape group?
+                                    
+                                    global_p_idx = 0
+                                    
+                                    for txbx in txbx_contents:
+                                         # Iterate paragraphs
+                                         for para in txbx.findall('.//w:p', namespaces):
+                                             # Find segment for this index
+                                             # t_segs is sorted.
+                                             # We can just iterate t_segs?
+                                             # BUT we must ensure mapping is correct if gaps exist.
+                                             # Let's map by p_index.
+                                             
+                                             matching_seg = next((s for s in t_segs if s.metadata.get("p_index") == global_p_idx), None)
+                                             
+                                             if matching_seg:
+                                                 target_t = matching_seg.target_content if matching_seg.target_content is not None else matching_seg.source_text
+                                                 
+                                                 # Create a proxy paragraph for injection
+                                                 from docx.text.paragraph import Paragraph
+                                                 # Parent doesn't matter much for injection util
+                                                 proxy_p = Paragraph(para, None)
+                                                 
+                                                 # Recursive Injection!
+                                                 # Note: Nested shapes are not supported yet (shape_map passed as None to prevent strict infinite loops, though logically ok)
+                                                 _inject_tagged_text(proxy_p, target_t, matching_seg.tags, None)
+                                                 
+                                             global_p_idx += 1
+
                             # Shape must be in a run
                             run = paragraph.add_run()
                             run._element.append(shape_el)

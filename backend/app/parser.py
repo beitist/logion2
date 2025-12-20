@@ -40,7 +40,9 @@ def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List
     context = {
         "comments_map": comments_map,
         "segmentation_func": segmentation_func,
-        "source_lang": source_lang
+        "segmentation_func": segmentation_func,
+        "source_lang": source_lang,
+        "extra_segments": []
     }
 
     # 1. Body
@@ -92,6 +94,10 @@ def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List
     # 5. Endnotes
     segments.extend(_extract_endnotes(doc, context))
     
+    # 6. Extra Segments (Shapes/Textboxes)
+    if "extra_segments" in context:
+         segments.extend(context["extra_segments"])
+
     return segments
 
 def _extract_footnotes(doc, context) -> List[SegmentInternal]:
@@ -194,8 +200,7 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
     
     # 1. Paragraphs
     for i, para in enumerate(container.paragraphs):
-        if not para.text.strip():
-            continue
+        # REMOVED: if not para.text.strip(): continue (Skips shapes/images!)
         
         # Merge base_metadata with specific location
         loc = base_metadata.copy()
@@ -249,8 +254,7 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
                 # but we will iterate the cell's paragraphs.
                 
                 for p_idx, para in enumerate(cell.paragraphs):
-                    if not para.text.strip():
-                        continue
+                    # REMOVED: if not para.text.strip(): continue
                         
                     loc = base_metadata.copy()
                     # We override "type" to indicate it's in a table, OR we keep parent type?
@@ -563,6 +567,42 @@ def _extract_tags(run_element) -> List[TagModel]:
             
     return found
 
+def _handle_shape_element(shape_element, add_tag_func, context) -> str:
+    # NEW: Drill down for Textboxes (w:txbxContent)
+    found_textbox = False
+    shape_id = None
+    
+    # Check for textbox content
+    namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    txbx_contents = shape_element.findall('.//w:txbxContent', namespaces)
+    
+    if txbx_contents:
+        shape_id = str(uuid.uuid4())
+        found_textbox = True
+        
+        for txbx in txbx_contents:
+            # Iterate paragraphs
+            for i, para in enumerate(txbx.findall('.//w:p', namespaces)):
+                loc = {
+                    "type": "shape",
+                    "shape_id": shape_id,
+                    "p_index": i
+                }
+                
+                sub_segments = _process_paragraph(para, loc, context)
+                if sub_segments:
+                    context["extra_segments"].extend(sub_segments)
+
+    # Create shape tag
+    if found_textbox:
+        shape_tag = TagModel(type="shape", content="[SHAPE]", xml_attributes={"id": shape_id})
+    else:
+        shape_tag = TagModel(type="shape", content="[SHAPE]")
+        
+    tid = add_tag_func(shape_tag)
+    return f"<{tid}></{tid}>"
+
+
 def _process_run_element(run_element, add_tag_func, context) -> str:
     """
     Helper to process a w:r element.
@@ -635,11 +675,34 @@ def _process_run_element(run_element, add_tag_func, context) -> str:
 
         elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
              # Handle Shapes/Images
-             # We create a placeholder tag.
-             # In reassembly, we will attempt to restore the shape from the original doc.
-             shape_tag = TagModel(type="shape", content="[SHAPE]")
-             tid = add_tag_func(shape_tag)
-             final_content += f"<{tid}></{tid}>"
+             final_content += _handle_shape_element(child, add_tag_func, context)
+
+        elif tag_name == "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent":
+             # Handle AlternateContent (e.g. Choice vs Fallback)
+             # usually w:drawing in Choice, w:pict in Fallback
+             # We prefer Choice.
+             mc_ns = {'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006', 'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+             
+             choice = child.find('mc:Choice', mc_ns)
+             fallback = child.find('mc:Fallback', mc_ns)
+             
+             if choice is not None:
+                 # Iterate all children, as choice might contain multiple drawings or other elements
+                 for child_el in choice:
+                     if child_el.tag == qn('w:drawing') or child_el.tag == qn('w:pict'):
+                         final_content += _handle_shape_element(child_el, add_tag_func, context)
+             
+             if not final_content and fallback is not None:
+                 for child_el in fallback:
+                     if child_el.tag == qn('w:drawing') or child_el.tag == qn('w:pict'):
+                          final_content += _handle_shape_element(child_el, add_tag_func, context)
+
+             # if target_el is not None:
+             #    # Recursive call to our own logic helper?
+             #    # Or just call _handle_shape(target_el)?
+             #    # We need to reuse the logic below.
+             #    # Let's refactor the logic below into a local helper or function.
+             #    final_content += _handle_shape_element(target_el, add_tag_func, context)
 
         elif tag_name == qn('w:footnoteReference'):
             fid = child.get(qn('w:id'))

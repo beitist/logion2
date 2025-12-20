@@ -195,10 +195,128 @@ def get_project_segments(project_id: str, db: Session = Depends(get_db)):
         
     return response_list
 
+@router.post("/{project_id}/reinitialize", response_model=ProjectResponse)
+def reinitialize_project(project_id: str, db: Session = Depends(get_db)):
+    """
+    Re-parses the source file (e.g. after internal update or bugfix)
+    but preserves existing translations by matching Source Text.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # 1. Find Source File
+    source_record = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project.id,
+        ProjectFile.category == ProjectFileCategory.source.value,
+        ProjectFile.filename.endswith(".docx")
+    ).first()
+    
+    if not source_record:
+        raise HTTPException(status_code=400, detail="No source DOCX file found to reinitialize.")
+
+    # 2. Download and Parse Fresh
+    temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_reinit_{project_id}.docx")
+    try:
+        if os.path.exists(temp_parse_path):
+             os.remove(temp_parse_path)
+             
+        # Download
+        from ..storage import download_file
+        download_file(source_record.file_path, temp_parse_path)
+        
+        # Parse
+        new_segments_internal = parse_docx(temp_parse_path, source_lang=project.source_lang)
+        
+    except Exception as e:
+        logger.error(f"Reinitialization failed during parse: {e}")
+        raise HTTPException(status_code=500, detail=f"Reinitialization parsing failed: {e}")
+    finally:
+         if os.path.exists(temp_parse_path):
+             os.remove(temp_parse_path)
+
+    # 3. Fetch Old Segments for merging
+    old_segments = db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
+    
+    # Map Source Text -> Queue of Old Segments (FIFO for duplicates)
+    old_map = defaultdict(deque)
+    for seg in old_segments:
+        old_map[seg.source_content].append(seg)
+        
+    # 4. Merge Logic
+    # We create new DB objects based on new_segments_internal structure,
+    # but pulling Target Content/Status from old_map.
+    
+    final_db_segments = []
+    
+    for i, new_seg_int in enumerate(new_segments_internal):
+        # Default fresh state
+        target_content = None
+        status = "draft"
+        
+        # Check for match
+        if old_map[new_seg_int.source_text]:
+            # Pop the first matching old segment (FIFO)
+            match = old_map[new_seg_int.source_text].popleft()
+            
+            # Transfer Translation
+            target_content = match.target_content
+            status = match.status
+            
+            # NOTE: We do NOT transfer metadata/tags from the old segment blindly.
+            # The new parse might have fixed tags (e.g. shape IDs).
+            # We assume if source text matches, the translation is valid.
+        
+        # Prepare DB Object
+        seg_dump = new_seg_int.model_dump()
+        
+        new_db_seg = Segment(
+            id=new_seg_int.segment_id, # Use the NEW ID from parser
+            project_id=project_id,
+            index=i,
+            source_content=new_seg_int.source_text,
+            target_content=target_content,
+            status=status,
+            metadata_json=seg_dump
+        )
+        final_db_segments.append(new_db_seg)
+
+    # 5. Atomic Replace
+    try:
+        # Delete old
+        db.query(Segment).filter(Segment.project_id == project_id).delete()
+        
+        # Insert new
+        db.add_all(final_db_segments)
+        
+        # Update Project Status? Keep as is or set to processing?
+        # logic: if it was review, stays review. if processing, stays processing.
+        
+        db.commit()
+        db.refresh(project)
+        
+        # Trigger RAG Re-ingest?
+        # If segments changed meaningfully, RAG might be stale. 
+        # But RAG is based on ContextChunks (Files).
+        # Theoretically we should re-ingest the file to RAG too if content structure changed.
+        # Let's trigger background ingestion just in case.
+        from ..rag import reingest_project
+        # reingest_project(project.id) # synchronous for safety or bg?
+        # Let's skip automatic RAG re-ingest for this specific scope unless requested, 
+        # to keep it fast. The user asked for "reinitialise source". 
+        
+        return project
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"DB Error during reinitialization: {e}")
+        raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
+
 from fastapi.responses import FileResponse
 from ..reassembly import reassemble_docx
 import os
 import json # Added import for json
+from collections import defaultdict, deque # Added for reinitialization merge logic
 from ..schemas import SegmentInternal, TagModel # Added imports for SegmentInternal, TagModel
 
 @router.get("/{project_id}/export")
