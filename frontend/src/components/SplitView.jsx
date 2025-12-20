@@ -1155,7 +1155,9 @@ export function SplitView({ projectId, onBack }) {
                                                                         </span>
                                                                     </div>
                                                                     <div className="flex items-center gap-1 text-[9px] text-gray-400 font-mono" title={match.filename}>
-                                                                        <span className="truncate max-w-[100px]">{match.filename}</span>
+                                                                        <span className="truncate max-w-[100px]">
+                                                                            {isMT ? (project?.config?.ai_settings?.model || match.filename) : match.filename}
+                                                                        </span>
                                                                     </div>
                                                                 </div>
 
