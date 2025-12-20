@@ -247,7 +247,11 @@ def reinitialize_project(project_id: str, db: Session = Depends(get_db)):
     # We create new DB objects based on new_segments_internal structure,
     # but pulling Target Content/Status from old_map.
     
+    logger.info(f"Reinitializing Project {project_id}: Parsed {len(new_segments_internal)} new segments vs {len(old_segments)} old.")
+
     final_db_segments = []
+    new_count = 0
+    preserved_count = 0
     
     for i, new_seg_int in enumerate(new_segments_internal):
         # Default fresh state
@@ -262,10 +266,15 @@ def reinitialize_project(project_id: str, db: Session = Depends(get_db)):
             # Transfer Translation
             target_content = match.target_content
             status = match.status
+            preserved_count += 1
             
             # NOTE: We do NOT transfer metadata/tags from the old segment blindly.
             # The new parse might have fixed tags (e.g. shape IDs).
             # We assume if source text matches, the translation is valid.
+        else:
+            new_count += 1
+        
+        # Prepare DB Object
         
         # Prepare DB Object
         seg_dump = new_seg_int.model_dump()
@@ -305,6 +314,7 @@ def reinitialize_project(project_id: str, db: Session = Depends(get_db)):
         # Let's skip automatic RAG re-ingest for this specific scope unless requested, 
         # to keep it fast. The user asked for "reinitialise source". 
         
+        logger.info(f"Reinit Success: Preserved {preserved_count}, Added {new_count}. Total {len(final_db_segments)}.")
         return project
         
     except Exception as e:

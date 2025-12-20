@@ -47,3 +47,5 @@ resource
 
 *.txt
 *.db
+
+app.log.*

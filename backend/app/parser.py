@@ -1,12 +1,16 @@
 from typing import List, Tuple, Dict
 import uuid
 import re
+import docx
 from docx.oxml.ns import qn
 from docx.api import Document
 from docx.text.run import Run
 from lxml import etree
 
 from .schemas import SegmentInternal, TagModel
+from .logger import get_logger
+
+logger = get_logger("Parser")
 
 def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List[SegmentInternal]:
     """
@@ -34,7 +38,7 @@ def parse_docx(file_path: str, segmentation_func=None, source_lang="en") -> List
                      ctext = "".join([t.text for t in comment.findall('.//w:t', namespaces) if t.text])
                      comments_map[cid] = ctext
     except Exception as e:
-        print(f"Warning: Could not load comments: {e}")
+        logger.warning(f"Could not load comments: {e}")
 
     # Helper context to pass comments_map, segmentation_func, source_lang
     context = {
@@ -146,7 +150,7 @@ def _extract_footnotes(doc, context) -> List[SegmentInternal]:
                 segments.extend(found_segments)
             
     except Exception as e:
-        print(f"Warning: Could not load footnotes: {e}")
+        logger.warning(f"Could not load footnotes: {e}")
         
     return segments
 
@@ -191,7 +195,7 @@ def _extract_endnotes(doc, context) -> List[SegmentInternal]:
                 segments.extend(_process_paragraph(p_elem, meta, context))
             
     except Exception as e:
-        print(f"Warning: Could not load endnotes: {e}")
+        logger.warning(f"Could not load endnotes: {e}")
         
     return segments
 
@@ -308,7 +312,7 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
         # 1. Regular Run (w:r)
         
         # 1. Regular Run (w:r)
-        # print(f"DEBUG CHILD: {tag_name}")
+        # logger.debug(f"CHILD: {tag_name}")
         
         # 1. Regular Run (w:r)
         if tag_name == qn('w:r'):
@@ -573,16 +577,17 @@ def _handle_shape_element(shape_element, add_tag_func, context) -> str:
     shape_id = None
     
     # Check for textbox content
-    namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-    txbx_contents = shape_element.findall('.//w:txbxContent', namespaces)
+    ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    txbx_contents = shape_element.findall('.//w:txbxContent', ns)
     
     if txbx_contents:
+        logger.debug(f"Shape {shape_element}: Found {len(txbx_contents)} textboxes")
         shape_id = str(uuid.uuid4())
         found_textbox = True
         
         for txbx in txbx_contents:
             # Iterate paragraphs
-            for i, para in enumerate(txbx.findall('.//w:p', namespaces)):
+            for i, para in enumerate(txbx.findall('.//w:p', ns)):
                 loc = {
                     "type": "shape",
                     "shape_id": shape_id,
@@ -688,6 +693,7 @@ def _process_run_element(run_element, add_tag_func, context) -> str:
              
              if choice is not None:
                  # Iterate all children, as choice might contain multiple drawings or other elements
+                 logger.debug(f"Processing mc:Choice. Found {len(list(choice))} children.")
                  for child_el in choice:
                      if child_el.tag == qn('w:drawing') or child_el.tag == qn('w:pict'):
                          final_content += _handle_shape_element(child_el, add_tag_func, context)

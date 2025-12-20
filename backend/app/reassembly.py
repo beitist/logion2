@@ -7,6 +7,10 @@ import re
 from docx.enum.text import WD_COLOR_INDEX
 from docx.oxml.ns import qn
 import copy
+from .logger import get_logger
+
+logger = get_logger("Reassembly")
+
 from lxml import etree
 from .schemas import SegmentInternal, TagModel
 
@@ -494,12 +498,30 @@ def _inject_tagged_text(paragraph, text, tags_map, shape_map=None):
     # We check specific tags.
     # Safest way to get in-order:
     for child in p_element.iter():
-        if child.tag == qn('w:drawing') or child.tag == qn('w:pict'):
-            try:
-                # Deepcopy to detach and save
-                preserved_shapes.append(copy.deepcopy(child))
-            except Exception as e:
-                print(f"Warning: Failed to preserve shape: {e}")
+        # Check for AlternateContent
+        if child.tag == "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent":
+             try:
+                 preserved_shapes.append(copy.deepcopy(child))
+             except Exception as e:
+                 logger.warning(f"Failed to preserve AlternateContent: {e}")
+                 
+        elif child.tag == qn('w:drawing') or child.tag == qn('w:pict'):
+            # Check if inside AlternateContent/Choice/Fallback
+            parent = child.getparent()
+            
+            # Simple check: If parent is Choice/Fallback, we skip (captured by wrapper)
+            mc_ns = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
+            is_wrapped = False
+            if parent is not None:
+                if parent.tag == f"{{{mc_ns}}}Choice" or parent.tag == f"{{{mc_ns}}}Fallback":
+                    is_wrapped = True
+            
+            if not is_wrapped:
+                try:
+                    # Deepcopy to detach and save
+                    preserved_shapes.append(copy.deepcopy(child))
+                except Exception as e:
+                    logger.warning(f"Failed to preserve shape: {e}")
 
     # 2. Clear existing content
     # 2. Clear existing content (Safe Mode)
@@ -580,42 +602,61 @@ def _inject_tagged_text(paragraph, text, tags_map, shape_map=None):
                                     # Sort by p_index
                                     t_segs.sort(key=lambda x: x.metadata.get("p_index", 0))
                                     
-                                    # Find textboxes in this shape
-                                    # Shape might be a Group or Single
-                                    namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-                                    txbx_contents = shape_el.findall('.//w:txbxContent', namespaces)
-                                    
-                                    # Heuristic: We map segments to paragraphs in order.
-                                    # Flatten all paragraphs in all textboxes found?
-                                    # Usually 1 shape = 1 textbox.
-                                    # But shape group?
-                                    
-                                    global_p_idx = 0
-                                    
-                                    for txbx in txbx_contents:
-                                         # Iterate paragraphs
-                                         for para in txbx.findall('.//w:p', namespaces):
-                                             # Find segment for this index
-                                             # t_segs is sorted.
-                                             # We can just iterate t_segs?
-                                             # BUT we must ensure mapping is correct if gaps exist.
-                                             # Let's map by p_index.
-                                             
-                                             matching_seg = next((s for s in t_segs if s.metadata.get("p_index") == global_p_idx), None)
-                                             
-                                             if matching_seg:
-                                                 target_t = matching_seg.target_content if matching_seg.target_content is not None else matching_seg.source_text
+                                    # Helper to inject into a shape element (drawing or pict)
+                                    def _process_shape_element(element, sid):
+                                        # Find textboxes
+                                        ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                                        txbx_contents = element.findall('.//w:txbxContent', ns)
+                                        
+                                        logger.debug(f"Shape Injection: ID={sid}. Tag={element.tag} Found {len(txbx_contents)} textboxes.")
+                                        
+                                        global_p_idx = 0
+                                        for txbx in txbx_contents:
+                                             paras = txbx.findall('.//w:p', ns)
+                                             for para in paras:
+                                                 # Collect all segments for this p_index
+                                                 matching_segs = [s for s in t_segs if s.metadata.get("p_index") == global_p_idx]
                                                  
-                                                 # Create a proxy paragraph for injection
-                                                 from docx.text.paragraph import Paragraph
-                                                 # Parent doesn't matter much for injection util
-                                                 proxy_p = Paragraph(para, None)
-                                                 
-                                                 # Recursive Injection!
-                                                 # Note: Nested shapes are not supported yet (shape_map passed as None to prevent strict infinite loops, though logically ok)
-                                                 _inject_tagged_text(proxy_p, target_t, matching_seg.tags, None)
-                                                 
-                                             global_p_idx += 1
+                                                 if matching_segs:
+                                                     # Sort by sub_index
+                                                     matching_segs.sort(key=lambda x: x.metadata.get("sub_index", 0))
+                                                     
+                                                     # Merge content and tags
+                                                     full_text = ""
+                                                     combined_tags = {}
+                                                     for s in matching_segs:
+                                                         content = s.target_content if s.target_content is not None else s.source_text
+                                                         full_text += content
+                                                         if s.tags:
+                                                             combined_tags.update(s.tags)
+                                                     
+                                                     full_text = re.sub(r'</(\d+)><\1>', '', full_text)
+
+                                                     from docx.text.paragraph import Paragraph
+                                                     proxy_p = Paragraph(para, None)
+                                                     _inject_tagged_text(proxy_p, full_text, combined_tags, None)
+                                                     
+                                                 global_p_idx += 1
+
+                                    # Logic to handle different container types
+                                    if shape_el.tag == "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent":
+                                        # It's a wrapper! Iterate Choice and Fallback
+                                        mc_ns = {'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006', 'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                                        
+                                        choice = shape_el.find('mc:Choice', mc_ns)
+                                        if choice is not None:
+                                            for child in choice:
+                                                _process_shape_element(child, sid)
+                                                
+                                        fallback = shape_el.find('mc:Fallback', mc_ns)
+                                        if fallback is not None:
+                                            for child in fallback:
+                                                _process_shape_element(child, sid)
+                                    else:
+                                        # Standard drawing or pict
+                                        _process_shape_element(shape_el, sid)
+
+
 
                             # Shape must be in a run
                             run = paragraph.add_run()
