@@ -15,6 +15,9 @@ from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUp
 from ..parser import parse_docx
 from ..config import get_default_model_id
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, GlossaryEntry, TranslationUnit
+from ..logger import get_logger
+
+logger = get_logger("ProjectRouter")
 
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
@@ -92,7 +95,7 @@ async def create_project(
             db.add(db_file)
             
         except Exception as e:
-            print(f"Failed to upload {file.filename}: {e}")
+            logger.error(f"Failed to upload {file.filename}: {e}", exc_info=True)
             # Log error but maybe continue?
             pass
 
@@ -435,6 +438,11 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         cached_matches=existing_matches,
         skip_ai=skip_ai
     )
+    
+    if result.get("error"):
+        error_msg = result["error"]
+        logger.error(f"Draft generation failed: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {error_msg}")
     
     # Update Segment based on Mode
     

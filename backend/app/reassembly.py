@@ -684,6 +684,22 @@ def _inject_tagged_text(paragraph, text, tags_map):
                 else:
                     # Normal Run
                     run = paragraph.add_run(content)
+                    if content and (content.startswith(" ") or content.endswith(" ")):
+                         # Enforce preservation for leading/trailing spaces
+                         if run._element.text: 
+                              # add_run sets text on a child t element. we need to find it.
+                              # usually run._element[0] is t?
+                              # Safest: iterate.
+                              t_els = run._element.findall(qn('w:t'))
+                              for t in t_els:
+                                   t.set(qn('xml:space'), 'preserve')
+                    elif content:
+                         # Always preserve to be safe against multi-run collapsing?
+                         # Microsoft Word defaults to stripping if not preserved.
+                         # Let's be aggressive for safety.
+                         t_els = run._element.findall(qn('w:t'))
+                         for t in t_els:
+                              t.set(qn('xml:space'), 'preserve')
                     if active_style['bold'] > 0: run.bold = True
                     if active_style['italic'] > 0: run.italic = True
                     if active_style['underline'] > 0: run.underline = True

@@ -1,6 +1,9 @@
 from .tmx import compute_hash, normalize_text
 import logging
+from .logger import get_logger
 from .models import TranslationUnit, TranslationOrigin
+
+logger = get_logger("RAG")
 import os
 import math
 import google.generativeai as genai
@@ -31,7 +34,7 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 # We load them once at startup.
 # Check for MPS (Apple Silicon)
 device = "mps" if torch.backends.mps.is_available() else "cpu"
-print(f"Loading Models on {device}...")
+logger.info(f"Loading Models on {device}...")
 
 try:
     # 1. Bi-Encoder (LaBSE) - 768 Dimensions
@@ -42,14 +45,14 @@ try:
     # Using 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1'
     _cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1', device=device)
     
-    print("✅ Models Loaded Successfully.")
+    logger.info("✅ Models Loaded Successfully.")
     
     # 3. Semantic Aligner (SpaCy + Vectors)
     from .aligner import SemanticAligner
     _aligner = SemanticAligner(_bi_encoder)
     
 except Exception as e:
-    print(f"❌ Error loading models: {e}")
+    logger.error(f"❌ Error loading models: {e}", exc_info=True)
     _bi_encoder = None
     _cross_encoder = None
     _aligner = None
@@ -100,7 +103,7 @@ def ingest_project_files(project_id: str):
     db = SessionLocal()
     
     def log_msg(msg: str):
-        print(msg)
+        logger.info(msg) # Unified File Logging
         try:
              p = db.query(Project).filter(Project.id == project_id).first()
              current_logs = list(p.ingestion_logs) if p.ingestion_logs else []
@@ -109,7 +112,7 @@ def ingest_project_files(project_id: str):
              p.ingestion_logs = current_logs
              db.commit()
         except Exception as e:
-             print(f"Log error: {e}")
+             logger.error(f"Log error: {e}")
 
     try:
         if not _bi_encoder:
@@ -438,7 +441,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
                 "score": 100
             })
     except Exception as e:
-        print(f"TM Lookup Error: {e}")
+        logger.error(f"TM Lookup Error for '{segment_text[:20]}...': {e}", exc_info=True)
 
     # 0.5 Fuzzy (Hybrid) Match - The "Almost Exact" Part
     # User requested tolerance for ~75% match (3/4 words)
@@ -531,7 +534,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
         # Get Cross-Encoder Logits
         scores = _cross_encoder.predict(pairs)
     except Exception as e:
-        print(f"Reranking error: {e}")
+        logger.error(f"Reranking error: {e}", exc_info=True)
         import numpy as np
         scores = np.zeros(len(candidates)) # Fallback
     
@@ -584,8 +587,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     return final_matches[:5]
 
 def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None, cached_matches=None, skip_ai=False):
-    with open("debug_crash.log", "a") as f:
-        f.write(f"\n--- Generate Start: {segment_text[:20]}... Model:{model_name} ---\n")
+    logger.info(f"--- Generate Start: {segment_text[:20]}... Model:{model_name} SkipAI:{skip_ai} ---")
     """
     Generates a draft translation using aligned context.
     If cached_matches is provided, it skips expensive retrieval.
@@ -717,17 +719,9 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
         draft_model = genai.GenerativeModel(model_name)
         
         # DEBUG LOGGING SETUP
-        import logging
-        try:
-            logging.basicConfig(filename='/Users/beiti/prog/logion2/backend/mt_debug.log', level=logging.DEBUG, format='%(asctime)s %(message)s')
-            logging.info(f"START MT GENERATION for Project {project_id}")
-            logging.info(f"Cleaned Source: {repr(clean_source)}")
-        except: pass
-        
         res = draft_model.generate_content(f"{system_instruction}\n\nSource: {clean_source}")
         mt_draft = res.text.strip()
-        try: logging.info(f"raw mt_draft: {repr(mt_draft)}")
-        except: pass
+        logger.debug(f"raw mt_draft: {mt_draft}")
         
         # TAB HANDLING: Post-process (Restore tabs)
         mt_draft = re.sub(r'<tab\s*/?>', '\t', mt_draft, flags=re.IGNORECASE)
@@ -747,10 +741,13 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
             })
 
     except Exception as e:
-        logging.error(f"Generate Error: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
-        pass # Return empty draft if fails
+        logger.error(f"Generate Error: {e}", exc_info=True)
+        return {
+            "target_text": "",
+            "context_matches": matches, 
+            "is_exact": False,
+            "error": str(e)
+        }
     
     # 4. Generate Final Draft
     return {
