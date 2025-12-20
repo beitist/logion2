@@ -18,9 +18,11 @@ def get_logger(name: str):
 
     # Check if handlers are already set to avoid duplication
     if not logger.handlers:
-        # 1. File Handler (Rotating)
-        file_handler = RotatingFileHandler(
-            LOG_FILE_PATH, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'
+        from logging.handlers import TimedRotatingFileHandler
+        # 1. File Handler (Timed - Rotate every midnight, keep 1 backup)
+        # This ensures logs are max 24h-48h old and don't grow indefinitely.
+        file_handler = TimedRotatingFileHandler(
+            LOG_FILE_PATH, when='midnight', interval=1, backupCount=1, encoding='utf-8'
         )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
