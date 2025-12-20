@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw, Search, Calculator, Database } from 'lucide-react';
+import { RefreshCw, Search, Calculator, Database, Copy } from 'lucide-react';
 import { generateDraft } from '../../api/client';
 
 export function WorkflowsTab({ project, segments, onQueueAll, onReingest }) {
@@ -78,7 +78,26 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest }) {
                     </button>
                 </div>
 
-                {/* 4. Reingest */}
+                {/* 4. Copy Source (Verification) */}
+                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:border-gray-300 transition-all">
+                    <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-orange-50 text-orange-600 rounded-md">
+                            <Copy size={20} />
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-900">Copy Source to Target</h3>
+                            <p className="text-xs text-gray-500">Verification Tool: Copies source text to target for all segments.</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => handleRun("copy_source")}
+                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-orange-50 border border-orange-200 text-orange-700 rounded hover:bg-orange-100 text-xs font-medium"
+                    >
+                        Copy All Sources
+                    </button>
+                </div>
+
+                {/* 5. Reingest */}
                 <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mt-6 opacity-75 hover:opacity-100 transition-opacity">
                     <div className="flex items-center gap-3 mb-2">
                         <div className="p-2 bg-gray-200 text-gray-600 rounded-md">

@@ -397,6 +397,32 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # If mode is 'copy_source' (Verification Workflow)
+    # Check this FIRST to avoid loading RAG/AI models
+    if mode == "copy_source":
+         import datetime
+         # Direct Copy: Bypass RAG
+         segment.target_content = segment.source_content
+         segment.status = "translated"
+         
+         # Safe Metadata Update
+         md = dict(segment.metadata_json) if segment.metadata_json else {}
+         md["last_modified"] = datetime.datetime.utcnow().isoformat()
+         segment.metadata_json = md
+         
+         db.commit()
+         db.refresh(segment)
+         
+         return SegmentResponse(
+             id=segment.id,
+             index=segment.index,
+             source_content=segment.source_content,
+             target_content=segment.target_content,
+             status=segment.status,
+             project_id=segment.project_id,
+             context_matches=[]
+         )
+
     # Get settings from project config
     config = project.config if project.config else {}
     ai_settings = config.get("ai_settings", {})
@@ -420,6 +446,11 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
     if segment.metadata_json:
         tags_data = segment.metadata_json.get("tags")
         existing_matches = segment.metadata_json.get("context_matches")
+
+    # If mode is 'analyze', we skip AI generation in RAG (we need to pass this down)
+    # OR we handle it here by passing a flag to skip_generation?
+    # Let's pass 'skip_ai' arg to generate_segment_draft
+
 
     # If mode is 'analyze', we skip AI generation in RAG (we need to pass this down)
     # OR we handle it here by passing a flag to skip_generation?

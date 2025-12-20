@@ -551,7 +551,8 @@ def _extract_tags(run_element) -> List[TagModel]:
     color = rPr.find(qn('w:color'))
     if color is not None:
         val = color.get(qn('w:val'))
-        if val and val != 'auto':
+        # Ignore auto or black (common defaults that cause noise)
+        if val and val != 'auto' and val != '000000':
             found.append(TagModel(type="color", xml_attributes={"color": val}))
 
     # Highlighting
