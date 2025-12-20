@@ -333,7 +333,15 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false;
                         },
-                        'Mod-Alt-ß': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
+                        'Mod-Alt-ß': () => {
+                            if (onAiDraftRef.current && segmentId) {
+                                const hasMT = contextMatchesRef.current?.some(m => m.type === 'mt');
+                                const mode = hasMT ? "draft" : "translate";
+                                onAiDraftRef.current(segmentId, false, mode);
+                                return true;
+                            }
+                            return false;
+                        },
                         'Mod-Alt-¿': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
                         'Mod-Alt-\\': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
                         'Mod-Alt-?': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },

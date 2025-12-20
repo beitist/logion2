@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+@keyframes flash-purple {
+  0% { background-color: #faf5ff; } 
+  25% { background-color: #d8b4fe; } 
+  100% { background-color: #faf5ff; }
+}
+
+.animate-flash-purple {
+  animation: flash-purple 1.5s ease-out;
+}

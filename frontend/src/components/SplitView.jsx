@@ -35,6 +35,10 @@ export function SplitView({ projectId, onBack }) {
     const [glossarySelection, setGlossarySelection] = useState("");
     const [glossaryTerms, setGlossaryTerms] = useState([]); // Cache for display
 
+    // Flash State for MT Updates
+    const [flashingSegments, setFlashingSegments] = useState({});
+
+
     useEffect(() => {
         if (projectId) {
             getGlossaryTerms(projectId).then(setGlossaryTerms).catch(err => console.warn("Glossary load failed", err));
@@ -641,6 +645,17 @@ export function SplitView({ projectId, onBack }) {
                     target_len: updated.target_content?.length,
                     matches: updated.context_matches?.length || 0
                 });
+
+                // Trigger Flash
+                setFlashingSegments(prev => ({ ...prev, [segmentId]: Date.now() }));
+                // Cleanup after animation (2s)
+                setTimeout(() => {
+                    setFlashingSegments(prev => {
+                        const next = { ...prev };
+                        delete next[segmentId];
+                        return next;
+                    });
+                }, 2000);
             }
 
             // Update State
@@ -1062,6 +1077,13 @@ export function SplitView({ projectId, onBack }) {
                                                             bgClass = 'bg-purple-50';
                                                             textClass = 'text-purple-700';
                                                             label = '🤖 Machine Translation';
+
+                                                            // Apply Flash if needed
+                                                            if (flashingSegments[seg.id]) {
+                                                                bgClass = 'animate-flash-purple';
+                                                                // Note: keyframes handle bg color. 
+                                                                // If we want it to stay purple-50 after, the keyframe 100% matches it.
+                                                            }
                                                         } else if (isGlossary) {
                                                             borderClass = 'border-l-teal-500';
                                                             bgClass = 'bg-teal-50';

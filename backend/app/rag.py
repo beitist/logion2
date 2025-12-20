@@ -653,6 +653,7 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     try:
         # Construct dynamic system instruction
         system_instruction = f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text. No preamble, no markdown formatting, no 'Translation:'."
+        system_instruction += " The source text may contain XML-like formatting tags (e.g. <1>...</1>). You MUST include all tags in the translation, but you MAY adjust their position to ensure natural, fluent grammar in the target language. Do NOT break words with tags unnaturally if the source does so."
         
         # TAB HANDLING: Prompt Instruction
         try:
