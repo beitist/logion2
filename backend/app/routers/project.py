@@ -14,7 +14,7 @@ from ..database import get_db, SessionLocal, engine
 from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse, ProjectFileSchema
 from ..parser import parse_docx
 from ..config import get_default_model_id
-from ..models import Project, Segment, ProjectFile, ProjectFileCategory, GlossaryEntry
+from ..models import Project, Segment, ProjectFile, ProjectFileCategory, GlossaryEntry, TranslationUnit
 
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
@@ -375,6 +375,8 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
     db.query(Segment).filter(Segment.project_id == project_id).delete()
     # Delete glossary entries manually (no cascade relationship)
     db.query(GlossaryEntry).filter(GlossaryEntry.project_id == project_id).delete()
+    # Delete translation units manually (no cascade relationship)
+    db.query(TranslationUnit).filter(TranslationUnit.project_id == project_id).delete()
     
     db.delete(project)
     db.commit()
@@ -383,7 +385,7 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
 # --- Segment Operations ---
 
 @router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
-def generate_draft_endpoint(segment_id: str, mode: str = "translate", db: Session = Depends(get_db)):
+def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflow: bool = False, db: Session = Depends(get_db)):
     segment = db.query(Segment).filter(Segment.id == segment_id).first()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
@@ -396,7 +398,16 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", db: Sessio
     config = project.config if project.config else {}
     ai_settings = config.get("ai_settings", {})
     threshold = float(ai_settings.get("similarity_threshold", 0.40))
-    model_name = ai_settings.get("model") or get_default_model_id()
+    
+    # Model Selection Strategy
+    # Manual/Shortcuts -> "model" (default)
+    # Workflows -> "workflow_model" (fallback to "model" if not set)
+    default_model = ai_settings.get("model") or get_default_model_id()
+    
+    if is_workflow:
+        model_name = ai_settings.get("workflow_model") or default_model
+    else:
+        model_name = default_model
     
     from ..rag import generate_segment_draft
     

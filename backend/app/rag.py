@@ -584,6 +584,8 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     return final_matches[:5]
 
 def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None, cached_matches=None, skip_ai=False):
+    with open("debug_crash.log", "a") as f:
+        f.write(f"\n--- Generate Start: {segment_text[:20]}... Model:{model_name} ---\n")
     """
     Generates a draft translation using aligned context.
     If cached_matches is provided, it skips expensive retrieval.

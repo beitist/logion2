@@ -116,28 +116,28 @@ def _extract_footnotes(doc, context) -> List[SegmentInternal]:
         
         for footnote in root.findall('.//w:footnote', namespaces):
             fid = footnote.get(qn('w:id'))
-            # Skip separator/continuation separator (usually id -1, 0 etc or type attribute)
             ftype = footnote.get(qn('w:type'))
             if ftype in ["separator", "continuationSeparator"]:
                 continue
+
+            for i, p_elem in enumerate(footnote.findall('.//w:p', namespaces)):
+                # Manual XML processing -> _process_paragraph expects XML now?
+                # or we convert p_elem to XML wrapper?
+                # Let's update _process_paragraph to take XML element directly.
                 
-            ftext = "".join([t.text for t in footnote.findall('.//w:t', namespaces) if t.text])
-            if not ftext.strip():
-                continue
-                
-            seg = SegmentInternal(
-                id=str(uuid.uuid4()),
-                segment_id=str(uuid.uuid4()),
-                source_text=ftext,
-                target_content=None,
-                status="draft",
-                tags={},
-                metadata={
+                # Check text content via xpath
+                text_content = "".join([t.text for t in p_elem.findall('.//w:t', namespaces) if t.text])
+                if not text_content.strip():
+                     continue
+
+                meta = {
                     "type": "footnote",
-                    "footnote_id": fid
+                    "footnote_id": fid,
+                    "p_index": i
                 }
-            )
-            segments.append(seg)
+                
+                found_segments = _process_paragraph(p_elem, meta, context)
+                segments.extend(found_segments)
             
     except Exception as e:
         print(f"Warning: Could not load footnotes: {e}")
@@ -166,28 +166,23 @@ def _extract_endnotes(doc, context) -> List[SegmentInternal]:
         
         for endnote in root.findall('.//w:endnote', namespaces):
             eid = endnote.get(qn('w:id'))
-            # Skip separator/continuation separator
             etype = endnote.get(qn('w:type'))
             if etype in ["separator", "continuationSeparator"]:
                 continue
+
+            for i, p_elem in enumerate(endnote.findall('.//w:p', namespaces)):
                 
-            etext = "".join([t.text for t in endnote.findall('.//w:t', namespaces) if t.text])
-            if not etext.strip():
-                continue
-                
-            seg = SegmentInternal(
-                id=str(uuid.uuid4()),
-                segment_id=str(uuid.uuid4()),
-                source_text=etext,
-                target_content=None,
-                status="draft",
-                tags={},
-                metadata={
+                text_content = "".join([t.text for t in p_elem.findall('.//w:t', namespaces) if t.text])
+                if not text_content.strip():
+                     continue
+
+                meta = {
                     "type": "endnote",
-                    "endnote_id": eid
+                    "endnote_id": eid,
+                    "p_index": i
                 }
-            )
-            segments.append(seg)
+                
+                segments.extend(_process_paragraph(p_elem, meta, context))
             
     except Exception as e:
         print(f"Warning: Could not load endnotes: {e}")
@@ -210,7 +205,7 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
         else:
             loc["p_index"] = i
             
-        segment_list = _process_paragraph(para, loc, context)
+        segment_list = _process_paragraph(para._element, loc, context)
         if segment_list:
             container_segments.extend(segment_list)
 
@@ -274,16 +269,17 @@ def _process_container(container, base_metadata: dict, context: dict) -> List[Se
                     loc["cell_index"] = c_idx
                     loc["p_index"] = p_idx
                     
-                    segment_list = _process_paragraph(para, loc, context)
+                    segment_list = _process_paragraph(para._element, loc, context)
                     if segment_list:
                         container_segments.extend(segment_list)
 
     return container_segments
 
-def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInternal]:
+def _process_paragraph(para_element, location: dict, context: dict) -> List[SegmentInternal]:
     """
-    Converts a docx Paragraph object into a SegmentInternal with tags.
+    Converts a docx Paragraph XML ELEMENT into a SegmentInternal with tags.
     Handles Runs, Hyperlinks, and Comments via XML iteration.
+    Argument 'para_element' is an lxml/OxmlElement (not Paragraph object).
     """
     full_text = ""
     tags = {}
@@ -302,13 +298,18 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
     # Hyperlinks and Runs are children of the paragraph.
     # We must treat them sequentially.
     
-    for child in para._element:
+    for child in para_element:
         tag_name = child.tag
+        
+        # 1. Regular Run (w:r)
+        
+        # 1. Regular Run (w:r)
+        # print(f"DEBUG CHILD: {tag_name}")
         
         # 1. Regular Run (w:r)
         if tag_name == qn('w:r'):
              # Handle run content via helper
-             run_text = _process_run_element(child, para, add_tag, context)
+             run_text = _process_run_element(child, add_tag, context)
              if run_text:
                  full_text += run_text
 
@@ -317,11 +318,6 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
             # Create a Link Tag wrapping the whole content
             # We need to capture the relationship ID (r:id) to know the URL!
             rid = child.get(qn('r:id'))
-            
-            # Helper to get URL from relationship if available
-            # We pass 'rid' in attributes so reassembly can try to re-link or at least we know it's a link.
-            # But wait, if we translate, the 'rid' points to original URL.
-            # We want to keep the same URL usually.
             
             link_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True, "rid": rid})
             tid = add_tag(link_tag)
@@ -332,7 +328,7 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
             for sub_child in child:
                 if sub_child.tag == qn('w:r'):
                     # Treat as run
-                    run_text = _process_run_element(sub_child, para, add_tag, context)
+                    run_text = _process_run_element(sub_child, add_tag, context)
                     if run_text:
                         full_text += run_text
             
@@ -405,18 +401,34 @@ def _process_paragraph(para, location: dict, context: dict) -> List[SegmentInter
                     ref_id=comment_id
                 )
                 tid = add_tag(com_tag)
-                full_text += f"<{tid}>[COMMENT]</{tid}>"
+                full_text += f"<{tid}></{tid}>"
 
         # 4. Inserted Text (w:ins) - Tracked Changes ACCEPT
         elif tag_name == qn('w:ins'):
             # Treat as normal content. Iterate children (runs)
             for sub_child in child:
                 if sub_child.tag == qn('w:r'):
-                     run_text = _process_run_element(sub_child, para, add_tag, context)
+                     run_text = _process_run_element(sub_child, add_tag, context)
                      if run_text:
                          full_text += run_text
 
-        # 5. Deleted Text (w:del) - Tracked Changes REJECT (Skip)
+        # 5. Footnote Reference
+        elif tag_name == qn('w:footnoteReference'):
+            fid = child.get(qn('w:id'))
+            ftag = TagModel(type="footnote", xml_attributes={"id": fid})
+            tid = add_tag(ftag)
+            tid = add_tag(ftag)
+            full_text += f"<{tid}></{tid}>"
+
+        # 6. Endnote Reference
+        elif tag_name == qn('w:endnoteReference'):
+            eid = child.get(qn('w:id'))
+            etag = TagModel(type="endnote", xml_attributes={"id": eid})
+            tid = add_tag(etag)
+            tid = add_tag(etag)
+            full_text += f"<{tid}></{tid}>"
+
+        # 7. Deleted Text (w:del) - Tracked Changes REJECT (Skip)
         elif tag_name == qn('w:del'):
              # Future: Maybe extract deleted text if user wants "Show Revisions"
             continue
@@ -497,59 +509,67 @@ def _split_sentences(text: str, segmentation_func=None, lang="en") -> List[str]:
     seg = _get_segmenter(lang)
     return seg.segment(text)
 
-def _extract_tags(run) -> List[TagModel]:
+def _extract_tags(run_element) -> List[TagModel]:
     """
-    Inspects a run for Bold, Italic, Underline, Superscript, Subscript, Color.
+    Inspects a run XML ELEMENT for formatting.
     Returns a list of detected TagModels.
     """
     found = []
     
-    if run.bold:
-        found.append(TagModel(type="bold"))
-    if run.italic:
+    # Needs valid namespaces
+    namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    
+    rPr = run_element.find(qn('w:rPr'))
+    if rPr is None:
+        return found
+        
+    # Bold
+    # w:b can be present (True) or have w:val="0"/"false" (False)
+    # Simple check: availability
+    if rPr.find(qn('w:b')) is not None:
+         # To be pedantic: check w:val
+         # val = rPr.find(qn('w:b')).get(qn('w:val'))
+         # if val not in ['0', 'false', 'off']:
+         found.append(TagModel(type="bold"))
+         
+    if rPr.find(qn('w:i')) is not None:
         found.append(TagModel(type="italic"))
-    if run.underline:
+        
+    if rPr.find(qn('w:u')) is not None:
         found.append(TagModel(type="underline"))
         
-    # Superscript / Subscript
-    if run.font.superscript:
-        found.append(TagModel(type="superscript"))
-    if run.font.subscript:
-        found.append(TagModel(type="subscript"))
-        
+    # Superscript / Subscript (w:vertAlign w:val='superscript')
+    vAlign = rPr.find(qn('w:vertAlign'))
+    if vAlign is not None:
+        val = vAlign.get(qn('w:val'))
+        if val == 'superscript':
+            found.append(TagModel(type="superscript"))
+        elif val == 'subscript':
+            found.append(TagModel(type="subscript"))
+            
     # Color
-    # run.font.color.rgb -> RGBColor object (can be converted to hex)
-    # run.font.color.theme_color -> checking presence
-    if run.font.color and run.font.color.rgb:
-        # Convert RGB to hex string
-        rgb = run.font.color.rgb
-        if rgb:
-            hex_color = str(rgb) # usually returns 'FF0000'
-            found.append(TagModel(type="color", xml_attributes={"color": hex_color}))
+    color = rPr.find(qn('w:color'))
+    if color is not None:
+        val = color.get(qn('w:val'))
+        if val and val != 'auto':
+            found.append(TagModel(type="color", xml_attributes={"color": val}))
 
     # Highlighting
-    if run.font.highlight_color:
-        # highlight_color is an enum (WD_COLOR_INDEX)
-        # We store the value (integer or name?)
-        # Let's store the name if possible, or enum value.
-        # run.font.highlight_color returns WD_COLOR_INDEX member
-        found.append(TagModel(type="highlight", xml_attributes={"color": str(run.font.highlight_color)}))
+    highlight = rPr.find(qn('w:highlight'))
+    if highlight is not None:
+        val = highlight.get(qn('w:val'))
+        found.append(TagModel(type="highlight", xml_attributes={"color": str(val)}))
             
     return found
 
-def _process_run_element(run_element, para, add_tag_func, context) -> str:
+def _process_run_element(run_element, add_tag_func, context) -> str:
     """
     Helper to process a w:r element.
     Handles formatting (Bold/Italic), Embedded Comments, Tabs, Breaks, and Text.
     Also handles URL regex detection.
     """
-    # 1. Embedded Comments (w:commentReference in Run)
-    # Check for embedded CommentReference logic copied/adapted?
-    # Usually they are siblings to text in w:r, so we iterate items.
-    
-    # 2. Extract formatting from Run object
-    run_obj = Run(run_element, para)
-    extracted_tags = _extract_tags(run_obj)
+    # 2. Extract formatting from Run XML directly
+    extracted_tags = _extract_tags(run_element)
     
     active_ids = []
     full_run_text = ""
@@ -592,7 +612,7 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
         elif tag_name == qn('w:tab'):
              tab_tag = TagModel(type="tab", content="[TAB]")
              tid = add_tag_func(tab_tag)
-             final_content += f"<{tid}>[TAB]</{tid}>"
+             final_content += f"<{tid}></{tid}>" # Remove [TAB] text
              
         elif tag_name == qn('w:br'):
              final_content += "<br/>"
@@ -610,7 +630,7 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
                 ctext = context["comments_map"][cid]
                 com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
                 tid = add_tag_func(com_tag)
-                final_content += f"<{tid}>[COMMENT]</{tid}>"
+                final_content += f"<{tid}></{tid}>"
 
         elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
              # Handle Shapes/Images
@@ -618,7 +638,19 @@ def _process_run_element(run_element, para, add_tag_func, context) -> str:
              # In reassembly, we will attempt to restore the shape from the original doc.
              shape_tag = TagModel(type="shape", content="[SHAPE]")
              tid = add_tag_func(shape_tag)
-             final_content += f"<{tid}>[SHAPE]</{tid}>"
+             final_content += f"<{tid}></{tid}>"
+
+        elif tag_name == qn('w:footnoteReference'):
+            fid = child.get(qn('w:id'))
+            ftag = TagModel(type="footnote", xml_attributes={"id": fid})
+            tid = add_tag_func(ftag)
+            final_content += f"<{tid}></{tid}>"
+
+        elif tag_name == qn('w:endnoteReference'):
+            eid = child.get(qn('w:id'))
+            etag = TagModel(type="endnote", xml_attributes={"id": eid})
+            tid = add_tag_func(etag)
+            final_content += f"<{tid}></{tid}>"
 
     full_run_text += final_content
 

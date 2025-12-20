@@ -111,26 +111,21 @@ def _inject_footnotes(doc: Document, segments: List[SegmentInternal]):
                  seg = footnote_segs[fid]
                  target_text = seg.target_content if seg.target_content is not None else seg.source_text
                  
-                 # 1. Clear existing content (paragraphs)
+                 # 1. Clear existing content (paragraphs) but preserve attributes!
                  for child in list(footnote):
-                     if child.tag == qn('w:p'):
-                        footnote.remove(child)
+                     footnote.remove(child)
                  
                  # 2. Create new Paragraph
-                 # We need to wrap it in a python-docx Paragraph object to use our helper
-                 # But we are operating on lxml elements here.
-                 # _inject_tagged_text expects a docx.text.paragraph.Paragraph!
+                 # Use OxmlElement for valid python-docx element
+                 wp = docx.oxml.shared.OxmlElement('w:p')
+                 footnote.append(wp)
                  
-                 # Trick: We can create a dummy docx Paragraph wrapper around our new element?
-                 # element = etree.SubElement(footnote, qn('w:p'))
-                 # para = docx.text.paragraph.Paragraph(element, part) 
-                 # We need 'part' (footnotes_part) which is a Part object.
+                 pPr = docx.oxml.shared.OxmlElement('w:pPr')
+                 wp.append(pPr)
                  
-                 wp = etree.SubElement(footnote, qn('w:p'))
-                 # Set style? FootnoteText is standard.
-                 pPr = etree.SubElement(wp, qn('w:pPr'))
-                 pStyle = etree.SubElement(pPr, qn('w:pStyle'))
+                 pStyle = docx.oxml.shared.OxmlElement('w:pStyle')
                  pStyle.set(qn('w:val'), 'FootnoteText')
+                 pPr.append(pStyle)
 
                  # Wrap in docx Object
                  from docx.text.paragraph import Paragraph
@@ -215,8 +210,9 @@ def _inject_endnotes(doc: Document, segments: List[SegmentInternal]):
                  seg = endnote_segs[eid]
                  target_text = seg.target_content if seg.target_content else seg.source_text
                  
-                 # Clear existing content
-                 endnote.clear()
+                 # Clear existing content but preserve attributes
+                 for child in list(endnote):
+                     endnote.remove(child)
                  # But we might lose attributes?
                  # Actually clearer is: find <w:p> children and clear/replace them.
                  
@@ -230,10 +226,15 @@ def _inject_endnotes(doc: Document, segments: List[SegmentInternal]):
                  # Wait, `element.clear()` removes children and text, keeps attributes.
                  
                  # 1. Add Paragraph
-                 wp = etree.SubElement(endnote, qn('w:p'))
-                 pPr = etree.SubElement(wp, qn('w:pPr'))
-                 pStyle = etree.SubElement(pPr, qn('w:pStyle'))
+                 wp = docx.oxml.shared.OxmlElement('w:p')
+                 endnote.append(wp)
+                 
+                 pPr = docx.oxml.shared.OxmlElement('w:pPr')
+                 wp.append(pPr)
+                 
+                 pStyle = docx.oxml.shared.OxmlElement('w:pStyle')
                  pStyle.set(qn('w:val'), 'EndnoteText')
+                 pPr.append(pStyle)
                  
                  # Wrap in docx Object
                  from docx.text.paragraph import Paragraph
@@ -566,6 +567,35 @@ def _inject_tagged_text(paragraph, text, tags_map):
                             # Create a placeholder or ignore
                             run = paragraph.add_run("[MISSING SHAPE]")
                             run.font.color.rgb = docx.shared.RGBColor(255, 0, 0)
+
+                    # Footnotes
+                    elif tag.type == 'footnote' and not is_closing:
+                        run = paragraph.add_run()
+                        
+                        # Style reference
+                        rPr = docx.oxml.shared.OxmlElement('w:rPr')
+                        rStyle = docx.oxml.shared.OxmlElement('w:rStyle')
+                        rStyle.set(qn('w:val'), 'FootnoteReference')
+                        rPr.append(rStyle)
+                        run._element.append(rPr)
+                        
+                        ref = docx.oxml.shared.OxmlElement('w:footnoteReference')
+                        ref.set(qn('w:id'), tag.xml_attributes['id'])
+                        run._element.append(ref)
+
+                    # Endnotes
+                    elif tag.type == 'endnote' and not is_closing:
+                        run = paragraph.add_run()
+                        
+                        rPr = docx.oxml.shared.OxmlElement('w:rPr')
+                        rStyle = docx.oxml.shared.OxmlElement('w:rStyle')
+                        rStyle.set(qn('w:val'), 'EndnoteReference')
+                        rPr.append(rStyle)
+                        run._element.append(rPr)
+                        
+                        ref = docx.oxml.shared.OxmlElement('w:endnoteReference')
+                        ref.set(qn('w:id'), tag.xml_attributes['id'])
+                        run._element.append(ref)
                             
                     # Reconstruct Hyperlinks
                     elif tag.type == 'link':
@@ -608,53 +638,48 @@ def _inject_tagged_text(paragraph, text, tags_map):
                 # If inside hyperlink, add to hyperlink_el
                 if 'hyperlink_el' in active_style:
                     parent = active_style['hyperlink_el']
+                    
                     run = docx.oxml.shared.OxmlElement('w:r')
                     t = docx.oxml.shared.OxmlElement('w:t')
-                    t.text = content
-                    # Space preserve
-                    if len(content.strip()) < len(content):
+                    if content:
+                         # preserve space
                          t.set(qn('xml:space'), 'preserve')
-                    run.append(t)
-                    parent.append(run)
+                    t.text = content
                     
                     # Apply styles to this new run
                     # We need to construct rPr
                     rPr = docx.oxml.shared.OxmlElement('w:rPr')
                     has_style = False
                     
-                    if active_style['bold'] > 0: 
-                        rPr.append(docx.oxml.shared.OxmlElement('w:b'))
-                        has_style = True
-                    if active_style['italic'] > 0: 
-                        rPr.append(docx.oxml.shared.OxmlElement('w:i'))
-                        has_style = True
-                    if active_style['underline'] > 0: 
-                        u = docx.oxml.shared.OxmlElement('w:u')
-                        u.set(qn('w:val'), 'single')
-                        rPr.append(u)
-                        has_style = True
-                    
-                    # Hyperlink style (usually Blue + Underline)
-                    # Use existing style if defined? "Hyperlink"
+                    # 1. rStyle (MUST BE FIRST)
                     rStyle = docx.oxml.shared.OxmlElement('w:rStyle')
                     rStyle.set(qn('w:val'), 'Hyperlink')
                     rPr.append(rStyle)
                     
-                    # FORCE VISIBLE STYLE (Blue + Underline) because "Hyperlink" style might be missing
-                    # Color: Blue (0000FF)
+                    # 2. Color (Blue)
                     color = docx.oxml.shared.OxmlElement('w:color')
-                    color.set(qn('w:val'), '0563C1') # Standard Word Hyperlink Blue
+                    color.set(qn('w:val'), '0563C1') 
                     rPr.append(color)
                     
-                    # Underline: Single
+                    # 3. Underline (Single)
                     u = docx.oxml.shared.OxmlElement('w:u')
                     u.set(qn('w:val'), 'single')
                     rPr.append(u)
                     
-                    has_style = True
+                    # 4. Other Formatting
+                    if active_style['bold'] > 0: 
+                        rPr.append(docx.oxml.shared.OxmlElement('w:b'))
+                    if active_style['italic'] > 0: 
+                        rPr.append(docx.oxml.shared.OxmlElement('w:i'))
                         
+                    has_style = True
                     if has_style:
                         run.append(rPr)
+                    
+                    # Append Text AFTER rPr
+                    run.append(t)
+                    
+                    parent.append(run)
 
                 else:
                     # Normal Run

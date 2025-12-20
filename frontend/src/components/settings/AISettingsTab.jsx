@@ -5,6 +5,7 @@ import { Zap, Command, RefreshCw, Save, Terminal } from 'lucide-react';
 export function AISettingsTab({ project, onUpdate, onQueueAll }) {
     const [settings, setSettings] = useState({
         model: '',
+        workflow_model: '',
         custom_prompt: '',
         pre_translate_count: 0,
         preload_mode: false
@@ -19,6 +20,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
             const ai = project.config.ai_settings || {};
             setSettings({
                 model: ai.model || '',
+                workflow_model: ai.workflow_model || '',
                 custom_prompt: ai.custom_prompt || '',
                 pre_translate_count: ai.pre_translate_count || 0,
                 preload_mode: ai.preload_mode || false
@@ -32,9 +34,16 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                 const data = await getAiModels();
                 if (data.models) {
                     setAvailableModels(data.models);
-                    if (!settings.model && data.models.length > 0) {
-                        setSettings(s => ({ ...s, model: data.models[0].id }));
-                    }
+
+                    // Defaults
+                    setSettings(s => {
+                        const newS = { ...s };
+                        // Default Editor Model: First one (or user set)
+                        if (!newS.model && data.models.length > 0) newS.model = data.models[0].id;
+                        // Default Workflow Model: First one (FAST)
+                        if (!newS.workflow_model && data.models.length > 0) newS.workflow_model = data.models[0].id;
+                        return newS;
+                    });
                 }
             } catch (e) {
                 console.error("Failed to load models", e);
@@ -75,24 +84,46 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
 
             <div className="space-y-6 flex-1 overflow-y-auto pr-2">
                 {/* 1. Model Selection */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Generative Model</label>
-                    {loadingModels ? (
-                        <div className="text-gray-400 text-sm animate-pulse">Loading models...</div>
-                    ) : (
-                        <select
-                            value={settings.model}
-                            onChange={(e) => setSettings({ ...settings, model: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
-                        >
-                            {availableModels.map(m => (
-                                <option key={m.id} value={m.id}>
-                                    {m.name}
-                                </option>
-                            ))}
-                        </select>
-                    )}
-                    <p className="text-xs text-gray-500 mt-1">Select the underlying engine for drafts and translations.</p>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Editor Model (Manual & Shortcuts)</label>
+                        {loadingModels ? (
+                            <div className="text-gray-400 text-sm animate-pulse">Loading models...</div>
+                        ) : (
+                            <select
+                                value={settings.model}
+                                onChange={(e) => setSettings({ ...settings, model: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
+                            >
+                                {availableModels.map(m => (
+                                    <option key={m.id} value={m.id}>
+                                        {m.name}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+                        <p className="text-xs text-gray-500 mt-1">Used for manual actions (Magic Button, Shortcuts).</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Workflow Model (Batch Operations)</label>
+                        {loadingModels ? (
+                            <div className="text-gray-400 text-sm animate-pulse">Loading models...</div>
+                        ) : (
+                            <select
+                                value={settings.workflow_model}
+                                onChange={(e) => setSettings({ ...settings, workflow_model: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
+                            >
+                                {availableModels.map(m => (
+                                    <option key={m.id} value={m.id}>
+                                        {m.name}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+                        <p className="text-xs text-gray-500 mt-1">Used for "Generate Suggestions" and "Translate All". Choose a faster model.</p>
+                    </div>
                 </div>
 
                 {/* 2. Custom Prompt */}

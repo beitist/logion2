@@ -8,7 +8,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest }) {
         if (!segments) return;
         const ids = segments.map(s => s.id);
         if (confirm(`Queue ${ids.length} segments for ${mode}?`)) {
-            onQueueAll(ids, mode);
+            onQueueAll(ids, mode, true);
         }
     };
 

@@ -72,9 +72,9 @@ export async function deleteProject(projectId) {
 }
 
 // Generate AI Draft for a single segment
-export async function generateDraft(segmentId, mode = "translate") {
+export async function generateDraft(segmentId, mode = "translate", isWorkflow = false) {
     // Mode: 'translate' (rewrite target), 'draft' (suggestion only), 'analyze' (retrieval only)
-    const response = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft?mode=${mode}`, {
+    const response = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft?mode=${mode}&is_workflow=${isWorkflow}`, {
         method: 'POST',
     });
     if (!response.ok) {

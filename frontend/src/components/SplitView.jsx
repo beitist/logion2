@@ -73,7 +73,7 @@ export function SplitView({ projectId, onBack }) {
     }, [segments]);
 
     // Helper to add to queue safely
-    const queueSegments = (ids, mode = "translate") => {
+    const queueSegments = (ids, mode = "translate", isWorkflow = false) => {
         let added = false;
         ids.forEach(id => {
             // Check if already in queue (compare IDs)
@@ -84,16 +84,12 @@ export function SplitView({ projectId, onBack }) {
             if (!seg) return;
 
             // Mode Logic:
-            // "translate" (MT): Skip if not empty (unless force? assume empty check for now)
-            // "draft": Skip if ai_draft exists? Or just run it. 
-            // "analyze": Skip if matches exist?
-
             const hasContent = seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
 
             if (mode === "translate" && hasContent) return;
             if (seg.locked) return;
 
-            draftQueue.current.push({ id, mode });
+            draftQueue.current.push({ id, mode, isWorkflow });
             added = true;
         });
 
@@ -107,25 +103,34 @@ export function SplitView({ projectId, onBack }) {
         if (isProcessingQueue.current) return;
         isProcessingQueue.current = true;
 
+        const CONCURRENCY = 3;
+
         while (draftQueue.current.length > 0) {
-            const item = draftQueue.current.shift();
-            const { id: nextId, mode } = item;
+            // Take up to CONCURRENCY items
+            const batch = draftQueue.current.splice(0, CONCURRENCY);
 
-            // Double-check just before execution
-            const seg = segmentsRef.current.find(s => s.id === nextId);
+            // Process batch in parallel
+            await Promise.all(batch.map(async (item) => {
+                const { id: nextId, mode, isWorkflow } = item;
 
-            // Re-check conditions as state might have changed
-            const hasContent = seg && seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
-            if (!seg || seg.locked) continue;
-            if (mode === "translate" && hasContent) continue;
+                // Double-check just before execution
+                const seg = segmentsRef.current.find(s => s.id === nextId);
 
-            try {
-                await handleAiDraft(nextId, true, mode); // true = isAuto
-            } catch (e) {
-                console.warn("Queue item failed", nextId, e);
-            }
-            // Rate Limit Protection: Wait 20ms (User confirmed not rate limit issue)
-            await new Promise(r => setTimeout(r, 20));
+                // Re-check conditions as state might have changed
+                const hasContent = seg && seg.target_content && seg.target_content.trim() !== '' && seg.target_content !== '<p></p>';
+
+                if (!seg || seg.locked) return;
+                if (mode === "translate" && hasContent) return;
+
+                try {
+                    await handleAiDraft(nextId, true, mode, isWorkflow); // true = isAuto
+                } catch (e) {
+                    console.warn("Queue item failed", nextId, e);
+                }
+            }));
+
+            // Minimal delay between batches to breath
+            await new Promise(r => setTimeout(r, 50));
         }
 
         isProcessingQueue.current = false;
@@ -620,7 +625,7 @@ export function SplitView({ projectId, onBack }) {
     };
 
     // Handler for manual AI Draft triggers
-    const handleAiDraft = async (segmentId, isAuto = false, mode = "translate") => {
+    const handleAiDraft = async (segmentId, isAuto = false, mode = "translate", isWorkflow = false) => {
         const seg = segmentsRef.current.find(s => s.id === segmentId); // Use Ref for safety
         if (!isAuto) {
             log(`Generating draft (${mode}) for segment #${seg?.index + 1}...`, 'info', { segmentId });
@@ -628,7 +633,7 @@ export function SplitView({ projectId, onBack }) {
 
         try {
             const start = performance.now();
-            const updated = await generateDraft(segmentId, mode);
+            const updated = await generateDraft(segmentId, mode, isWorkflow);
             const duration = Math.round(performance.now() - start);
 
             if (!isAuto) {
