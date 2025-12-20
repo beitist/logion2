@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getSegments, getProject, updateSegment, downloadProject, updateProject, deleteProject, generateDraft, getGlossaryTerms, reingestProject } from "../api/client";
+import { getSegments, getProject, updateSegment, downloadProject, downloadProjectTMX, updateProject, deleteProject, generateDraft, getGlossaryTerms, reingestProject } from "../api/client";
 import { TiptapEditor } from './TiptapEditor';
 import { mergeXmlTags, getTagLabel } from '../utils/tagUtils';
 
@@ -14,7 +14,7 @@ import { WorkflowsTab } from './settings/WorkflowsTab';
 import { ProjectSettingsTab } from './settings/ProjectSettingsTab';
 import { GlossaryAddModal } from './GlossaryAddModal';
 
-import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft } from 'lucide-react';
+import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown } from 'lucide-react';
 import './TiptapStyles.css'; // Ensure invisible character styles are available
 import { LogConsole } from './LogConsole';
 import { ShortcutsPanel } from './ShortcutsPanel';
@@ -37,6 +37,9 @@ export function SplitView({ projectId, onBack }) {
 
     // Flash State for MT Updates
     const [flashingSegments, setFlashingSegments] = useState({});
+
+    // Export UI
+    const [showExportMenu, setShowExportMenu] = useState(false);
 
 
     useEffect(() => {
@@ -393,6 +396,23 @@ export function SplitView({ projectId, onBack }) {
         } catch (err) {
             console.error("Export failed", err);
             alert("Export failed!");
+        }
+    };
+
+    const handleTmXExport = async () => {
+        if (!project) return;
+        try {
+            const blob = await downloadProjectTMX(projectId);
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${project.filename}.tmx`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (err) {
+            console.error("TMX Export failed", err);
+            alert("TMX Export failed!");
         }
     };
 
@@ -783,13 +803,39 @@ export function SplitView({ projectId, onBack }) {
                     >
                         ⚙️ Settings
                     </button>
-                    {/* ... Export button ... */}
-                    <button
-                        onClick={handleExport}
-                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-medium shadow-sm transition-colors"
-                    >
-                        Export DOCX
-                    </button>
+                    {/* Export Dropdown */}
+                    <div className="relative">
+                        <div className="inline-flex rounded-md shadow-sm">
+                            <button
+                                onClick={handleExport}
+                                className="bg-green-600 text-white px-4 py-2 rounded-l hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
+                            >
+                                <Download size={16} /> Export DOCX
+                            </button>
+                            <button
+                                onClick={() => setShowExportMenu(!showExportMenu)}
+                                className="bg-green-700 text-white px-2 py-2 rounded-r hover:bg-green-800 transition-colors border-l border-green-600"
+                            >
+                                <ChevronDown size={16} />
+                            </button>
+                        </div>
+                        {showExportMenu && (
+                            <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-50 border border-gray-100 py-1">
+                                <button
+                                    onClick={() => { handleExport(); setShowExportMenu(false); }}
+                                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 bg-green-50/50"
+                                >
+                                    Download Export (DOCX)
+                                </button>
+                                <button
+                                    onClick={() => { handleTmXExport(); setShowExportMenu(false); }}
+                                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                                >
+                                    Download TMX Memory
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* Settings Modal */}

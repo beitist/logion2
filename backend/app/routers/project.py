@@ -526,3 +526,69 @@ async def update_project(project_id: str, payload: ProjectUpdate, db: Session = 
     db.commit()
     db.refresh(project)
     return project
+
+# TMX Export Logic
+def generate_tmx_content(source_lang, target_lang, segments):
+    """
+    Generates a TMX 1.4b compliant string from segments.
+    """
+    import datetime
+    from xml.sax.saxutils import escape
+
+    tmx_header = f"""<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4b">
+  <header creationtool="Logion2" creationtoolversion="1.0"
+          datatype="PlainText" segtype="sentence"
+          adminlang="en-US" srclang="{source_lang}"
+          o-tmf="Logion2TM"
+          creationdate="{datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}">
+  </header>
+  <body>"""
+
+    tmx_body = ""
+    for seg in segments:
+        if not seg.target_content or not seg.source_content:
+            continue
+            
+        # Strip internal tags for now? Or keep them?
+        # TMX standard supports <bpt>, <ept>, <ph>. 
+        # For simplicity, we might strip or just escape them as text if not strictly TMX tagged.
+        # Let's clean tags for basic TMX to ensure compatibility with standard tools.
+        # Or better: Just escape everything as text.
+        
+        src_clean = escape(seg.source_content)
+        tgt_clean = escape(seg.target_content)
+
+        tmx_body += f"""
+    <tu>
+      <tuv xml:lang="{source_lang}">
+        <seg>{src_clean}</seg>
+      </tuv>
+      <tuv xml:lang="{target_lang}">
+        <seg>{tgt_clean}</seg>
+      </tuv>
+    </tu>"""
+
+    tmx_footer = """
+  </body>
+</tmx>"""
+    
+    return tmx_header + tmx_body + tmx_footer
+
+@router.get("/{project_id}/export/tmx")
+async def export_project_tmx(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+         raise HTTPException(status_code=404, detail="Project not found")
+    
+    segments = db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
+    
+    tmx_content = generate_tmx_content(project.source_lang, project.target_lang, segments)
+    
+    output_filename = f"{project.filename}.tmx"
+    output_path = os.path.join(UPLOAD_DIR, output_filename)
+    
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(tmx_content)
+        
+    return FileResponse(output_path, media_type="application/xml", filename=output_filename)

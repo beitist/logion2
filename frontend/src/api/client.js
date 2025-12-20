@@ -53,6 +53,12 @@ export async function downloadProject(projectId) {
     return res.blob();
 }
 
+export async function downloadProjectTMX(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/export/tmx`);
+    if (!res.ok) throw new Error("Failed to export project TMX");
+    return res.blob();
+}
+
 export async function updateProject(projectId, data) {
     const res = await fetch(`${API_BASE}/project/${projectId}`, {
         method: "PATCH",
