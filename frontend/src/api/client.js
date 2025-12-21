@@ -32,9 +32,11 @@ export async function getSegments(projectId) {
     return res.json();
 }
 
-export async function updateSegment(segmentId, content, status) {
-    const body = { target_content: content };
+export async function updateSegment(segmentId, content, status, metadata) {
+    const body = {};
+    if (content !== undefined) body.target_content = content;
     if (status) body.status = status;
+    if (metadata) body.metadata = metadata;
 
     const res = await fetch(`${API_BASE}/segment/${segmentId}`, {
         method: "PATCH",
