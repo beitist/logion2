@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from typing import List, Optional
 import shutil
 import os
@@ -612,99 +613,109 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
              
     next_context = [s[0] for s in next_segments]
 
-    result = generate_segment_draft(
-        segment_text=segment.source_content,
-        source_lang=project.source_lang,
-        target_lang=project.target_lang,
-        project_id=str(project.id),
-        db=db,
-        threshold=threshold,
-        model_name=model_name,
-        custom_prompt=custom_prompt,
-        tags=tags_data,
-        cached_matches=existing_matches,
-        skip_ai=skip_ai,
-        prev_context=prev_context,
-        next_context=next_context
-    )
-    
-    if result.get("error"):
-        error_msg = result["error"]
-        logger.error(f"Draft generation failed: {error_msg}")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {error_msg}")
-    
-    # Update Segment based on Mode
-    
-    # 1. Update Metadata (Always)
-    current_meta = dict(segment.metadata_json or {})
-    current_meta['context_matches'] = result["context_matches"]
-    
-    if mode == "translate":
-        # Full Overwrite of Target
-        segment.target_content = result["target_text"]
-        current_meta['ai_draft'] = result["target_text"]
-    
-    elif mode == "draft":
-        # Only save draft to metadata (suggestion)
-        current_meta['ai_draft'] = result["target_text"]
-        # Do NOT touch target_content
-        
-    elif mode == "analyze":
-        # No draft generated (usually), just context matches updated
-        pass
-        
-    # Track Token Usage (DB Logging)
-    from ..models import AiUsageLog
-    
-    if result.get("usage"):
-        usage = result["usage"]
-        
-        # 1. Log to DB (Concurrency Safe)
-        # Determine trigger type? For now generic 'generation'.
-        # Could parse from custom_prompt if needed or add API param.
-        
-        new_log = AiUsageLog(
-            project_id=project.id,
-            segment_id=segment.id,
-            model=model_name,
-            trigger_type="generation", # TODO: Differentiate manual/auto
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0)
+    try:
+        result = generate_segment_draft(
+            segment_text=segment.source_content,
+            source_lang=project.source_lang,
+            target_lang=project.target_lang,
+            project_id=str(project.id),
+            db=db,
+            threshold=threshold,
+            model_name=model_name,
+            custom_prompt=custom_prompt,
+            tags=tags_data,
+            cached_matches=existing_matches,
+            skip_ai=skip_ai,
+            prev_context=prev_context,
+            next_context=next_context
         )
-        db.add(new_log)
         
-        # 2. Update Project Config (Legacy / Quick Snapshot)
-        # We keep this for backward compatibility if UI reads it
-        current_config = dict(project.config or {})
-        if "usage_stats" not in current_config:
-            current_config["usage_stats"] = {}
-        if model_name not in current_config["usage_stats"]:
-            current_config["usage_stats"][model_name] = {"input_tokens": 0, "output_tokens": 0}
+        if result.get("error"):
+            error_msg = result["error"]
+            logger.error(f"Draft generation failed: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {error_msg}")
+        
+        # Update Segment based on Mode
+        
+        # 1. Update Metadata (Always)
+        current_meta = dict(segment.metadata_json or {})
+        current_meta['context_matches'] = result["context_matches"]
+        
+        if mode == "translate":
+            # Full Overwrite of Target
+            segment.target_content = result["target_text"]
+            current_meta['ai_draft'] = result["target_text"]
+        
+        elif mode == "draft":
+            # Only save draft to metadata (suggestion)
+            current_meta['ai_draft'] = result["target_text"]
+            # Do NOT touch target_content
             
-        current_config["usage_stats"][model_name]["input_tokens"] += usage.get("input_tokens", 0)
-        current_config["usage_stats"][model_name]["output_tokens"] += usage.get("output_tokens", 0)
+        elif mode == "analyze":
+            # No draft generated (usually), just context matches updated
+            pass
+            
+        # Track Token Usage (DB Logging)
+        from ..models import AiUsageLog
         
-        project.config = current_config
-        flag_modified(project, "config")
-        
-    # Store Model Used in Metadata
-    current_meta['ai_model'] = model_name
+        if result.get("usage"):
+            usage = result["usage"]
+            
+            # 1. Log to DB (Concurrency Safe)
+            # Determine trigger type? For now generic 'generation'.
+            # Could parse from custom_prompt if needed or add API param.
+            
+            new_log = AiUsageLog(
+                project_id=project.id,
+                segment_id=segment.id,
+                model=model_name,
+                trigger_type="generation", # TODO: Differentiate manual/auto
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0)
+            )
+            db.add(new_log)
+            
+            # 2. Update Project Config (Legacy / Quick Snapshot)
+            # We keep this for backward compatibility if UI reads it
+            current_config = dict(project.config or {})
+            if "usage_stats" not in current_config:
+                current_config["usage_stats"] = {}
+            if model_name not in current_config["usage_stats"]:
+                current_config["usage_stats"][model_name] = {"input_tokens": 0, "output_tokens": 0}
+                
+            current_config["usage_stats"][model_name]["input_tokens"] += usage.get("input_tokens", 0)
+            current_config["usage_stats"][model_name]["output_tokens"] += usage.get("output_tokens", 0)
+            
+            project.config = current_config
+            flag_modified(project, "config")
+            
+        # Store Model Used in Metadata
+        current_meta['ai_model'] = model_name
 
-    segment.metadata_json = current_meta
-    flag_modified(segment, "metadata_json")
-    
-    db.commit()
-    db.refresh(segment)
-    
-    resp_dict = segment.__dict__.copy()
-    resp_dict['context_matches'] = result["context_matches"]
-    
-    # helper to extract json fields
-    meta_json = segment.metadata_json or {}
-    resp_dict['metadata'] = meta_json.get("metadata")
-    resp_dict['tags'] = meta_json.get("tags")
-    
-    return resp_dict
+        segment.metadata_json = current_meta
+        flag_modified(segment, "metadata_json")
+        
+        db.commit()
+        db.refresh(segment)
+        
+        resp_dict = segment.__dict__.copy()
+        resp_dict['context_matches'] = result["context_matches"]
+        
+        # helper to extract json fields
+        meta_json = segment.metadata_json or {}
+        resp_dict['metadata'] = meta_json.get("metadata")
+        resp_dict['tags'] = meta_json.get("tags")
+        
+        return resp_dict
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Generate Draft Endpoint Error: {str(e)}", exc_info=True)
+        db.rollback()
+        # Return 500 JSON so frontend receives valid error response instead of network error
+        # Note: HTTPException might be converted to JSON automatically by FastAPI
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{project_id}/reingest")
 async def reingest_project_endpoint(project_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):

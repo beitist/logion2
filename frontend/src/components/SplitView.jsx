@@ -760,6 +760,8 @@ export function SplitView({ projectId, onBack }) {
 
     // --- Sequential Lookahead Implementation ---
     const lookaheadRef = React.useRef({ queue: [], processing: false });
+    // Circuit Breaker: Stop retrying if backend is dead/blocking
+    const circuitRef = React.useRef({ failures: 0, isBroken: false });
 
     /**
      * ANALYZE SEGMENT (Context Fetch)
@@ -772,9 +774,20 @@ export function SplitView({ projectId, onBack }) {
                 if (s.id !== seg.id) return s;
                 return { ...s, ...updated };
             }));
+
+            // Success: Reset Circuit
+            circuitRef.current.failures = 0;
+            circuitRef.current.isBroken = false;
+
             return updated;
         } catch (e) {
             console.error("Analyze failed", e);
+            circuitRef.current.failures += 1;
+            if (circuitRef.current.failures >= 3) {
+                console.warn("Lookahead Circuit Broken: Too many failures. Stopping background tasks.");
+                circuitRef.current.isBroken = true;
+            }
+            throw e; // Re-throw to propagate to queue handler
         }
     };
 
@@ -815,6 +828,16 @@ export function SplitView({ projectId, onBack }) {
         const processQueue = async () => {
             if (lookaheadRef.current.processing) return;
 
+            // Check Circuit Breaker
+            if (circuitRef.current.isBroken) {
+                // Clear Queue to stop spinning
+                if (lookaheadRef.current.queue.length > 0) {
+                    lookaheadRef.current.queue = [];
+                    log("Background tasks paused (Stability). Refresh to retry.", "warning");
+                }
+                return;
+            }
+
             if (lookaheadRef.current.queue.length > 0) {
                 lookaheadRef.current.processing = true;
                 const nextId = lookaheadRef.current.queue.shift();
@@ -822,11 +845,16 @@ export function SplitView({ projectId, onBack }) {
                 try {
                     await processLookaheadItem(nextId);
                 } catch (e) {
+                    // Failures counted in analyzeSegment
                     console.error("Lookahead error:", e);
+                    // Add slight delay on error prevents rapid spam
+                    await new Promise(r => setTimeout(r, 1000));
                 } finally {
                     lookaheadRef.current.processing = false;
-                    // Trigger next loop immediately
-                    processQueue();
+                    // Trigger next loop immediately (unless broken)
+                    if (!circuitRef.current.isBroken) {
+                        processQueue();
+                    }
                 }
             }
         };
