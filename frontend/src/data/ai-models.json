@@ -1,0 +1,20 @@
+[
+    {
+        "id": "gemini-1.5-flash",
+        "name": "Gemini 1.5 Flash",
+        "cost_input_1k": 0.000075,
+        "cost_output_1k": 0.0003
+    },
+    {
+        "id": "gemini-pro",
+        "name": "Gemini 1.0 Pro",
+        "cost_input_1k": 0.0005,
+        "cost_output_1k": 0.0015
+    },
+    {
+        "id": "gemini-1.5-pro",
+        "name": "Gemini 1.5 Pro",
+        "cost_input_1k": 0.0035,
+        "cost_output_1k": 0.0105
+    }
+]

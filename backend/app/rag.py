@@ -57,6 +57,16 @@ except Exception as e:
     _bi_encoder = None
     _cross_encoder = None
     _aligner = None
+    
+def clean_tags(text: str) -> str:
+    """Strips XML-like tags (<1>, </1>) and [TAB]/[COMMENT] markers for embedding."""
+    if not text: return ""
+    # Strip <...>
+    # We want to remove <1>, <b pt="..."/>, etc.
+    text = re.sub(r'<[^>]+>', '', text)
+    # Strip [TAB], [COMMENT] checks
+    text = re.sub(r'\[(TAB|COMMENT|SHAPE)\]', '', text)
+    return text.strip()
 
 
 
@@ -225,14 +235,7 @@ def ingest_project_files(project_id: str):
                         
                         # Optimization: Remove tags for embedding to ensure best semantic match
                         # We still store the tagged version in rich_content (and content)
-                        # Actually: default 'content' should be clean text for display simplicity in list?
-                        # No, display needs tags.
-                        # Let's clean text for embedding only.
-                        def clean_tags(t):
-                             # Remove <1>, </1>, <1 />
-                             import re
-                             return re.sub(r'</?\d+( /)?>', '', t)
-                             
+                        
                         embed_texts = [clean_tags(b['text']) for b in batch]
                         embeddings = _bi_encoder.encode(embed_texts, convert_to_numpy=True, normalize_embeddings=True)
                         
@@ -319,7 +322,8 @@ def ingest_project_files(project_id: str):
                         batch = chunks[i : i + BATCH_SIZE]
                         
                         # LaBSE Encoding
-                        embeddings = _bi_encoder.encode(batch, convert_to_numpy=True, normalize_embeddings=True)
+                        embed_texts = [clean_tags(t) for t in batch]
+                        embeddings = _bi_encoder.encode(embed_texts, convert_to_numpy=True, normalize_embeddings=True)
                         
                         db_chunks = []
                         for content, vector in zip(batch, embeddings):
@@ -510,7 +514,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # 1. Bi-Encoder Retrieval (Recall)
     try:
         # Encode Query (Source English)
-        query_vector = _bi_encoder.encode(segment_text, normalize_embeddings=True).tolist()
+        query_vector = _bi_encoder.encode(clean_tags(segment_text), normalize_embeddings=True).tolist()
     except Exception as e:
         print(f"Embedding error: {e}")
         return []
@@ -567,6 +571,10 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
              continue
 
         match_type = "mandatory" if file.category == "legal" else "optional"
+        
+        # Penalty for Optional Matches (-1%)
+        if match_type != "mandatory":
+            ui_score = max(0, ui_score - 1)
         
         # Use Rich Content (with Tags) if available, else plain content
         display_content = chunk.rich_content if chunk.rich_content else chunk.content
@@ -657,6 +665,8 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
         }
 
     mt_draft = ""
+    usage_stats = {"input_tokens": 0, "output_tokens": 0}
+
     try:
         # Construct dynamic system instruction
         system_instruction = f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text. No preamble, no markdown formatting, no 'Translation:'."
@@ -761,6 +771,11 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
              res1 = draft_model.generate_content(pass1_prompt)
              plain_target = res1.text.strip()
              
+             # Track Usage (Pass 1)
+             if res1.usage_metadata:
+                 usage_stats["input_tokens"] += res1.usage_metadata.prompt_token_count
+                 usage_stats["output_tokens"] += res1.usage_metadata.candidates_token_count
+             
              # Pass 2: Inject Tags
              pass2_msg = f"""Here is a source sentence with formatting tags: {clean_source}
 Here is its translation (Plain Text): {plain_target}
@@ -777,10 +792,20 @@ Rules:
              res2 = draft_model.generate_content(pass2_msg)
              mt_draft = res2.text.strip()
              
+             # Track Usage (Pass 2)
+             if res2.usage_metadata:
+                 usage_stats["input_tokens"] += res2.usage_metadata.prompt_token_count
+                 usage_stats["output_tokens"] += res2.usage_metadata.candidates_token_count
+             
         else:
              # Standard Single Pass
              res = draft_model.generate_content(f"{system_instruction}\n\nSource: {clean_source}")
              mt_draft = res.text.strip()
+             
+             # Track Usage (Standard)
+             if res.usage_metadata:
+                 usage_stats["input_tokens"] += res.usage_metadata.prompt_token_count
+                 usage_stats["output_tokens"] += res.usage_metadata.candidates_token_count
 
         logger.debug(f"raw mt_draft: {mt_draft}")
         
@@ -814,7 +839,9 @@ Rules:
     return {
         "target_text": mt_draft, 
         "context_matches": matches,
-        "is_exact": False
+        "context_matches": matches,
+        "is_exact": False,
+        "usage": usage_stats
     }
 
 def generate_project_drafts(project_id: str):

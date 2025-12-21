@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { updateProject, reinitializeProject } from '../../api/client';
 import { Settings, Save, Globe, RefreshCw } from 'lucide-react';
 
-export function ProjectSettingsTab({ project, onUpdate }) {
+export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
     const [formData, setFormData] = useState({
         name: '',
         source_lang: '',
@@ -44,13 +44,18 @@ export function ProjectSettingsTab({ project, onUpdate }) {
     };
 
     const handleReinitialize = async () => {
-        if (!confirm("This will re-parse the source file. Existing translations will be preserved, but any segments not in the source will be deleted. Continue?")) return;
+        if (!confirm("This will re-parse the source file. Existing translations will be preserved, as long as source text matches. Segments not found in source will be deleted. Continue?")) return;
+
+        // Use Parent Handler if available (Displays Modal)
+        if (onReinit) {
+            onReinit();
+            return;
+        }
+
         try {
             await reinitializeProject(project.id);
             alert("Project reinitialized successfully!");
-            // Trigger parent update if needed, but project object itself might not change much visually besides segments.
-            // Maybe reload page or refetch segments? 
-            if (onUpdate) onUpdate(project); // Optimistic
+            if (onUpdate) onUpdate(project);
         } catch (e) {
             alert("Error: " + e.message);
         }

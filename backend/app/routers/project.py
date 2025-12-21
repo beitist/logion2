@@ -588,8 +588,9 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
     skip_ai = (mode == "analyze")
 
     # Fetch Context (Neighbors)
+    # Fetch Context (Neighbors)
     # Get up to 2 previous and 2 next segments
-    prev_segments = db.query(Segment.source_content).filter(
+    prev_segments = db.query(Segment.source_content, Segment.target_content).filter(
         Segment.project_id == project.id,
         Segment.index >= segment.index - 2,
         Segment.index < segment.index
@@ -601,7 +602,14 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         Segment.index <= segment.index + 2
     ).order_by(Segment.index).all()
     
-    prev_context = [s[0] for s in prev_segments]
+    # Format "Before" Context: Include Translation if available
+    prev_context = []
+    for s_src, s_tgt in prev_segments:
+        if s_tgt and len(s_tgt.strip()) > 2 and "<p></p>" not in s_tgt:
+             prev_context.append(f"{s_src} [Translated: {s_tgt}]")
+        else:
+             prev_context.append(s_src)
+             
     next_context = [s[0] for s in next_segments]
 
     result = generate_segment_draft(
@@ -644,10 +652,29 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
     elif mode == "analyze":
         # No draft generated (usually), just context matches updated
         pass
+        
+    # Track Token Usage if available
+    from sqlalchemy.orm.attributes import flag_modified
+
+    if result.get("usage"):
+        usage = result["usage"]
+        current_config = dict(project.config or {})
+        
+        # Ensure usage_stats dict exists
+        if "usage_stats" not in current_config:
+            current_config["usage_stats"] = {}
+            
+        # Ensure model specific dict exists
+        if model_name not in current_config["usage_stats"]:
+            current_config["usage_stats"][model_name] = {"input_tokens": 0, "output_tokens": 0}
+            
+        current_config["usage_stats"][model_name]["input_tokens"] += usage.get("input_tokens", 0)
+        current_config["usage_stats"][model_name]["output_tokens"] += usage.get("output_tokens", 0)
+        
+        project.config = current_config
+        flag_modified(project, "config")
 
     segment.metadata_json = current_meta
-    
-    from sqlalchemy.orm.attributes import flag_modified
     flag_modified(segment, "metadata_json")
     
     db.commit()

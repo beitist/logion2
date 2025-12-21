@@ -87,6 +87,7 @@ export function SplitView({ projectId, onBack }) {
 
     const [showDebug, setShowDebug] = useState(false); // Toggle for per-segment debug info
     const [logs, setLogs] = useState([]);
+    const [generatingSegments, setGeneratingSegments] = useState({}); // Track individual loading states
 
     const log = (message, type = 'info', details = null) => {
         setLogs(prev => [...prev, {
@@ -172,6 +173,24 @@ export function SplitView({ projectId, onBack }) {
         }
 
         isProcessingQueue.current = false;
+    };
+
+    // Source Re-initialization (Passed to Settings)
+    const handleFullReinit = async () => {
+        setIsReinitializing(true);
+        setReinitStatus("ingesting");
+        setReinitLogs(["Starting source re-initialization..."]);
+
+        try {
+            const res = await reinitializeProject(projectId);
+            setReinitLogs(prev => [...prev, "Re-parse complete.", `Preserved: ${res.stats?.preserved}`, `Added: ${res.stats?.added}`, `Removed: ${res.stats?.removed}`]);
+            setReinitStatus("ready");
+            // Refresh segments?
+            setTimeout(() => window.location.reload(), 1500);
+        } catch (e) {
+            setReinitStatus("error");
+            setReinitLogs(prev => [...prev, "Error: " + e.message]);
+        }
     };
 
     const handleReingest = async () => {
@@ -686,6 +705,9 @@ export function SplitView({ projectId, onBack }) {
 
     // Handler for manual AI Draft triggers
     const handleAiDraft = async (segmentId, isAuto = false, mode = "translate", isWorkflow = false) => {
+        // Set Loading State
+        setGeneratingSegments(prev => ({ ...prev, [segmentId]: true }));
+
         const seg = segmentsRef.current.find(s => s.id === segmentId); // Use Ref for safety
         if (!isAuto) {
             log(`Generating draft (${mode}) for segment #${seg?.index + 1}...`, 'info', { segmentId });
@@ -743,6 +765,12 @@ export function SplitView({ projectId, onBack }) {
                 alert("AI Draft creation failed");
             }
             throw err;
+        } finally {
+            setGeneratingSegments(prev => {
+                const next = { ...prev };
+                delete next[segmentId];
+                return next;
+            });
         }
     };
 
@@ -751,24 +779,41 @@ export function SplitView({ projectId, onBack }) {
         if (id === activeSegmentId) return;
         setActiveSegmentId(id);
 
-        // Auto-Generate Draft on Focus (if configured)
+        const currentSeg = segmentsRef.current.find(s => s.id === id);
+        if (!currentSeg) return;
+
+        // 1. Auto-Fetch (Analyze) Current if missing matches
+        const hasMatches = (currentSeg.context_matches?.length > 0 || currentSeg.metadata?.context_matches?.length > 0);
+        if (!hasMatches) {
+            // Queue immediate analysis
+            // We use queueSegments to ensure concurrency control
+            queueSegments([id], "analyze");
+        }
+
+        // 2. Rolling Background Analysis (Next 5)
+        // Fetches matches for upcoming segments to ensure they are ready when user arrives
+        const currentIndex = currentSeg.index;
+        const LOOKAHEAD = 5;
+
+        const nextSegments = segmentsRef.current
+            .slice(currentIndex + 1, currentIndex + 1 + LOOKAHEAD)
+            .filter(s => {
+                // Only queue if no matches yet
+                const matches = s.context_matches || s.metadata?.context_matches || [];
+                return matches.length === 0;
+            });
+
+        if (nextSegments.length > 0) {
+            queueSegments(nextSegments.map(s => s.id), "analyze");
+        }
+
+        // 3. Auto-Draft (if configured)
+        // Existing logic for "PreLoad Mode" (Full Draft Generation)
         const aiSettings = project?.config?.ai_settings || {};
         const isPreloadMode = aiSettings.preload_mode === true;
 
-        // "Iterative way... loaded after the next"
-        const preTranslateCount = parseInt(aiSettings.pre_translate_count) || 0;
-
-        if (!isPreloadMode && preTranslateCount > 0) {
-            // Find current index
-            const currentIndex = segmentsRef.current.findIndex(s => s.id === id);
-            if (currentIndex !== -1) {
-                // Queue Next N
-                const nextSegments = segmentsRef.current.slice(currentIndex, currentIndex + preTranslateCount + 1); // +1 because slice is exclusive? No, we want Current + N ahead?
-                // User said "while I am working on one", "segment is loaded after the next"
-                // Usually means: Current (if empty) + Next 1 + Next 2...
-                const idsToQueue = nextSegments.map(s => s.id);
-                queueSegments(idsToQueue);
-            }
+        if (isPreloadMode) {
+            // ... existing preload logic if needed, but "analyze" usually suffices for context ...
         }
     };
 
@@ -994,7 +1039,10 @@ export function SplitView({ projectId, onBack }) {
                                 ) : activeSettingsTab === 'glossary' ? (
                                     <GlossarySettingsTab project={project} onUpdate={setProject} />
                                 ) : activeSettingsTab === 'stats' ? (
-                                    <StatisticsSettingsTab project={{ ...project, segments: segments }} />
+                                    <StatisticsSettingsTab
+                                        project={{ ...project, segments: segments }}
+                                        onProjectUpdate={setProject}
+                                    />
                                 ) : activeSettingsTab === 'workflows' ? (
                                     <WorkflowsTab
                                         project={project}
@@ -1003,7 +1051,11 @@ export function SplitView({ projectId, onBack }) {
                                         onReingest={handleReingest}
                                     />
                                 ) : activeSettingsTab === 'project' ? (
-                                    <ProjectSettingsTab project={project} onUpdate={setProject} />
+                                    <ProjectSettingsTab
+                                        project={project}
+                                        onUpdate={setProject}
+                                        onReinit={handleFullReinit}
+                                    />
                                 ) : null}
                             </div>
 
@@ -1055,7 +1107,16 @@ export function SplitView({ projectId, onBack }) {
                             <div key={seg.id} className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
                                 {/* Source Column */}
                                 <div className="p-5 bg-gray-50/80 rounded-l-xl text-sm leading-relaxed border-r border-gray-100 flex flex-col relative">
-                                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">#{seg.index + 1}</div>
+                                    <div className="absolute top-2 right-2 flex items-center gap-2">
+                                        <button
+                                            onClick={() => navigator.clipboard.writeText(seg.source_content)}
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-300 hover:text-gray-500 rounded"
+                                            title="Copy Source Text"
+                                        >
+                                            <Copy size={12} />
+                                        </button>
+                                        <span className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">#{seg.index + 1}</span>
+                                    </div>
 
                                     {/* Source Text (Tiptap ReadOnly with Invisible Chars) */}
                                     <div className="flex-grow">
@@ -1100,8 +1161,9 @@ export function SplitView({ projectId, onBack }) {
                                                 </h4>
                                                 <button
                                                     onClick={() => handleAiDraft(seg.id)}
-                                                    className="text-gray-400 hover:text-indigo-600 transition-colors"
+                                                    className={`text-gray-400 hover:text-indigo-600 transition-colors ${generatingSegments[seg.id] ? 'animate-spin text-indigo-500' : ''}`}
                                                     title="Refresh Context (Cmd+Alt+ß / Cmd+Alt+?)"
+                                                    disabled={generatingSegments[seg.id]}
                                                 >
                                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                                 </button>
