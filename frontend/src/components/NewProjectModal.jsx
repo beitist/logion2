@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createProject, getProject } from '../api/client';
 import { X, Upload, Sparkles } from 'lucide-react';
+import { BlockingModal } from './BlockingModal';
 
 export function NewProjectModal({ onClose, onCreated }) {
     // ... Existing state ...
@@ -111,51 +112,24 @@ export function NewProjectModal({ onClose, onCreated }) {
         }
     };
 
-    // Render Terminal View if project created and AI used
-    if (createdProject) {
+    // Render Blocking Modal if project created and AI used
+    if (createdProject && formData.use_ai) {
+        const taskState = {
+            isOpen: true,
+            title: "RAG INGESTION PROTOCOL", // Kept original title flavor
+            status: ragStatus === 'ready' ? 'done' : ragStatus === 'error' ? 'error' : 'running',
+            progress: ragStatus === 'ready' ? 1.0 : -1, // Indeterminate loading
+            logs: logs
+        };
+
         return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-                <div className="bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col h-[600px] border border-green-500/30">
-                    <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-950">
-                        <h2 className="text-xl font-mono text-green-500 flex items-center gap-2">
-                            <Sparkles size={18} /> RAG INGESTION PROTOCOL
-                        </h2>
-                        {ragStatus && (
-                            <span className={`px-2 py-1 rounded text-xs font-mono uppercase ${ragStatus === 'ready' ? 'bg-green-900 text-green-100' : 'bg-yellow-900 text-yellow-100'}`}>
-                                STATUS: {ragStatus}
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="flex-1 bg-black p-4 overflow-y-auto font-mono text-sm">
-                        <div className="space-y-1">
-                            {logs.map((log, i) => (
-                                <div key={i} className="text-green-400 border-l-2 border-green-900 pl-2">
-                                    <span className="opacity-50 mr-2">{log.substring(0, 10)}</span>
-                                    {log.substring(11)}
-                                </div>
-                            ))}
-                            <div className="animate-pulse text-green-500">_</div>
-                        </div>
-                    </div>
-
-                    <div className="p-4 border-t border-gray-800 bg-gray-950 flex justify-between">
-                        <button
-                            onClick={() => onCreated(createdProject)}
-                            className="px-4 py-2 text-xs font-mono text-gray-500 hover:text-gray-300 transition-colors"
-                        >
-                            [ ESCAPE / BACKGROUND ]
-                        </button>
-
-                        <button
-                            onClick={() => onCreated(createdProject)}
-                            disabled={ragStatus !== 'ready' && ragStatus !== 'error'}
-                            className="px-6 py-2 font-mono text-black bg-green-500 rounded hover:bg-green-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                        >
-                            {ragStatus === 'ready' ? 'ENTER COCKPIT >>' : 'INITIALIZING...'}
-                        </button>
-                    </div>
-                </div>
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                {/* Re-use the Generic Blocking Modal, but wrapped to handle onClose behavior for 'Enter Cockpit' */}
+                <BlockingModal
+                    task={taskState}
+                    onComplete={() => onCreated(createdProject)}
+                    onReload={() => onCreated(createdProject)} // Maps "Reload" button to "Enter Cockpit"
+                />
             </div>
         )
     }

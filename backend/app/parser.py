@@ -202,85 +202,116 @@ def _extract_endnotes(doc, context) -> List[SegmentInternal]:
 def _process_container(container, base_metadata: dict, context: dict) -> List[SegmentInternal]:
     container_segments = []
     
-    # 1. Paragraphs
-    for i, para in enumerate(container.paragraphs):
-        # REMOVED: if not para.text.strip(): continue (Skips shapes/images!)
-        
-        # Merge base_metadata with specific location
-        loc = base_metadata.copy()
-        # "index" was used for body paragraphs in WP1. 
-        if base_metadata.get("type") == "body":
-            loc["index"] = i
-        else:
-            loc["p_index"] = i
+    # Iterate over inner content (Paragraphs AND Tables) in document order
+    # iter_inner_content() yields Paragraph or Table objects
+    
+    # Note: python-docx 0.8.11+ supports iter_inner_content.
+    # If not available on some containers (like Header/Footer in older versions), we might need fallback.
+    # But usually it works for Body, Cell, Header, Footer.
+    
+    iterator = None
+    try:
+        iterator = container.iter_inner_content()
+    except AttributeError:
+        # Fallback for objects that might not have iter_inner_content (unlikely in recent python-docx)
+        # Using separate lists as fallback
+        pass
+
+    if iterator:
+        for item in iterator:
+            if isinstance(item, docx.text.paragraph.Paragraph):
+                # Process Paragraph
+                i = 0 # Index tracking is harder with mixed content. context["para_counter"]?
+                # Actually, p_index was useful for re-assembly mapping.
+                # If we lose strict indexing, we might break reassembly if it expects separated indices.
+                # However, reassembly usually iterates body elements too.
+                # Let's check how reassembly matches segments.
+                # Usually it maps by Segment ID. 
+                # If we use p_index for location, we need to know WHICH paragraph index it is.
+                # `container.paragraphs.index(item)` is O(N).
+                # We can maintain separate counters.
+                
+                # OPTIMIZATION: Manually track indices?
+                # or just accept O(N) lookup? For reasonable docs it is fine.
+                # Let's use counters.
+                
+                pass 
+    
+    # Redoing the strategy:
+    # We will maintain counters for paragraphs and tables seen so far.
+    p_counter = 0
+    t_counter = 0
+    
+    children = []
+    try:
+        children =  list(container.iter_inner_content())
+    except AttributeError:
+        # Fallback: Merge lists (but this loses order, which is the problem)
+        # If order matters, we assume iter_inner_content exists.
+        logger.warning(f"Container {type(container)} has no iter_inner_content")
+        return []
+
+    for item in children:
+        if isinstance(item, docx.text.paragraph.Paragraph):
+            # Process Paragraph
+            loc = base_metadata.copy()
+            if base_metadata.get("type") == "body":
+                loc["index"] = p_counter
+            else:
+                loc["p_index"] = p_counter
             
-        segment_list = _process_paragraph(para._element, loc, context)
-        if segment_list:
-            container_segments.extend(segment_list)
+            # Increment counter
+            p_counter += 1
+            
+            segment_list = _process_paragraph(item._element, loc, context)
+            if segment_list:
+                container_segments.extend(segment_list)
 
-    # 2. Tables
-    for t_idx, table in enumerate(container.tables):
-        # Track processed cells to handle Merged Cells (vMerge)
-        # python-docx repeats the cell object for each covered row.
-        processed_tcs = set() 
-        
-        for r_idx, row in enumerate(table.rows):
-            for c_idx, cell in enumerate(row.cells):
-                # Check for duplication via XML element (tc)
-                if cell._tc in processed_tcs:
-                    continue
-                processed_tcs.add(cell._tc)
+        elif isinstance(item, docx.table.Table):
+            # Process Table
+            table = item
+            t_idx = t_counter
+            t_counter += 1
+            
+            # Track processed cells (merge handling)
+            processed_tcs = set() 
+            
+            for r_idx, row in enumerate(table.rows):
+                for c_idx, cell in enumerate(row.cells):
+                    if cell._tc in processed_tcs:
+                        continue
+                    processed_tcs.add(cell._tc)
 
-                # Recursion! A cell is also a container (has paragraphs and tables)
-                # We need to construct the location correctly.
-                
-                cell_loc = base_metadata.copy()
-                cell_loc["child_type"] = "table_cell" # differentiating direct paragraphs vs table cell paragraphs
-                cell_loc["table_index"] = t_idx
-                cell_loc["row_index"] = r_idx
-                cell_loc["cell_index"] = c_idx
-                
-                # Cells only contain paragraphs/tables, so we can use _process_container?
-                # But _process_container iterates tables too, which supports nested tables automatically!
-                # However, our metadata scheme in WP1 Extension 1 was flat for tables: "type": "table".
-                # To support recursion and headers properly, we need a flexible metadata structure.
-                # For this step, let's keep it compatible but support the hierarchy.
-                
-                # Current table logic used:
-                # location = { "type": "table", "table_index": ..., ... "p_index": ... }
-                # The "type" was "table".
-                
-                # If we are in the body, base_metadata is {"type": "body"}.
-                # If we are in header, base_metadata is {"type": "header", "section": ...}.
-                
-                # Let's adjust the location logic for specific paragraphs inside the cell.
-                # We will NOT call _process_container recursively yet to avoid breaking previous schema too much,
-                # but we will iterate the cell's paragraphs.
-                
-                for p_idx, para in enumerate(cell.paragraphs):
-                    # REMOVED: if not para.text.strip(): continue
-                        
-                    loc = base_metadata.copy()
-                    # We override "type" to indicate it's in a table, OR we keep parent type?
-                    # The previous verification expected "type": "table".
-                    # Let's keep "type": "table" but add "parent_context" if needed?
-                    # Actually, for Headers, we need to know it is in a header.
-                    
-                    if base_metadata["type"] == "body":
-                         loc["type"] = "table" # Backwards compatibility with previous step
+                    cell_loc = base_metadata.copy()
+                    if base_metadata.get("type") == "body":
+                         cell_loc["type"] = "table"
                     else:
-                         # It's a table inside a header/footer
-                         loc["sub_type"] = "table"
+                         cell_loc["sub_type"] = "table"
                          
-                    loc["table_index"] = t_idx
-                    loc["row_index"] = r_idx
-                    loc["cell_index"] = c_idx
-                    loc["p_index"] = p_idx
+                    cell_loc["table_index"] = t_idx
+                    cell_loc["row_index"] = r_idx
+                    cell_loc["cell_index"] = c_idx
                     
-                    segment_list = _process_paragraph(para._element, loc, context)
-                    if segment_list:
-                        container_segments.extend(segment_list)
-
+                    # Recursion? Cell is a container!
+                    # If we call _process_container(cell), it handles nested tables!
+                    # But we need to check if _process_container supports "type": "table/cell".
+                    # Our current logic manually iterated cell.paragraphs.
+                    # Replacing with recursive call is CLEANER and handles nested tables.
+                    # Let's try recursive call.
+                    
+                    # Ensure metadata is correct for recursion
+                    # We pass cell_loc as base_metadata for the cell.
+                    # Inside the cell, paragraphs will get "p_index".
+                    # If the cell has tables, they will get "table_index" (relative to cell).
+                    
+                    # ISSUE: Our schema separates "index" (body para) and "p_index" (prop).
+                    # If we recurse, `cell` becomes the container.
+                    # Inside cell, base_metadata is cell_loc.
+                    # Paragraphs get `p_index` (from `else` block above).
+                    # This matches the manual logic we had!
+                    
+                    container_segments.extend(_process_container(cell, cell_loc, context))
+            
     return container_segments
 
 def _process_paragraph(para_element, location: dict, context: dict) -> List[SegmentInternal]:

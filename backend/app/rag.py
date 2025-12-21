@@ -729,6 +729,12 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
                      c_content = c_content.replace("[TAB]", "<tab/>")
                  
                  system_instruction += f"\n- {c_content}"
+                 # Add Score Info
+                 score = m.get('score', 0)
+                 if score >= 99:
+                      system_instruction += f" [MANDATORY MATCH: {score}%]"
+                 else:
+                      system_instruction += f" [Score: {score}%]"
         
         # Inject Custom Prompt (Technical/Style)
         if custom_prompt and custom_prompt.strip():

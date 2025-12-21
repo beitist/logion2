@@ -18,6 +18,7 @@ import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, C
 import './TiptapStyles.css'; // Ensure invisible character styles are available
 import { LogConsole } from './LogConsole';
 import { ShortcutsPanel } from './ShortcutsPanel';
+import { BlockingModal } from './BlockingModal';
 
 export function SplitView({ projectId, onBack }) {
     // ... existing state ...
@@ -41,35 +42,47 @@ export function SplitView({ projectId, onBack }) {
     // Export UI
     const [showExportMenu, setShowExportMenu] = useState(false);
 
-    // Re-initialization State
-    const [isReinitializing, setIsReinitializing] = useState(false);
-    const [reinitStatus, setReinitStatus] = useState("idle"); // idle, ingesting, ready, error
-    const [reinitLogs, setReinitLogs] = useState([]);
+    // Blocking Task State (Reinit / Auto-Translate)
+    const [blockingTask, setBlockingTask] = useState({
+        isOpen: false,
+        type: null, // 'reinit', 'autotranslate'
+        status: 'idle', // 'idle', 'running', 'done', 'error'
+        logs: [],
+        title: "",
+        progress: -1 // -1 = indeterminate, 0-1 = percentage
+    });
 
-    // Polling for Re-initialization
+    // Polling / Scroll effect
+    // Replaced reinit polling with generic polling inside the effect if needed,
+    // but reinit uses specific endpoint polling.
+    // Let's keep the reinit polling logic but attached to blockingTask.
     useEffect(() => {
         let interval;
-        if (isReinitializing) {
+        if (blockingTask.isOpen && blockingTask.type === 'reinit' && blockingTask.status === 'running') {
             interval = setInterval(async () => {
                 try {
                     const p = await getProject(projectId);
-                    if (p) {
-                        setReinitStatus(p.rag_status);
-                        setReinitLogs(p.ingestion_logs || []);
-
-                        if (p.rag_status === 'ready' || p.rag_status === 'error') {
-                            // Keep interval running? user might want to see logs?
-                            // No, stop polling to save bandwidth, but keep modal open.
-                            clearInterval(interval);
+                    setBlockingTask(prev => {
+                        const newLogs = p.ingestion_logs || [];
+                        // Only update logs if they are different or longer
+                        if (newLogs.length > prev.logs.length) {
+                            return { ...prev, logs: newLogs };
                         }
+                        return prev;
+                    });
+
+                    if (p.rag_status === 'ready') {
+                        setBlockingTask(prev => ({ ...prev, status: 'done', logs: [...(p.ingestion_logs || []), "Ingestion Complete."] }));
+                        clearInterval(interval);
+                    } else if (p.rag_status === 'error') {
+                        setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...(p.ingestion_logs || []), "Ingestion Failed."] }));
+                        clearInterval(interval);
                     }
-                } catch (e) {
-                    console.error("Polling failed", e);
-                }
+                } catch (e) { console.error(e); }
             }, 1000);
         }
         return () => clearInterval(interval);
-    }, [isReinitializing, projectId]);
+    }, [blockingTask.isOpen, blockingTask.type, blockingTask.status, projectId]);
 
 
 
@@ -105,6 +118,7 @@ export function SplitView({ projectId, onBack }) {
     const draftQueue = React.useRef([]);
     const isProcessingQueue = React.useRef(false);
     const segmentsRef = React.useRef(segments); // Keep latest state for async queue
+    const stopRef = React.useRef(false); // For cancelling batch operations
 
     // Update ref whenever segments change
     useEffect(() => {
@@ -177,20 +191,109 @@ export function SplitView({ projectId, onBack }) {
 
     // Source Re-initialization (Passed to Settings)
     const handleFullReinit = async () => {
-        setIsReinitializing(true);
-        setReinitStatus("ingesting");
-        setReinitLogs(["Starting source re-initialization..."]);
+        if (!confirm("Re-initialize Project?\n\nThis will re-parse all source files (DOCX/TMX) and rebuild the vector index.\n\n- Existing Translations will be PRESERVED (aligned by index/text).\n- Deleted segments will be removed.\n- New content will be added.")) return;
+
+        setBlockingTask({
+            isOpen: true,
+            type: 'reinit',
+            status: 'running',
+            title: "Re-initializing Project...",
+            logs: ["Starting re-initialization..."],
+            progress: -1
+        });
 
         try {
-            const res = await reinitializeProject(projectId);
-            setReinitLogs(prev => [...prev, "Re-parse complete.", `Preserved: ${res.stats?.preserved}`, `Added: ${res.stats?.added}`, `Removed: ${res.stats?.removed}`]);
-            setReinitStatus("ready");
-            // Refresh segments?
-            setTimeout(() => window.location.reload(), 1500);
-        } catch (e) {
-            setReinitStatus("error");
-            setReinitLogs(prev => [...prev, "Error: " + e.message]);
+            await reinitializeProject(projectId);
+            setBlockingTask(prev => ({ ...prev, logs: [...prev.logs, "Backend process started..."] }));
+        } catch (err) {
+            console.error(err);
+            setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...prev.logs, `Error: ${err.message}`] }));
         }
+    };
+
+    const handleAutoTranslate = async () => {
+        const aiSettings = project?.config?.ai_settings || {};
+        const modelName = aiSettings.model || "Default";
+
+        if (!confirm(`Start Auto-Translate (High Quality)?\n\nModel: ${modelName}\n\nThis will sequentially process all untranslated segments. It ensures strict context continuity but may take time.`)) return;
+
+        // Identify Candidates
+        const candidates = segmentsRef.current.filter(s => {
+            return s.status !== 'translated' && s.status !== 'approved';
+        });
+
+        if (candidates.length === 0) {
+            alert("No untranslated segments found!");
+            return;
+        }
+
+        stopRef.current = false;
+        setBlockingTask({
+            isOpen: true,
+            type: 'autotranslate',
+            status: 'running',
+            title: `Auto-Translating (${candidates.length} segments)`,
+            logs: [`Starting batch job with model: ${modelName}`, `Queue size: ${candidates.length}`],
+            progress: 0
+        });
+
+        // Loop
+        let processed = 0;
+        let errors = 0;
+
+        for (const seg of candidates) {
+            if (stopRef.current) {
+                setBlockingTask(prev => ({
+                    ...prev,
+                    status: 'error',
+                    logs: [...prev.logs, "🛑 Operation cancelled by user."]
+                }));
+                return;
+            }
+
+            try {
+                // Scroll into view
+                document.getElementById(`segment-${seg.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+
+                // Update Logs
+                const logMsg = `[${processed + 1}/${candidates.length}] Translating #${seg.index + 1}...`;
+                setBlockingTask(prev => ({
+                    ...prev,
+                    logs: [...prev.logs.slice(-4), logMsg], // Keep last 5 logs
+                    progress: processed / candidates.length
+                }));
+
+                // Generate (Wait for result)
+                const res = await generateDraft(seg.id, "translate", false);
+
+                // Update Local State immediately
+                setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, ...res.segment } : s));
+
+                // Update Ref
+                const indexInRef = segmentsRef.current.findIndex(s => s.id === seg.id);
+                if (indexInRef !== -1) {
+                    segmentsRef.current[indexInRef] = { ...segmentsRef.current[indexInRef], ...res.segment };
+                }
+
+            } catch (err) {
+                console.error(err);
+                errors++;
+                setBlockingTask(prev => ({
+                    ...prev,
+                    logs: [...prev.logs, `Error #${seg.index + 1}: ${err.message}`]
+                }));
+            }
+
+            processed++;
+        }
+
+        setBlockingTask(prev => ({
+            ...prev,
+            status: 'done',
+            title: "Translation Complete",
+            progress: 1,
+            logs: [...prev.logs, `Finished. Processed: ${processed}, Errors: ${errors}`]
+        }));
     };
 
     const handleReingest = async () => {
@@ -198,9 +301,14 @@ export function SplitView({ projectId, onBack }) {
 
         try {
             await reingestProject(projectId);
-            setIsReinitializing(true);
-            setReinitStatus("started");
-            setReinitLogs(["Request sent..."]);
+            setBlockingTask({
+                isOpen: true,
+                type: 'reinit', // Reingest also uses the reinit polling mechanism
+                status: 'running',
+                title: "Re-ingesting Project...",
+                logs: ["Request sent..."],
+                progress: -1
+            });
         } catch (e) {
             alert("Failed to trigger re-ingest: " + e.message);
         }
@@ -225,7 +333,7 @@ export function SplitView({ projectId, onBack }) {
                 if (preTranslateCount > 0 && s.length > 0) {
                     // Start from 0, queue N segments
                     const initialIds = s.slice(0, preTranslateCount).map(seg => seg.id);
-                    // Defer to ensure refs/state are settled? 
+                    // Defer to ensure refs/state are settled?
                     // Direct call is fine as we set segmentsRef above.
                     // But queueSegments uses segmentsRef.
                     setTimeout(() => queueSegments(initialIds), 100);
@@ -275,8 +383,8 @@ export function SplitView({ projectId, onBack }) {
             changed = false;
             // Match <N> [TAB] or \t </N> with optional spaces
             hydrated = hydrated.replace(/<(\d+)>\s*(?:\[TAB\]|\t)\s*<\/\1>/g, (match, id) => {
-                // We don't strictly care about tag type here. 
-                // If a tag wraps ONLY a tab, it's structurally irrelevant for the Editor view 
+                // We don't strictly care about tag type here.
+                // If a tag wraps ONLY a tab, it's structurally irrelevant for the Editor view
                 // and causes visual "Chips" (e.g. bold tabs). We strip the wrapper.
                 changed = true;
                 return "\t";
@@ -388,7 +496,7 @@ export function SplitView({ projectId, onBack }) {
 
         // Serialize Tabs/Comments Visuals back to markers
         // note: Generic Tabs logic above already injected [TAB] inside tags!
-        // So we don't need to replace `[TAB]` visual unless it was manually typed? 
+        // So we don't need to replace `[TAB]` visual unless it was manually typed?
         // But `htmlContent` contains ` < span...> TAB</span > ` inside the node?
         // Wait, replace loop matched the WHOLE span. So inner content is GONE.
         // My return `< ${ realId }> [TAB]</${ realId }> ` REPLACES the whole chip.
@@ -884,14 +992,21 @@ export function SplitView({ projectId, onBack }) {
                     >
                         ⚙️ Settings
                     </button>
-                    {/* Export Dropdown */}
                     <div className="relative">
                         <div className="inline-flex rounded-md shadow-sm">
                             <button
+                                onClick={handleAutoTranslate}
+                                className="bg-indigo-600 text-white px-4 py-2 rounded-l hover:bg-indigo-700 font-medium transition-colors flex items-center gap-2 border-r border-indigo-700"
+                                title="Run Auto-Translate on all empty segments"
+                            >
+                                ✨ Auto-Translate
+                            </button>
+                            <button
                                 onClick={handleExport}
-                                className="bg-green-600 text-white px-4 py-2 rounded-l hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
+                                className="bg-green-600 text-white px-4 py-2 rounded-r hover:bg-green-700 font-medium transition-colors flex items-center gap-2"
                             >
                                 <Download size={16} /> Export DOCX
+
                             </button>
                             <button
                                 onClick={() => setShowExportMenu(!showExportMenu)}
@@ -1035,6 +1150,7 @@ export function SplitView({ projectId, onBack }) {
                                         project={project}
                                         onUpdate={setProject}
                                         onQueueAll={() => queueSegments(segments.map(s => s.id))}
+                                        onAutoTranslate={handleAutoTranslate}
                                     />
                                 ) : activeSettingsTab === 'glossary' ? (
                                     <GlossarySettingsTab project={project} onUpdate={setProject} />
@@ -1225,7 +1341,7 @@ export function SplitView({ projectId, onBack }) {
                                                             // Apply Flash if needed
                                                             if (flashingSegments[seg.id]) {
                                                                 bgClass = 'animate-flash-purple';
-                                                                // Note: keyframes handle bg color. 
+                                                                // Note: keyframes handle bg color.
                                                                 // If we want it to stay purple-50 after, the keyframe 100% matches it.
                                                             }
                                                         } else if (isGlossary) {
@@ -1343,74 +1459,13 @@ export function SplitView({ projectId, onBack }) {
 
             <ShortcutsPanel isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
 
-            {/* Reinit Modal */}
-            {isReinitializing && (
-                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 flex flex-col gap-4">
-                        <div className="flex items-center gap-3">
-                            <div className={`p-3 rounded-full ${reinitStatus === 'ready' ? 'bg-green-100 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
-                                {reinitStatus === 'ready' ? <Check size={24} /> : (
-                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                                )}
-                            </div>
-                            <div>
-                                <h3 className="text-lg font-bold text-gray-800">
-                                    {reinitStatus === 'ready' ? "Re-initialization Complete" : "Re-initializing Project..."}
-                                </h3>
-                                <p className="text-sm text-gray-500">
-                                    {reinitStatus === 'ready' ? "You can now reload the project." : "Parsing files and generating vectors..."}
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden relative">
-                            {reinitStatus === 'ready' ? (
-                                <div className="bg-green-500 h-full w-full transition-all duration-500"></div>
-                            ) : (
-                                <div className="bg-blue-500 h-full w-1/3 absolute top-0 left-0 bottom-0 animate-ping" style={{ animationDuration: '2s', width: '100%', opacity: 0.3 }}></div>
-                            )}
-                            {reinitStatus !== 'ready' && (
-                                <div className="bg-blue-600 h-full w-1/3 absolute top-0 animate-pulse"></div>
-                            )}
-                        </div>
-
-                        {/* Logs */}
-                        <div className="bg-gray-900 rounded-lg p-3 h-48 overflow-y-auto font-mono text-[10px] text-green-400 flex flex-col-reverse">
-                            {reinitLogs && reinitLogs.length > 0 ? reinitLogs.slice().reverse().map((l, i) => (
-                                <div key={i} className="border-b border-gray-800/50 pb-0.5 mb-0.5 last:border-0">{l}</div>
-                            )) : <div className="text-gray-500 italic">Waiting for logs...</div>}
-                        </div>
-
-                        <div className="flex justify-end gap-2 mt-2">
-                            {reinitStatus === 'ready' ? (
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => window.location.reload()}
-                                        className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium shadow-sm"
-                                    >
-                                        Reload Project
-                                    </button>
-                                    <button
-                                        onClick={() => setIsReinitializing(false)}
-                                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                                    >
-                                        Close
-                                    </button>
-                                </div>
-                            ) : (
-                                <button
-                                    disabled
-                                    className="px-4 py-2 bg-gray-100 text-gray-400 rounded cursor-not-allowed border border-gray-200"
-                                >
-                                    Processing...
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
+            {/* Generic Blocking Modal */}
+            {/* Generic Blocking Modal */}
+            <BlockingModal
+                task={blockingTask}
+                onStop={() => { stopRef.current = true; }}
+                onReload={() => window.location.reload()}
+            />
         </div>
     );
-};
+}
