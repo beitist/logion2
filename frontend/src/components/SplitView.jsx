@@ -101,6 +101,7 @@ export function SplitView({ projectId, onBack }) {
     const [showDebug, setShowDebug] = useState(false); // Toggle for per-segment debug info
     const [logs, setLogs] = useState([]);
     const [generatingSegments, setGeneratingSegments] = useState({}); // Track individual loading states
+    const generatingSegmentsRef = React.useRef({}); // Synchronous tracking for deduplication
 
     const log = (message, type = 'info', details = null) => {
         setLogs(prev => [...prev, {
@@ -762,33 +763,58 @@ export function SplitView({ projectId, onBack }) {
     const lookaheadRef = React.useRef({ queue: [], processing: false });
     // Circuit Breaker: Stop retrying if backend is dead/blocking
     const circuitRef = React.useRef({ failures: 0, isBroken: false });
+    // Deduplication: Track ongoing requests to prevent double-firing
+    const activeRequestsRef = React.useRef({}); // { "id:mode": Promise }
+    // Project State Ref for Background Loops
+    const projectRef = React.useRef(project);
+
+    useEffect(() => {
+        projectRef.current = project;
+    }, [project]);
 
     /**
      * ANALYZE SEGMENT (Context Fetch)
      * Fetches TM/Glossary/Vector matches without triggering generative AI.
      */
     const analyzeSegment = async (seg, mode = 'analyze') => {
-        try {
-            const updated = await generateDraft(seg.id, mode);
-            setSegments(prev => prev.map(s => {
-                if (s.id !== seg.id) return s;
-                return { ...s, ...updated };
-            }));
+        const reqKey = `${seg.id}:${mode}`;
 
-            // Success: Reset Circuit
-            circuitRef.current.failures = 0;
-            circuitRef.current.isBroken = false;
-
-            return updated;
-        } catch (e) {
-            console.error("Analyze failed", e);
-            circuitRef.current.failures += 1;
-            if (circuitRef.current.failures >= 3) {
-                console.warn("Lookahead Circuit Broken: Too many failures. Stopping background tasks.");
-                circuitRef.current.isBroken = true;
-            }
-            throw e; // Re-throw to propagate to queue handler
+        // Return existing promise if already in flight
+        if (activeRequestsRef.current[reqKey]) {
+            console.log(`[Dedupe] Hooking into existing request for ${seg.index + 1} (${mode})`);
+            return activeRequestsRef.current[reqKey];
         }
+
+        const requestPromise = (async () => {
+            try {
+                const updated = await generateDraft(seg.id, mode);
+                setSegments(prev => prev.map(s => {
+                    if (s.id !== seg.id) return s;
+                    return { ...s, ...updated };
+                }));
+
+                // Success: Reset Circuit
+                circuitRef.current.failures = 0;
+                circuitRef.current.isBroken = false;
+
+                return updated;
+            } catch (e) {
+                console.error("Analyze failed", e);
+                circuitRef.current.failures += 1;
+                if (circuitRef.current.failures >= 3) {
+                    console.warn("Lookahead Circuit Broken: Too many failures. Stopping background tasks.");
+                    circuitRef.current.isBroken = true;
+                }
+                throw e; // Re-throw to propagate to queue handler
+            } finally {
+                // Cleanup after completion (success or fail)
+                delete activeRequestsRef.current[reqKey];
+            }
+        })();
+
+        // Store promise
+        activeRequestsRef.current[reqKey] = requestPromise;
+        return requestPromise;
     };
 
     /**
@@ -811,12 +837,13 @@ export function SplitView({ projectId, onBack }) {
         const hasContent = seg.target_content && seg.target_content.trim().length > 0;
 
         // Only auto-generate if project has AI enabled AND segment needs it
-        if (project?.use_ai && !isTranslated && !hasContent) {
+        if (projectRef.current?.use_ai && !isTranslated && !hasContent) {
             // We use 'translate' mode which uses the matches we just fetched
             // But we need to be careful not to overwrite user work if they started typing?
             // Ideally check backend 'locked' status or similar.
             // For lookahead, we generate generic draft.
-            await generateDraft(seg.id, 'translate');
+            // UPDATE: User requests NEVER overwrite target. So we use 'draft' mode (suggestion).
+            await generateDraft(seg.id, 'draft');
         }
     };
 
@@ -880,15 +907,24 @@ export function SplitView({ projectId, onBack }) {
         if (seg) {
             // A. Analyze (Matches) - ALWAYS first to ensure context visibility
             // This updates state asynchronously, showing matches in UI.
-            await analyzeSegment(seg, 'analyze');
+            // OPTIMIZATION: Only analyze if we don't have matches yet?
+            // Users might want to refresh, but they can use the refresh button.
+            // Checking availability:
+            let analyzedSeg = seg;
+            if (!seg.context_matches || seg.context_matches.length === 0) {
+                const updatedFields = await analyzeSegment(seg, 'analyze');
+                // Create a merged object to check latest state
+                analyzedSeg = { ...seg, ...updatedFields };
+            }
 
             // B. Generate Draft? (If auto-enabled and needed)
             // "I am in segment 1 and it automatically fetches MT + matches" - user disliked parallel.
             // Now matches are done. User can see them.
             // We trigger AI now.
-            const isTranslated = seg.status === 'translated' || seg.status === 'approved';
-            const hasDraft = seg.context_matches?.some(m => m.type === 'mt');
-            const hasContent = seg.target_content && seg.target_content.trim().length > 0;
+            const isTranslated = analyzedSeg.status === 'translated' || analyzedSeg.status === 'approved';
+            // Check context matches in the FRESH object
+            const hasDraft = analyzedSeg.context_matches?.some(m => m.type === 'mt');
+            const hasContent = analyzedSeg.target_content && analyzedSeg.target_content.trim().length > 0;
 
             if (project?.use_ai && !isTranslated && !hasDraft && !hasContent) {
                 // Trigger AI Draft (Updates UI with spinner)
@@ -896,7 +932,7 @@ export function SplitView({ projectId, onBack }) {
                 // But we don't await it here to block UI? User just wants 'sequence'.
                 // Ideally we await so lookahead doesn't start until this is done?
                 // Actually, lookahead runs in background queue. That's fine.
-                handleAiDraft(seg.id, true); // isAuto=true
+                handleAiDraft(analyzedSeg.id, true); // isAuto=true
             }
         }
 
@@ -966,6 +1002,19 @@ export function SplitView({ projectId, onBack }) {
 
     // Handler for manual AI Draft triggers
     const handleAiDraft = async (segmentId, isAuto = false, mode = "translate", isWorkflow = false) => {
+        // OVERRIDE: Enforce 'draft' mode for all manual/auto triggers unless explicit workflow
+        // User request: "NEVER fill the target editor, unless... workflow"
+        if (!isWorkflow) {
+            mode = "draft";
+        }
+
+        // DEDUPLICATION: Check Ref
+        if (generatingSegmentsRef.current[segmentId]) {
+            console.log(`[Dedupe] Skipping AI Draft for ${segmentId} - already running.`);
+            return;
+        }
+        generatingSegmentsRef.current[segmentId] = true;
+
         // Set Loading State
         setGeneratingSegments(prev => ({ ...prev, [segmentId]: true }));
 
@@ -1027,6 +1076,7 @@ export function SplitView({ projectId, onBack }) {
             }
             throw err;
         } finally {
+            generatingSegmentsRef.current[segmentId] = false;
             setGeneratingSegments(prev => {
                 const next = { ...prev };
                 delete next[segmentId];
@@ -1396,8 +1446,24 @@ export function SplitView({ projectId, onBack }) {
                                             </div>
                                             <div className="space-y-2">
                                                 {(() => {
-                                                    const sortedMatches = (seg.context_matches || seg.metadata.context_matches || [])
-                                                        .sort((a, b) => (b.score || 0) - (a.score || 0));
+                                                    let rawMatches = (seg.context_matches || seg.metadata.context_matches || []);
+
+                                                    // INJECT AI DRAFT AS A MATCH (Optimization: Don't overwrite, just show as option)
+                                                    const aiDraft = seg.metadata?.ai_draft;
+                                                    if (aiDraft) {
+                                                        const existingMT = rawMatches.find(m => m.type === 'mt');
+                                                        if (!existingMT) {
+                                                            // Create virtual match
+                                                            rawMatches = [...rawMatches, {
+                                                                type: 'mt',
+                                                                target_text: aiDraft,
+                                                                score: 0, // Always bottom or top? MT usually implies 0 score unless evaluated
+                                                                model: seg.metadata.ai_model || 'AI'
+                                                            }];
+                                                        }
+                                                    }
+
+                                                    const sortedMatches = rawMatches.sort((a, b) => (b.score || 0) - (a.score || 0));
 
                                                     const tmMatches = sortedMatches.filter(m => m.type !== 'mt');
 
@@ -1533,7 +1599,7 @@ export function SplitView({ projectId, onBack }) {
 
                                     <div className="flex-grow">
                                         <TiptapEditor
-                                            content={hydrateContent(seg.target_content || seg.context_matches?.find(m => m.type === 'mt')?.content, seg.tags)}
+                                            content={hydrateContent(seg.target_content, seg.tags)}
                                             segmentId={seg.id}
                                             availableTags={seg.tags}
                                             contextMatches={seg.context_matches || (seg.metadata && seg.metadata.context_matches)}
