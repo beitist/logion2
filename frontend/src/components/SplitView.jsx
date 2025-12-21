@@ -762,6 +762,23 @@ export function SplitView({ projectId, onBack }) {
     const lookaheadRef = React.useRef({ queue: [], processing: false });
 
     /**
+     * ANALYZE SEGMENT (Context Fetch)
+     * Fetches TM/Glossary/Vector matches without triggering generative AI.
+     */
+    const analyzeSegment = async (seg, mode = 'analyze') => {
+        try {
+            const updated = await generateDraft(seg.id, mode);
+            setSegments(prev => prev.map(s => {
+                if (s.id !== seg.id) return s;
+                return { ...s, ...updated };
+            }));
+            return updated;
+        } catch (e) {
+            console.error("Analyze failed", e);
+        }
+    };
+
+    /**
      * PROCESS QUEUE ITEM
      * Handles the actual API calls for a single lookahead segment.
      * 1. Analyze (Matches)
@@ -828,7 +845,7 @@ export function SplitView({ projectId, onBack }) {
      * 2. Populates Lookahead Queue with next X segments.
      */
     const handleSegmentFocus = async (segmentId) => {
-        setCurrentSegmentId(segmentId);
+        setActiveSegmentId(segmentId);
 
         // 1. Process Current Segment (Immediate High Priority)
         const seg = segmentsRef.current.find(s => s.id === segmentId);
