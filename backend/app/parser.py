@@ -568,7 +568,46 @@ def _extract_tags(run_element) -> List[TagModel]:
     if highlight is not None:
         val = highlight.get(qn('w:val'))
         found.append(TagModel(type="highlight", xml_attributes={"color": str(val)}))
+
+    # --- NEW: Extended Font Properties ---
+    
+    # Font Size (w:sz) - Value is in half-points (e.g., 24 = 12pt)
+    sz = rPr.find(qn('w:sz'))
+    if sz is not None:
+        val = sz.get(qn('w:val'))
+        if val:
+            found.append(TagModel(type="size", xml_attributes={"val": str(val)}))
             
+    # Font Family (w:rFonts)
+    rFonts = rPr.find(qn('w:rFonts'))
+    if rFonts is not None:
+        # Prefer ascii -> hAnsi -> eastAsia -> cs
+        font_name = rFonts.get(qn('w:ascii')) or rFonts.get(qn('w:hAnsi')) or rFonts.get(qn('w:eastAsia'))
+        if font_name:
+             found.append(TagModel(type="font", xml_attributes={"name": str(font_name)}))
+
+    # Strikethrough (w:strike)
+    strike = rPr.find(qn('w:strike'))
+    if strike is not None:
+        # Check explicit val (default is true if missing)
+        val = strike.get(qn('w:val'))
+        if val not in ['0', 'false', 'off']:
+            found.append(TagModel(type="strike"))
+            
+    # Small Caps (w:smallCaps)
+    smallCaps = rPr.find(qn('w:smallCaps'))
+    if smallCaps is not None:
+        val = smallCaps.get(qn('w:val'))
+        if val not in ['0', 'false', 'off']:
+            found.append(TagModel(type="smallCaps"))
+
+    # All Caps (w:caps)
+    caps = rPr.find(qn('w:caps'))
+    if caps is not None:
+        val = caps.get(qn('w:val'))
+        if val not in ['0', 'false', 'off']:
+            found.append(TagModel(type="caps"))
+
     return found
 
 def _handle_shape_element(shape_element, add_tag_func, context) -> str:

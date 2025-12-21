@@ -82,7 +82,7 @@ class SemanticAligner:
         """
         Uses spaCy transformer to split sentences.
         """
-        if not text: return []
+        if not text or not text.strip(): return []
         
         # 1. Protect Tags
         protected, tag_map = self.protect_tags(text)

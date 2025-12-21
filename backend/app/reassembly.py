@@ -588,6 +588,31 @@ def _inject_tagged_text(paragraph, text, tags_map, shape_map=None):
                                  active_style['highlight'] = tag.xml_attributes['color']
                              else:
                                  active_style['highlight'] = True
+
+                    # --- NEW: Extended Font Properties ---
+                    elif tag.type == 'size':
+                         if is_closing:
+                             active_style.pop('size', None)
+                         else:
+                             if tag.xml_attributes and 'val' in tag.xml_attributes:
+                                 active_style['size'] = tag.xml_attributes['val']
+
+                    elif tag.type == 'font':
+                         if is_closing:
+                             active_style.pop('font', None)
+                         else:
+                             if tag.xml_attributes and 'name' in tag.xml_attributes:
+                                 active_style['font'] = tag.xml_attributes['name']
+                    
+                    elif tag.type == 'strike':
+                        active_style['strike'] = not is_closing
+
+                    elif tag.type == 'smallCaps':
+                        active_style['smallCaps'] = not is_closing
+
+                    elif tag.type == 'caps':
+                        active_style['caps'] = not is_closing
+
                     elif tag.type == 'shape' and not is_closing:
                         # Insert Shape
                         if preserved_shapes:

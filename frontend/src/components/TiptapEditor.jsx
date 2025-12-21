@@ -174,6 +174,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     const availableTagsRef = React.useRef(availableTags);
     const onNavigateRef = React.useRef(onNavigate);
     const isSavingRef = React.useRef(false);
+    const lastEmittedContent = React.useRef(content);
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
@@ -390,7 +391,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             }
         },
         onUpdate: ({ editor }) => {
-            if (onUpdate) onUpdate(editor.getHTML());
+            const html = editor.getHTML();
+            lastEmittedContent.current = html;
+            if (onUpdate) onUpdate(html);
         },
         onFocus: ({ editor }) => {
             if (onFocus) onFocus();
@@ -414,9 +417,10 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         if (editor) {
             if (onEditorReady) onEditorReady(editor);
 
-            if (content && content !== editor.getHTML()) {
-                // console.log(`[Tiptap] Content Mismatch for ${segmentId || '?'}. Updating...`);
-                editor.commands.setContent(content, false, { preserveWhitespace: 'full' })
+            if (content && content !== editor.getHTML() && content !== lastEmittedContent.current) {
+                // Only update if content matches NEITHER current editor NOR our last emitted value
+                editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
+                lastEmittedContent.current = content; // Sync ref
             }
         }
     }, [content, editor, onEditorReady])
