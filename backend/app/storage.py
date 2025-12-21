@@ -85,3 +85,16 @@ def delete_file(object_name):
         client.remove_object(BUCKET_NAME, object_name)
     except S3Error as err:
         print(f"MinIO Delete Error: {err}")
+
+def copy_file(source_object_name, dest_object_name):
+    ensure_bucket_exists()
+    try:
+        from minio.commonconfig import CopySource
+        client.copy_object(
+            BUCKET_NAME,
+            dest_object_name,
+            CopySource(BUCKET_NAME, source_object_name)
+        )
+    except S3Error as err:
+        print(f"MinIO Copy Error: {err}")
+        raise err

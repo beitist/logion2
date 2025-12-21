@@ -93,13 +93,24 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
     const processLookaheadItem = async (segId) => {
         const seg = segmentsRef.current.find(s => s.id === segId);
         if (!seg) return;
-        await analyzeSegment(seg, 'analyze');
 
-        const isTranslated = seg.status === 'translated' || seg.status === 'approved';
-        const hasContent = seg.target_content && seg.target_content.trim().length > 0;
+        // SKIP if already has matches (Optimization & Anti-Flicker)
+        if (seg.context_matches && seg.context_matches.length > 0) {
+            // Still check if we need to draft (if configured)
+            // But don't re-analyze
+        } else {
+            await analyzeSegment(seg, 'analyze');
+        }
+
+        // Refresh seg ref after potential await
+        const currentSeg = segmentsRef.current.find(s => s.id === segId);
+        if (!currentSeg) return;
+
+        const isTranslated = currentSeg.status === 'translated' || currentSeg.status === 'approved';
+        const hasContent = currentSeg.target_content && currentSeg.target_content.trim().length > 0;
 
         if (projectRef.current?.use_ai && !isTranslated && !hasContent) {
-            await generateDraft(seg.id, 'draft');
+            await generateDraft(currentSeg.id, 'draft');
         }
     };
 

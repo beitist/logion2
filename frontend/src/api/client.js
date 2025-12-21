@@ -79,6 +79,14 @@ export async function deleteProject(projectId) {
     return res.json();
 }
 
+export async function duplicateProject(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/duplicate`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to duplicate project");
+    return res.json();
+}
+
 // Generate AI Draft for a single segment
 export async function generateDraft(segmentId, mode = "translate", isWorkflow = false) {
     // Mode: 'translate' (rewrite target), 'draft' (suggestion only), 'analyze' (retrieval only)

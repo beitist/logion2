@@ -69,7 +69,7 @@ async def create_project(
 
 
     # Helper to process files
-    from ..storage import upload_file, download_file
+    from ..storage import upload_file, download_file, copy_file
 
     async def process_files(file: UploadFile, category: ProjectFileCategory, project_id: str, db: Session):
         if not file.filename: return
@@ -98,6 +98,9 @@ async def create_project(
         except Exception as e:
             logger.error(f"Failed to upload {file.filename}: {e}", exc_info=True)
             # Log error but maybe continue?
+
+            # Log error but maybe continue?
+            pass
             pass
 
     # Process all file categories
@@ -827,3 +830,86 @@ async def export_project_tmx(project_id: str, db: Session = Depends(get_db)):
         f.write(tmx_content)
         
     return FileResponse(output_path, media_type="application/xml", filename=output_filename)
+
+@router.post("/{project_id}/duplicate", response_model=ProjectResponse)
+def duplicate_project(project_id: str, db: Session = Depends(get_db)):
+    """
+    Creates a deep copy of the project, including files, segments, and glossary.
+    RAG status is reset to 'created' (vectors are NOT copied).
+    """
+    original = db.query(Project).filter(Project.id == project_id).first()
+    if not original:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    new_id = str(uuid.uuid4())
+    new_project = Project(
+        id=new_id,
+        name=f"Copy of {original.name}",
+        filename=original.filename,
+        status=original.status, # Keep status (e.g. valid segment data exists)
+        rag_status="created", # Reset RAG
+        source_lang=original.source_lang,
+        target_lang=original.target_lang,
+        use_ai=original.use_ai,
+        config=original.config,
+        created_at=datetime.utcnow()
+    )
+    db.add(new_project)
+    
+    # 1. Duplicate Files
+    # We need to copy physical files in S3 and create DB records
+    from ..storage import copy_file
+    
+    file_map = {} # Map old_file_id -> new_file_id (in case we needed it for chunks, but we don't copy chunks)
+
+    for f in original.files:
+        new_file_id = str(uuid.uuid4())
+        # Path format: {project_id}/{category}/{filename}
+        new_object_name = f"{new_id}/{f.category}/{f.filename}"
+        
+        try:
+            copy_file(f.file_path, new_object_name)
+            
+            new_file = ProjectFile(
+                id=new_file_id,
+                project_id=new_id,
+                category=f.category,
+                filename=f.filename,
+                file_path=new_object_name,
+                uploaded_at=datetime.utcnow()
+            )
+            db.add(new_file)
+            file_map[f.id] = new_file_id
+        except Exception as e:
+            logger.error(f"Failed to copy file {f.filename}: {e}")
+            # Continue/Fail? For robustness, verify later.
+
+    # 2. Duplicate Segments
+    for seg in original.segments:
+        new_seg = Segment(
+            id=str(uuid.uuid4()),
+            project_id=new_id,
+            index=seg.index,
+            source_content=seg.source_content,
+            target_content=seg.target_content,
+            status=seg.status,
+            metadata_json=seg.metadata_json
+        )
+        db.add(new_seg)
+
+    # 3. Duplicate Glossary
+    glossary_entries = db.query(GlossaryEntry).filter(GlossaryEntry.project_id == project_id).all()
+    for entry in glossary_entries:
+        new_entry = GlossaryEntry(
+            id=str(uuid.uuid4()),
+            project_id=new_id,
+            source_term=entry.source_term,
+            target_term=entry.target_term,
+            source_lemma=entry.source_lemma,
+            context_note=entry.context_note
+        )
+        db.add(new_entry)
+
+    db.commit()
+    db.refresh(new_project)
+    return new_project

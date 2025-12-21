@@ -340,12 +340,8 @@ export function SplitView({ projectId, onBack }) {
 
             {/* Blocking Task Modal */}
             <BlockingModal
-                isOpen={blockingTask.isOpen}
-                title={blockingTask.title}
-                logs={blockingTask.logs}
-                status={blockingTask.status}
-                progress={blockingTask.progress}
-                onClose={() => setBlockingTask(prev => ({ ...prev, isOpen: false }))}
+                task={blockingTask}
+                onComplete={() => setBlockingTask(prev => ({ ...prev, isOpen: false }))}
                 onStop={() => stopRef.current = true}
             />
         </div>

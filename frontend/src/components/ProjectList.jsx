@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getProjects, deleteProject } from '../api/client';
-import { Trash2, FilePlus, ExternalLink } from 'lucide-react';
+import { getProjects, deleteProject, duplicateProject } from '../api/client';
+import { Trash2, FilePlus, ExternalLink, Copy } from 'lucide-react';
 
 export function ProjectList({ onSelectProject, onNewProject }) {
     const [projects, setProjects] = useState([]);
@@ -30,6 +30,18 @@ export function ProjectList({ onSelectProject, onNewProject }) {
         try {
             await deleteProject(id);
             setProjects(projects.filter(p => p.id !== id));
+        } catch (err) {
+            alert(err.message);
+        }
+    };
+
+    const handleDuplicate = async (e, id) => {
+        e.stopPropagation();
+        if (!confirm("Duplicate this project?")) return;
+        try {
+            const newProject = await duplicateProject(id);
+            // Refresh list or append
+            setProjects([newProject, ...projects]);
         } catch (err) {
             alert(err.message);
         }
@@ -97,13 +109,20 @@ export function ProjectList({ onSelectProject, onNewProject }) {
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${project.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                                project.status === 'processing' ? 'bg-yellow-100 text-yellow-800' :
-                                                    'bg-blue-100 text-blue-800'
+                                            project.status === 'processing' ? 'bg-yellow-100 text-yellow-800' :
+                                                'bg-blue-100 text-blue-800'
                                             }`}>
                                             {project.status}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium flex justify-end gap-2">
+                                        <button
+                                            onClick={(e) => handleDuplicate(e, project.id)}
+                                            className="text-indigo-400 hover:text-indigo-600 p-2 hover:bg-indigo-50 rounded-full transition-colors"
+                                            title="Duplicate Project"
+                                        >
+                                            <Copy size={16} />
+                                        </button>
                                         <button
                                             onClick={(e) => handleDelete(e, project.id)}
                                             className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-full transition-colors"
