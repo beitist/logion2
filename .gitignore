@@ -45,6 +45,8 @@ venv/*
 resource/*
 resource
 
+uploads/*
+
 *.txt
 *.db
 

@@ -1,9 +1,18 @@
-import React, { useMemo, useState } from 'react';
-import modelPricing from '../../data/ai-models.json';
-import { updateProject } from '../../api/client';
+import React, { useMemo, useState, useEffect } from 'react';
+import { updateProject, getAiModels } from '../../api/client';
 
 export function StatisticsSettingsTab({ project, onProjectUpdate }) {
     const [isResetting, setIsResetting] = useState(false);
+    const [modelPricing, setModelPricing] = useState([]);
+
+    // Fetch pricing from backend on mount
+    useEffect(() => {
+        getAiModels().then(data => {
+            if (data && data.models) {
+                setModelPricing(data.models);
+            }
+        }).catch(err => console.error("Failed to load model pricing", err));
+    }, []);
 
     const stats = useMemo(() => {
         if (!project) return { chars: 0, words: 0, tokens: 0, usage: {} };
@@ -36,11 +45,24 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
         Object.entries(stats.usage).forEach(([modelId, data]) => {
             const modelInfo = modelPricing.find(m => m.id === modelId) || { name: modelId, cost_input_1k: 0, cost_output_1k: 0 };
 
-            const cost = (
-                (data.input_tokens / 1000) * (modelInfo.cost_input_1k || 0) +
-                (data.output_tokens / 1000) * (modelInfo.cost_output_1k || 0)
-            );
+            // Handle pricing format differences:
+            // ai_models.json uses "input_cost_per_m" (per million)
+            // Legacy/Fallback might use "cost_input_1k"
 
+            let inputCost = 0;
+            let outputCost = 0;
+
+            if (modelInfo.input_cost_per_m !== undefined) {
+                // Per Million logic
+                inputCost = (data.input_tokens / 1000000) * modelInfo.input_cost_per_m;
+                outputCost = (data.output_tokens / 1000000) * modelInfo.output_cost_per_m;
+            } else {
+                // Legacy per 1k logic (just in case)
+                inputCost = (data.input_tokens / 1000) * (modelInfo.cost_input_1k || 0);
+                outputCost = (data.output_tokens / 1000) * (modelInfo.cost_output_1k || 0);
+            }
+
+            const cost = inputCost + outputCost;
             totalCost += cost;
 
             rows.push({
@@ -52,7 +74,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
         });
 
         return { rows, totalCost };
-    }, [stats.usage]);
+    }, [stats.usage, modelPricing]);
 
     const handleReset = async () => {
         if (!confirm("Are you sure you want to reset the AI Token Usage counter? This cannot be undone.")) return;
