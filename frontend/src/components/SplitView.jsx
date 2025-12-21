@@ -758,6 +758,114 @@ export function SplitView({ projectId, onBack }) {
     // Editor Instances Registry
     const editorRefs = React.useRef({});
 
+    // --- Sequential Lookahead Implementation ---
+    const lookaheadRef = React.useRef({ queue: [], processing: false });
+
+    /**
+     * PROCESS QUEUE ITEM
+     * Handles the actual API calls for a single lookahead segment.
+     * 1. Analyze (Matches)
+     * 2. Generate Draft (AI) - If enabled & needed
+     */
+    const processLookaheadItem = async (segId) => {
+        const seg = segmentsRef.current.find(s => s.id === segId);
+        if (!seg) return;
+
+        // 1. Analyze (Get Matches)
+        // Skip if already has matches? Maybe re-check to be safe.
+        // We force mode='analyze' to catch new matches.
+        await analyzeSegment(seg, 'analyze');
+
+        // 2. Generate AI Draft (If enabled and segment is empty/draft)
+        const isTranslated = seg.status === 'translated' || seg.status === 'approved';
+        const hasContent = seg.target_content && seg.target_content.trim().length > 0;
+
+        // Only auto-generate if project has AI enabled AND segment needs it
+        if (project?.use_ai && !isTranslated && !hasContent) {
+            // We use 'translate' mode which uses the matches we just fetched
+            // But we need to be careful not to overwrite user work if they started typing?
+            // Ideally check backend 'locked' status or similar.
+            // For lookahead, we generate generic draft.
+            await generateDraft(seg.id, 'translate');
+        }
+    };
+
+    /**
+     * QUEUE PROCESSOR LOOP
+     * Watches the queue and processes items one by one.
+     */
+    useEffect(() => {
+        const processQueue = async () => {
+            if (lookaheadRef.current.processing) return;
+
+            if (lookaheadRef.current.queue.length > 0) {
+                lookaheadRef.current.processing = true;
+                const nextId = lookaheadRef.current.queue.shift();
+
+                try {
+                    await processLookaheadItem(nextId);
+                } catch (e) {
+                    console.error("Lookahead error:", e);
+                } finally {
+                    lookaheadRef.current.processing = false;
+                    // Trigger next loop immediately
+                    processQueue();
+                }
+            }
+        };
+
+        // Check queue every 500ms? Or just call recursively?
+        // Recursive inside useEffect might be tricky with closures. 
+        // We'll use a poller for robust 'restart' capability.
+        const interval = setInterval(processQueue, 500);
+        return () => clearInterval(interval);
+    }, []); // Run forever
+
+
+    /**
+     * HANDLE SEGMENT FOCUS
+     * 1. Updates current segment immediately (Analyzes matches -> Then maybe AI).
+     * 2. Populates Lookahead Queue with next X segments.
+     */
+    const handleSegmentFocus = async (segmentId) => {
+        setCurrentSegmentId(segmentId);
+
+        // 1. Process Current Segment (Immediate High Priority)
+        const seg = segmentsRef.current.find(s => s.id === segmentId);
+        if (seg) {
+            // A. Analyze (Matches) - ALWAYS first to ensure context visibility
+            // This updates state asynchronously, showing matches in UI.
+            await analyzeSegment(seg, 'analyze');
+
+            // B. Generate Draft? (If auto-enabled and needed)
+            // "I am in segment 1 and it automatically fetches MT + matches" - user disliked parallel.
+            // Now matches are done. User can see them.
+            // We trigger AI now.
+            const isTranslated = seg.status === 'translated' || seg.status === 'approved';
+            const hasDraft = seg.context_matches?.some(m => m.type === 'mt');
+            const hasContent = seg.target_content && seg.target_content.trim().length > 0;
+
+            if (project?.use_ai && !isTranslated && !hasDraft && !hasContent) {
+                // Trigger AI Draft (Updates UI with spinner)
+                // We use handleAiDraft to get the nice loading states
+                // But we don't await it here to block UI? User just wants 'sequence'.
+                // Ideally we await so lookahead doesn't start until this is done?
+                // Actually, lookahead runs in background queue. That's fine.
+                handleAiDraft(seg.id, true); // isAuto=true
+            }
+        }
+
+        // 2. Queue Lookahead
+        const currentIndex = segmentsRef.current.findIndex(s => s.id === segmentId);
+        if (currentIndex !== -1) {
+            const nextSegments = segmentsRef.current.slice(currentIndex + 1, currentIndex + 6); // Next 5
+
+            // Reset Queue to prioritize these new neighbors
+            lookaheadRef.current.queue = nextSegments.map(s => s.id);
+            // (Processor loop picking them up automatically)
+        }
+    };
+
     // Navigation Helper
     const handleNavigation = (currentId, direction) => {
         // finding current index
@@ -879,49 +987,6 @@ export function SplitView({ projectId, onBack }) {
                 delete next[segmentId];
                 return next;
             });
-        }
-    };
-
-    // Focus Handler
-    const handleSegmentFocus = async (id) => {
-        if (id === activeSegmentId) return;
-        setActiveSegmentId(id);
-
-        const currentSeg = segmentsRef.current.find(s => s.id === id);
-        if (!currentSeg) return;
-
-        // 1. Auto-Fetch (Analyze) Current if missing matches
-        const hasMatches = (currentSeg.context_matches?.length > 0 || currentSeg.metadata?.context_matches?.length > 0);
-        if (!hasMatches) {
-            // Queue immediate analysis
-            // We use queueSegments to ensure concurrency control
-            queueSegments([id], "analyze");
-        }
-
-        // 2. Rolling Background Analysis (Next 5)
-        // Fetches matches for upcoming segments to ensure they are ready when user arrives
-        const currentIndex = currentSeg.index;
-        const LOOKAHEAD = 5;
-
-        const nextSegments = segmentsRef.current
-            .slice(currentIndex + 1, currentIndex + 1 + LOOKAHEAD)
-            .filter(s => {
-                // Only queue if no matches yet
-                const matches = s.context_matches || s.metadata?.context_matches || [];
-                return matches.length === 0;
-            });
-
-        if (nextSegments.length > 0) {
-            queueSegments(nextSegments.map(s => s.id), "analyze");
-        }
-
-        // 3. Auto-Draft (if configured)
-        // Existing logic for "PreLoad Mode" (Full Draft Generation)
-        const aiSettings = project?.config?.ai_settings || {};
-        const isPreloadMode = aiSettings.preload_mode === true;
-
-        if (isPreloadMode) {
-            // ... existing preload logic if needed, but "analyze" usually suffices for context ...
         }
     };
 

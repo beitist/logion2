@@ -166,3 +166,24 @@ class GlossaryEntry(Base):
 
     # Relationship
     project = relationship("Project")
+
+class AiUsageLog(Base):
+    __tablename__ = "ai_usage_logs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("projects.id"), index=True, nullable=False)
+    segment_id = Column(String, ForeignKey("segments.id"), nullable=True) # Optional link
+    
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    model = Column(String, nullable=False)
+    trigger_type = Column(String, default="manual") # manual, auto_translate, lookahead
+    
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    
+    # Optional: Cost (could be calculated later if rates change, but storing point-in-time cost is safer if rates vary)
+    # cost = Column(Float, default=0.0) 
+
+    # Relationship
+    project = relationship("Project")
+

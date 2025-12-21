@@ -653,18 +653,31 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         # No draft generated (usually), just context matches updated
         pass
         
-    # Track Token Usage if available
-    from sqlalchemy.orm.attributes import flag_modified
-
+    # Track Token Usage (DB Logging)
+    from ..models import AiUsageLog
+    
     if result.get("usage"):
         usage = result["usage"]
-        current_config = dict(project.config or {})
         
-        # Ensure usage_stats dict exists
+        # 1. Log to DB (Concurrency Safe)
+        # Determine trigger type? For now generic 'generation'.
+        # Could parse from custom_prompt if needed or add API param.
+        
+        new_log = AiUsageLog(
+            project_id=project.id,
+            segment_id=segment.id,
+            model=model_name,
+            trigger_type="generation", # TODO: Differentiate manual/auto
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0)
+        )
+        db.add(new_log)
+        
+        # 2. Update Project Config (Legacy / Quick Snapshot)
+        # We keep this for backward compatibility if UI reads it
+        current_config = dict(project.config or {})
         if "usage_stats" not in current_config:
             current_config["usage_stats"] = {}
-            
-        # Ensure model specific dict exists
         if model_name not in current_config["usage_stats"]:
             current_config["usage_stats"][model_name] = {"input_tokens": 0, "output_tokens": 0}
             
@@ -673,6 +686,9 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         
         project.config = current_config
         flag_modified(project, "config")
+        
+    # Store Model Used in Metadata
+    current_meta['ai_model'] = model_name
 
     segment.metadata_json = current_meta
     flag_modified(segment, "metadata_json")
