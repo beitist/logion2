@@ -306,25 +306,65 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
     # Hyperlinks and Runs are children of the paragraph.
     # We must treat them sequentially.
     
+    run_buffer = []
+
+    def flush_run_buffer():
+        nonlocal run_buffer, full_text
+        if not run_buffer: return
+        
+        # Merge Logic by Signature
+        groups = []
+        if run_buffer:
+            current_group = [run_buffer[0]]
+            current_sig = _get_run_signature(run_buffer[0])
+            
+            for r in run_buffer[1:]:
+                sig = _get_run_signature(r)
+                if sig == current_sig:
+                    current_group.append(r)
+                else:
+                    groups.append(current_group)
+                    current_group = [r]
+                    current_sig = sig
+            groups.append(current_group)
+            
+            for group in groups:
+                 # Combined text
+                merged_text = ""
+                for r in group:
+                    merged_text += _get_run_text(r, namespaces)
+                
+                if merged_text:
+                    # Use properties from the FIRST element of the group
+                    # But pass the merged text content
+                    res = _process_run_element(group[0], add_tag, context, text_override=merged_text)
+                    full_text += res
+
+        run_buffer = []
+
+    namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+
     for child in para_element:
         tag_name = child.tag
         
-        # 1. Regular Run (w:r)
-        
-        # 1. Regular Run (w:r)
-        # logger.debug(f"CHILD: {tag_name}")
-        
-        # 1. Regular Run (w:r)
+        # 1. Regular Run (w:r) - Check for Pure Text
         if tag_name == qn('w:r'):
-             # Handle run content via helper
-             run_text = _process_run_element(child, add_tag, context)
-             if run_text:
-                 full_text += run_text
+             if _is_pure_text_run(child):
+                 run_buffer.append(child)
+                 continue
+             else:
+                 flush_run_buffer()
+                 # Handle complex run immediately
+                 run_text = _process_run_element(child, add_tag, context)
+                 if run_text:
+                     full_text += run_text
+                 continue
+
+        # For any other tag, flush buffer first
+        flush_run_buffer()
 
         # 2. Hyperlink (w:hyperlink)
-        elif tag_name == qn('w:hyperlink'):
-            # Create a Link Tag wrapping the whole content
-            # We need to capture the relationship ID (r:id) to know the URL!
+        if tag_name == qn('w:hyperlink'):
             rid = child.get(qn('r:id'))
             
             link_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True, "rid": rid})
@@ -346,74 +386,40 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
         elif tag_name == qn('w:commentRangeStart'):
             comment_id = child.get(qn('w:id'))
             if comment_id and context["comments_map"].get(comment_id):
-                # Start a wrapping tag
                 comment_text = context["comments_map"][comment_id]
-                com_tag = TagModel(
-                    type="comment",
-                    content=comment_text,
-                    ref_id=comment_id
-                )
+                com_tag = TagModel(type="comment", content=comment_text, ref_id=comment_id)
                 tid = add_tag(com_tag)
-                # Store mapping so we know this ID is active/handled as a range
-                # We need to map XML-ID to our TAG-ID to close it later
-                # Use context or local dict? Local is fine for para-scope? 
-                # WARNING: Comments can span paragraphs! 
-                # If a comment spans paragraphs, we have a problem with our SegmentInternal Design (per Paragraph).
-                # MVP Limitation: We CLOSE all tags at end of paragraph. 
-                # If we encounter EndTag in next para without StartTag, we ignore? 
-                # OR we just treat intra-paragraph ranges for now. 
-                # Let's support Intra-Paragraph Ranges fully.
-                # For Inter-Paragraph, we might leave open? No, SegmentInternal must be self-contained XML-ish.
-                # Decision: Auto-Close at end of para. Auto-Reopen at start of next? Too complex.
-                # MVP: Intra-paragraph ranges work. Spanning ranges will look like separate comments per segment.
-                
-                # We need to store 'xml_id' -> 'tag_id' for this paragraph.
                 if "_active_ranges" not in context:
-                    context["_active_ranges"] = {} # XML_ID -> TAG_ID
-                
+                    context["_active_ranges"] = {}
                 context["_active_ranges"][comment_id] = tid
                 full_text += f"<{tid}>"
 
         # 2c. Comment Range End
         elif tag_name == qn('w:commentRangeEnd'):
             comment_id = child.get(qn('w:id'))
-            # Check if we have an open tag for this
             if "_active_ranges" in context and comment_id in context["_active_ranges"]:
                 tid = context["_active_ranges"][comment_id]
                 full_text += f"</{tid}>"
-                # Mark as handled so Ref doesn't duplicate? 
-                
                 if "_handled_ranges" not in context:
                     context["_handled_ranges"] = set()
                 context["_handled_ranges"].add(comment_id)
-                
                 del context["_active_ranges"][comment_id]
 
         # 3. Comment Reference (w:commentReference)
         elif tag_name == qn('w:commentReference'):
             comment_id = child.get(qn('w:id'))
-            
-            # Check if this was already handled as a range
             was_handled = "_handled_ranges" in context and comment_id in context["_handled_ranges"]
             is_active = "_active_ranges" in context and comment_id in context["_active_ranges"]
-            
             if was_handled or is_active:
-                # It's a range comment, we ignore the anchor reference to avoid duplication
                 pass
             elif comment_id and context["comments_map"].get(comment_id):
-                # Point Comment (no range seen in this para)
                 comment_text = context["comments_map"][comment_id]
-                com_tag = TagModel(
-                    type="comment", 
-                    content=comment_text, 
-                    ref_id=comment_id
-                )
+                com_tag = TagModel(type="comment", content=comment_text, ref_id=comment_id)
                 tid = add_tag(com_tag)
                 full_text += f"<{tid}></{tid}>"
 
-        # 4. Inserted Text (w:ins) - Tracked Changes ACCEPT
+        # 4. Inserted Text (w:ins)
         elif tag_name == qn('w:ins'):
-            # Treat as normal content. Iterate children (runs)
             for sub_child in child:
                 if sub_child.tag == qn('w:r'):
                      run_text = _process_run_element(sub_child, add_tag, context)
@@ -425,7 +431,6 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
             fid = child.get(qn('w:id'))
             ftag = TagModel(type="footnote", xml_attributes={"id": fid})
             tid = add_tag(ftag)
-            tid = add_tag(ftag)
             full_text += f"<{tid}></{tid}>"
 
         # 6. Endnote Reference
@@ -433,13 +438,14 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
             eid = child.get(qn('w:id'))
             etag = TagModel(type="endnote", xml_attributes={"id": eid})
             tid = add_tag(etag)
-            tid = add_tag(etag)
             full_text += f"<{tid}></{tid}>"
 
-        # 7. Deleted Text (w:del) - Tracked Changes REJECT (Skip)
+        # 7. Deleted Text (w:del)
         elif tag_name == qn('w:del'):
-             # Future: Maybe extract deleted text if user wants "Show Revisions"
             continue
+            
+    # Flush remaining
+    flush_run_buffer()
 
     if not full_text:
         return []
@@ -610,6 +616,82 @@ def _extract_tags(run_element) -> List[TagModel]:
 
     return found
 
+def _get_run_text(run_element, namespaces):
+    """
+    Extracts text from a run, handling <w:t>, <w:br>, <w:tab>.
+    """
+    text = ""
+    for child in run_element:
+        tag = child.tag
+        if tag == qn('w:t'):
+             text += child.text or ""
+        elif tag == qn('w:br'):
+             text += "\n" # Or special placeholder? Usually break is fine as newline
+        elif tag == qn('w:tab'):
+             text += "\t"
+        elif tag == qn('w:cr'):
+             text += "\n"
+    return text
+
+def _get_run_signature(run_element):
+    """
+    Returns a hashable signature of meaningful formatting properties.
+    Ignores rsid, lang, etc.
+    """
+    rPr = run_element.find(qn('w:rPr'))
+    if rPr is None:
+        return None # Default style
+        
+    # We essentially need to serialize the properties we CARE about.
+    # The list matches _extract_tags logic.
+    
+    sig = []
+    
+    # 1. Boolean Toggles
+    for tag in ['b', 'i', 'u', 'strike', 'smallCaps', 'caps', 'vanish', 'webHidden']:
+        el = rPr.find(qn(f'w:{tag}'))
+        if el is not None:
+            val = el.get(qn('w:val'))
+            # 'on', '1', 'true', or missing attribute = True
+            # 'off', '0', 'false' = False
+            state = True
+            if val in ['0', 'false', 'off']: state = False
+            sig.append((tag, state))
+    
+    # 2. Valued Properties
+    # (tag_name, attr_name)
+    valued_props = [
+        ('color', 'val'),
+        ('highlight', 'val'),
+        ('sz', 'val'),
+        ('rFonts', 'ascii'), # Simplified: track ascii font as proxy
+        ('rFonts', 'hAnsi'),
+        ('vertAlign', 'val'),
+        ('shd', 'fill'), # Shading
+        ('kern', 'val'),
+        ('position', 'val'),
+    ]
+    
+    for tag, attr in valued_props:
+        el = rPr.find(qn(f'w:{tag}'))
+        if el is not None:
+            val = el.get(qn(f'w:{attr}'))
+            if val:
+                sig.append((tag, attr, val))
+                
+    return tuple(sorted(sig))
+
+def _is_pure_text_run(run_element):
+    """
+    Returns True if the run contains only text-like elements (t, tab, br, cr, rPr).
+    Returns False if it contains drawings, footnotes, etc.
+    """
+    allowed = [qn('w:t'), qn('w:br'), qn('w:tab'), qn('w:cr'), qn('w:rPr')]
+    for child in run_element:
+        if child.tag not in allowed:
+            return False
+    return True
+
 def _handle_shape_element(shape_element, add_tag_func, context) -> str:
     # NEW: Drill down for Textboxes (w:txbxContent)
     found_textbox = False
@@ -647,33 +729,18 @@ def _handle_shape_element(shape_element, add_tag_func, context) -> str:
     return f"<{tid}></{tid}>"
 
 
-def _process_run_element(run_element, add_tag_func, context) -> str:
+def _process_run_element(run_element, add_tag_func, context, text_override=None) -> str:
     """
     Helper to process a w:r element.
     Handles formatting (Bold/Italic), Embedded Comments, Tabs, Breaks, and Text.
     Also handles URL regex detection.
     """
-    # 2. Extract formatting from Run XML directly
-    extracted_tags = _extract_tags(run_element)
     
-    active_ids = []
-    full_run_text = ""
-    
-    # Open formatting tags
-    if extracted_tags:
-        for t in extracted_tags:
-            tid = add_tag_func(t)
-            full_run_text += f"<{tid}>"
-            active_ids.append(tid)
-            
-    # 3. Iterate Children of w:r (Text, Tab, Br, CommentRef, Shapes)
-    # Re-iterate or just rebuild logic
-    final_content = ""
-    
-    # helper for checking URL in text
+    # 1. Helper for checking URL in text
     def process_text_for_urls(txt):
         if not txt: return ""
-        url_pattern = re.compile(r'(https?://[^\s]+)')
+        # Improved regex to avoid catastrophic backtracking or false positives
+        url_pattern = re.compile(r'(https?://[^\s<>"]+|www\.[^\s<>"]+)')
         parts = url_pattern.split(txt)
         res = ""
         if len(parts) > 1:
@@ -688,90 +755,85 @@ def _process_run_element(run_element, add_tag_func, context) -> str:
         else:
             return txt
 
-    for child in run_element:
-        tag_name = child.tag
-        
-        if tag_name == qn('w:t'):
-            final_content += process_text_for_urls(child.text or "")
-            
-        elif tag_name == qn('w:tab'):
-             tab_tag = TagModel(type="tab", content="[TAB]")
-             tid = add_tag_func(tab_tag)
-             final_content += f"<{tid}></{tid}>" # Remove [TAB] text
-             
-        elif tag_name == qn('w:br'):
-             final_content += "<br/>"
-             
-        elif tag_name == qn('w:commentReference'):
-            cid = child.get(qn('w:id'))
-            
-            # Check if this was already handled as a range
-            was_handled = "_handled_ranges" in context and cid in context["_handled_ranges"]
-            is_active = "_active_ranges" in context and cid in context["_active_ranges"]
-            
-            if was_handled or is_active:
-                pass
-            elif cid and context["comments_map"].get(cid):
-                ctext = context["comments_map"][cid]
-                com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
-                tid = add_tag_func(com_tag)
-                final_content += f"<{tid}></{tid}>"
-
-        elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
-             # Handle Shapes/Images
-             final_content += _handle_shape_element(child, add_tag_func, context)
-
-        elif tag_name == "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent":
-             # Handle AlternateContent (e.g. Choice vs Fallback)
-             # usually w:drawing in Choice, w:pict in Fallback
-             # We prefer Choice.
-             mc_ns = {'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006', 'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-             
-             choice = child.find('mc:Choice', mc_ns)
-             fallback = child.find('mc:Fallback', mc_ns)
-             
-             if choice is not None:
-                 # Iterate all children, as choice might contain multiple drawings or other elements
-                 logger.debug(f"Processing mc:Choice. Found {len(list(choice))} children.")
-                 for child_el in choice:
-                     if child_el.tag == qn('w:drawing') or child_el.tag == qn('w:pict'):
-                         final_content += _handle_shape_element(child_el, add_tag_func, context)
-             
-             if not final_content and fallback is not None:
-                 for child_el in fallback:
-                     if child_el.tag == qn('w:drawing') or child_el.tag == qn('w:pict'):
-                          final_content += _handle_shape_element(child_el, add_tag_func, context)
-
-             # if target_el is not None:
-             #    # Recursive call to our own logic helper?
-             #    # Or just call _handle_shape(target_el)?
-             #    # We need to reuse the logic below.
-             #    # Let's refactor the logic below into a local helper or function.
-             #    final_content += _handle_shape_element(target_el, add_tag_func, context)
-
-        elif tag_name == qn('w:footnoteReference'):
-            fid = child.get(qn('w:id'))
-            ftag = TagModel(type="footnote", xml_attributes={"id": fid})
-            tid = add_tag_func(ftag)
-            final_content += f"<{tid}></{tid}>"
-
-        elif tag_name == qn('w:endnoteReference'):
-            eid = child.get(qn('w:id'))
-            etag = TagModel(type="endnote", xml_attributes={"id": eid})
-            tid = add_tag_func(etag)
-            final_content += f"<{tid}></{tid}>"
-
-    full_run_text += final_content
-
-    # Close formatting tags
+    # 2. Extract formatting from Run XML directly
+    extracted_tags = _extract_tags(run_element)
+    
+    active_ids = []
+    full_run_text = ""
+    
+    # Open formatting tags
     if extracted_tags:
-        for tid in reversed(active_ids):
-            full_run_text += f"</{tid}>"
+        for t in extracted_tags:
+            tid = add_tag_func(t)
+            full_run_text += f"<{tid}>"
+            active_ids.append(tid)
             
-    return full_run_text
+    # 3. Process Content
+    run_content = ""
+    
+    if text_override is not None:
+        # Override mode: Caller merged text for us.
+        run_content = process_text_for_urls(text_override)
+    else:
+        # Standard mode: Iterate children
+        for child in run_element:
+            tag_name = child.tag
+            
+            if tag_name == qn('w:t'):
+                run_content += process_text_for_urls(child.text or "")
+                
+            elif tag_name == qn('w:tab'):
+                 run_content += "\t"
+                 
+            elif tag_name == qn('w:br') or tag_name == qn('w:cr'):
+                 run_content += "\n"
+                 
+            elif tag_name == qn('w:commentReference'):
+                cid = child.get(qn('w:id'))
+                was_handled = "_handled_ranges" in context and cid in context["_handled_ranges"]
+                is_active = "_active_ranges" in context and cid in context["_active_ranges"]
+                
+                if not was_handled and not is_active and cid and context["comments_map"].get(cid):
+                    ctext = context["comments_map"][cid]
+                    com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
+                    tid = add_tag_func(com_tag)
+                    run_content += f"<{tid}></{tid}>"
 
-import re
-from typing import List
+            elif tag_name == qn('w:drawing') or tag_name == qn('w:pict'):
+                 run_content += _handle_shape_element(child, add_tag_func, context)
+
+            elif tag_name == "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent":
+                 mc_ns = {'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006', 'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                 choice = child.find('mc:Choice', mc_ns)
+                 fallback = child.find('mc:Fallback', mc_ns)
+                 target_el = None
+                 if choice is not None:
+                     target_el = choice.find('.//w:drawing', mc_ns)
+                 if target_el is None and fallback is not None:
+                     target_el = fallback.find('.//w:pict', mc_ns)
+                 
+                 if target_el is not None:
+                     run_content += _handle_shape_element(target_el, add_tag_func, context)
+
+            elif tag_name == qn('w:footnoteReference'):
+                fid = child.get(qn('w:id'))
+                ftag = TagModel(type="footnote", xml_attributes={"id": fid})
+                tid = add_tag_func(ftag)
+                run_content += f"<{tid}></{tid}>"
+
+            elif tag_name == qn('w:endnoteReference'):
+                eid = child.get(qn('w:id'))
+                etag = TagModel(type="endnote", xml_attributes={"id": eid})
+                tid = add_tag_func(etag)
+                run_content += f"<{tid}></{tid}>"
+
+    full_run_text += run_content
+    
+    # Close formatting tags (Reverse order)
+    for tid in reversed(active_ids):
+        full_run_text += f"</{tid}>"
+        
+    return full_run_text
 
 def _repair_tags(segments: List[str]) -> List[str]:
     """

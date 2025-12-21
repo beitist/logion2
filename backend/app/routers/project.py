@@ -565,6 +565,8 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         model_name = ai_settings.get("workflow_model") or default_model
     else:
         model_name = default_model
+
+    custom_prompt = ai_settings.get("custom_prompt", "")
     
     from ..rag import generate_segment_draft
     
@@ -610,6 +612,7 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         db=db,
         threshold=threshold,
         model_name=model_name,
+        custom_prompt=custom_prompt,
         tags=tags_data,
         cached_matches=existing_matches,
         skip_ai=skip_ai,

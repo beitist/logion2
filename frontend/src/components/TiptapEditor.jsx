@@ -401,7 +401,14 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                 const existingMatches = contextMatchesRef.current;
                 if (existingMatches && existingMatches.length > 0) { }
                 else if (onAiDraftRef.current) {
-                    onAiDraftRef.current(segmentId);
+                    onAiDraftRef.current(segmentId).then(updated => {
+                        // Explicitly apply draft if editor is still empty and focused
+                        // This bypasses the useEffect Focus Guard.
+                        if (updated && updated.target_content && editor.isEmpty) {
+                            const hydrated = hydrateContent(updated.target_content, availableTagsRef.current);
+                            editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
+                        }
+                    });
                 }
             }
         },
@@ -418,9 +425,13 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             if (onEditorReady) onEditorReady(editor);
 
             if (content && content !== editor.getHTML() && content !== lastEmittedContent.current) {
-                // Only update if content matches NEITHER current editor NOR our last emitted value
-                editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
-                lastEmittedContent.current = content; // Sync ref
+                // Focus Guard: Prevent external updates (e.g. from backend poller or MT refresh)
+                // from overwriting the editor while the user is working.
+                // EXCEPTION: If the editor is empty, we allow the update (Auto-Draft / Pre-Translate)
+                if (!editor.isFocused || editor.isEmpty) {
+                    editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
+                    lastEmittedContent.current = content;
+                }
             }
         }
     }, [content, editor, onEditorReady])

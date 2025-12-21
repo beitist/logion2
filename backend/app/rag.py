@@ -770,6 +770,9 @@ Rules:
 - You MUST preserve all tags from the source.
 - Do NOT translate the content again, just place tags.
 - Output ONLY the final tagged translation."""
+
+             if custom_prompt and custom_prompt.strip():
+                 pass2_msg += f"\n\nStyle Guide (Constraint): {custom_prompt}"
              
              res2 = draft_model.generate_content(pass2_msg)
              mt_draft = res2.text.strip()

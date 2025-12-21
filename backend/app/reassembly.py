@@ -849,6 +849,24 @@ def _inject_tagged_text(paragraph, text, tags_map, shape_map=None):
                                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
                          else:
                               run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+                    # Extended Properties
+                    if 'size' in active_style:
+                         try:
+                             # w:sz is in half-points. docx expects Pt or similar.
+                             run.font.size = docx.shared.Pt(int(active_style['size']) / 2)
+                         except:
+                             pass
+                    
+                    if 'font' in active_style:
+                        run.font.name = active_style['font']
+                        
+                    if 'strike' in active_style and active_style['strike']:
+                        run.font.strike = True
+                    if 'smallCaps' in active_style and active_style['smallCaps']:
+                        run.font.small_caps = True
+                    if 'caps' in active_style and active_style['caps']:
+                        run.font.all_caps = True
             
             # Handle [TAB]
             if "[TAB]" in token:

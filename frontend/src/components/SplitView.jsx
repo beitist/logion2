@@ -41,6 +41,37 @@ export function SplitView({ projectId, onBack }) {
     // Export UI
     const [showExportMenu, setShowExportMenu] = useState(false);
 
+    // Re-initialization State
+    const [isReinitializing, setIsReinitializing] = useState(false);
+    const [reinitStatus, setReinitStatus] = useState("idle"); // idle, ingesting, ready, error
+    const [reinitLogs, setReinitLogs] = useState([]);
+
+    // Polling for Re-initialization
+    useEffect(() => {
+        let interval;
+        if (isReinitializing) {
+            interval = setInterval(async () => {
+                try {
+                    const p = await getProject(projectId);
+                    if (p) {
+                        setReinitStatus(p.rag_status);
+                        setReinitLogs(p.ingestion_logs || []);
+
+                        if (p.rag_status === 'ready' || p.rag_status === 'error') {
+                            // Keep interval running? user might want to see logs?
+                            // No, stop polling to save bandwidth, but keep modal open.
+                            clearInterval(interval);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Polling failed", e);
+                }
+            }, 1000);
+        }
+        return () => clearInterval(interval);
+    }, [isReinitializing, projectId]);
+
+
 
     useEffect(() => {
         if (projectId) {
@@ -142,6 +173,20 @@ export function SplitView({ projectId, onBack }) {
 
         isProcessingQueue.current = false;
     };
+
+    const handleReingest = async () => {
+        if (!confirm("This will clear all existing context vectors and re-process all files. Continue?")) return;
+
+        try {
+            await reingestProject(projectId);
+            setIsReinitializing(true);
+            setReinitStatus("started");
+            setReinitLogs(["Request sent..."]);
+        } catch (e) {
+            alert("Failed to trigger re-ingest: " + e.message);
+        }
+    };
+
 
     useEffect(() => {
         const loadData = async () => {
@@ -637,16 +682,7 @@ export function SplitView({ projectId, onBack }) {
         }
     };
 
-    const handleReingest = async () => {
-        if (!confirm("This will clear all existing context vectors and re-process all files. Continue?")) return;
 
-        try {
-            await reingestProject(projectId);
-            alert("Re-ingestion started in background. Check logs or wait a few minutes.");
-        } catch (e) {
-            alert("Failed to trigger re-ingest: " + e.message);
-        }
-    };
 
     // Handler for manual AI Draft triggers
     const handleAiDraft = async (segmentId, isAuto = false, mode = "translate", isWorkflow = false) => {
@@ -699,7 +735,7 @@ export function SplitView({ projectId, onBack }) {
                 return { ...s, ...updated };
             }));
 
-            return updated.context_matches;
+            return updated; // Return full object so caller can use target_content
         } catch (err) {
             if (!isAuto) {
                 log("AI Draft failed", 'error', err.message);
@@ -1244,6 +1280,75 @@ export function SplitView({ projectId, onBack }) {
             />
 
             <ShortcutsPanel isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
+
+            {/* Reinit Modal */}
+            {isReinitializing && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 flex flex-col gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className={`p-3 rounded-full ${reinitStatus === 'ready' ? 'bg-green-100 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
+                                {reinitStatus === 'ready' ? <Check size={24} /> : (
+                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                                )}
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800">
+                                    {reinitStatus === 'ready' ? "Re-initialization Complete" : "Re-initializing Project..."}
+                                </h3>
+                                <p className="text-sm text-gray-500">
+                                    {reinitStatus === 'ready' ? "You can now reload the project." : "Parsing files and generating vectors..."}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden relative">
+                            {reinitStatus === 'ready' ? (
+                                <div className="bg-green-500 h-full w-full transition-all duration-500"></div>
+                            ) : (
+                                <div className="bg-blue-500 h-full w-1/3 absolute top-0 left-0 bottom-0 animate-ping" style={{ animationDuration: '2s', width: '100%', opacity: 0.3 }}></div>
+                            )}
+                            {reinitStatus !== 'ready' && (
+                                <div className="bg-blue-600 h-full w-1/3 absolute top-0 animate-pulse"></div>
+                            )}
+                        </div>
+
+                        {/* Logs */}
+                        <div className="bg-gray-900 rounded-lg p-3 h-48 overflow-y-auto font-mono text-[10px] text-green-400 flex flex-col-reverse">
+                            {reinitLogs && reinitLogs.length > 0 ? reinitLogs.slice().reverse().map((l, i) => (
+                                <div key={i} className="border-b border-gray-800/50 pb-0.5 mb-0.5 last:border-0">{l}</div>
+                            )) : <div className="text-gray-500 italic">Waiting for logs...</div>}
+                        </div>
+
+                        <div className="flex justify-end gap-2 mt-2">
+                            {reinitStatus === 'ready' ? (
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => window.location.reload()}
+                                        className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium shadow-sm"
+                                    >
+                                        Reload Project
+                                    </button>
+                                    <button
+                                        onClick={() => setIsReinitializing(false)}
+                                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            ) : (
+                                <button
+                                    disabled
+                                    className="px-4 py-2 bg-gray-100 text-gray-400 rounded cursor-not-allowed border border-gray-200"
+                                >
+                                    Processing...
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 };
