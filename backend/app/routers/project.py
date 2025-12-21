@@ -520,7 +520,7 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
 # --- Segment Operations ---
 
 @router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
-def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflow: bool = False, db: Session = Depends(get_db)):
+def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflow: bool = False, force_refresh: bool = False, db: Session = Depends(get_db)):
     segment = db.query(Segment).filter(Segment.id == segment_id).first()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
@@ -579,7 +579,8 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
     existing_matches = None
     if segment.metadata_json:
         tags_data = segment.metadata_json.get("tags")
-        existing_matches = segment.metadata_json.get("context_matches")
+        if not force_refresh:
+            existing_matches = segment.metadata_json.get("context_matches")
 
     # If mode is 'analyze', we skip AI generation in RAG (we need to pass this down)
     # OR we handle it here by passing a flag to skip_generation?
@@ -677,6 +678,19 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
                 output_tokens=usage.get("output_tokens", 0)
             )
             db.add(new_log)
+            
+            # 2. Update Aggregate Config (for UI)
+            current_config = dict(project.config or {})
+            usage_stats = current_config.get("usage_stats", {})
+            model_stats = usage_stats.get(model_name, {"input_tokens": 0, "output_tokens": 0})
+            
+            model_stats["input_tokens"] += usage.get("input_tokens", 0)
+            model_stats["output_tokens"] += usage.get("output_tokens", 0)
+            
+            usage_stats[model_name] = model_stats
+            current_config["usage_stats"] = usage_stats
+            project.config = current_config
+            flag_modified(project, "config")
             
             # 2. Update Project Config (Legacy / Quick Snapshot)
             # We keep this for backward compatibility if UI reads it

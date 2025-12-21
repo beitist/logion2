@@ -7,7 +7,7 @@ export function AISettingsTab({ project, onUpdate }) {
     const [settings, setSettings] = useState({
         pre_translate_count: 0,
         similarity_threshold: 0.4,
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.5-flash',
         enable_shortcut: false,
         include_source_rag: true
     });
@@ -23,7 +23,7 @@ export function AISettingsTab({ project, onUpdate }) {
             setSettings({
                 pre_translate_count: ai.pre_translate_count || 0,
                 similarity_threshold: ai.similarity_threshold !== undefined ? ai.similarity_threshold : 0.4,
-                model: ai.model || 'gemini-1.5-flash',
+                model: ai.model || 'gemini-2.5-flash',
                 enable_shortcut: ai.enable_shortcut || false,
                 include_source_rag: ai.include_source_rag !== undefined ? ai.include_source_rag : true
             });

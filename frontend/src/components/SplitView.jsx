@@ -316,20 +316,13 @@ export function SplitView({ projectId, onBack }) {
                                         <RAGSettingsTab project={project} />
                                     )}
                                     {activeSettingsTab === 'glossary' && (
-                                        <GlossarySettingsTab
-                                            projectId={projectId}
-                                            terms={glossaryTerms}
-                                            onAddTerm={() => {
-                                                setShowSettings(false);
-                                                setShowGlossaryModal(true);
-                                            }}
-                                        />
+                                        <GlossarySettingsTab project={project} />
                                     )}
                                     {activeSettingsTab === 'workflows' && (
                                         <WorkflowsTab projectId={projectId} />
                                     )}
                                     {activeSettingsTab === 'stats' && (
-                                        <StatisticsSettingsTab segments={segments} />
+                                        <StatisticsSettingsTab project={project} />
                                     )}
                                 </div>
                             </div>

@@ -41,7 +41,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
         return requestPromise;
     };
 
-    const handleAiDraft = async (segmentId, isAuto = false, mode = "translate", isWorkflow = false) => {
+    const handleAiDraft = async (segmentId, isAuto = false, mode = "translate", isWorkflow = false, forceRefresh = false) => {
         if (!isWorkflow) mode = "draft";
         if (generatingSegmentsRef.current[segmentId]) return;
 
@@ -53,7 +53,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
 
         try {
             const start = performance.now();
-            const updated = await generateDraft(segmentId, mode, isWorkflow);
+            const updated = await generateDraft(segmentId, mode, isWorkflow, forceRefresh);
             const duration = Math.round(performance.now() - start);
 
             if (!isAuto) {

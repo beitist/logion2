@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Copy, Bug } from 'lucide-react';
+import { Copy, Bug, Search } from 'lucide-react';
 import { TiptapEditor } from './TiptapEditor';
 import { formatSourceContent, hydrateContent, getSegmentComments } from '../utils/editorTransforms';
 
@@ -80,14 +80,24 @@ export const SegmentRow = memo(({
                             <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
                                 <span className="w-1 h-1 bg-gray-400 rounded-full"></span> Translation Memory / Context
                             </h4>
-                            <button
-                                onClick={() => onAiDraft(segment.id)}
-                                className={`text-gray-400 hover:text-indigo-600 transition-colors ${generatingSegments[segment.id] ? 'animate-spin text-indigo-500' : ''}`}
-                                title="Refresh Context (Cmd+Alt+ß / Cmd+Alt+?)"
-                                disabled={generatingSegments[segment.id]}
-                            >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                            </button>
+                            <div className="flex gap-1">
+                                <button
+                                    onClick={() => onAiDraft(segment.id, false, "analyze", false, true)}
+                                    className={`text-gray-400 hover:text-blue-600 transition-colors ${generatingSegments[segment.id] ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    title="Search Matches (Refresh) - Cheap"
+                                    disabled={generatingSegments[segment.id]}
+                                >
+                                    <Search size={14} />
+                                </button>
+                                <button
+                                    onClick={() => onAiDraft(segment.id, false, "translate", false, true)}
+                                    className={`text-gray-400 hover:text-indigo-600 transition-colors ${generatingSegments[segment.id] ? 'animate-spin text-indigo-500' : ''}`}
+                                    title="Regenerate Translation (Force Refresh) - Uses Tokens"
+                                    disabled={generatingSegments[segment.id]}
+                                >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                </button>
+                            </div>
                         </div>
                         <div className="space-y-2">
                             {(() => {

@@ -88,9 +88,9 @@ export async function duplicateProject(projectId) {
 }
 
 // Generate AI Draft for a single segment
-export async function generateDraft(segmentId, mode = "translate", isWorkflow = false) {
+export async function generateDraft(segmentId, mode = "translate", isWorkflow = false, forceRefresh = false) {
     // Mode: 'translate' (rewrite target), 'draft' (suggestion only), 'analyze' (retrieval only)
-    const response = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft?mode=${mode}&is_workflow=${isWorkflow}`, {
+    const response = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft?mode=${mode}&is_workflow=${isWorkflow}&force_refresh=${forceRefresh}`, {
         method: 'POST',
     });
     if (!response.ok) {
@@ -128,7 +128,7 @@ export async function reinitializeProject(projectId) {
 // Glossary API
 
 export async function addGlossaryTerm(projectId, source, target, note) {
-    const res = await fetch(`${API_BASE}/projects/${projectId}/glossary`, {
+    const res = await fetch(`${API_BASE}/project/${projectId}/glossary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source_term: source, target_term: target, context_note: note }),
@@ -138,7 +138,7 @@ export async function addGlossaryTerm(projectId, source, target, note) {
 }
 
 export async function getGlossaryTerms(projectId) {
-    const res = await fetch(`${API_BASE}/projects/${projectId}/glossary`);
+    const res = await fetch(`${API_BASE}/project/${projectId}/glossary`);
     if (!res.ok) throw new Error("Failed to fetch glossary");
     return res.json();
 }
@@ -146,7 +146,7 @@ export async function getGlossaryTerms(projectId) {
 export async function uploadGlossary(projectId, file) {
     const formData = new FormData();
     formData.append("file", file);
-    const res = await fetch(`${API_BASE}/projects/${projectId}/glossary/upload`, {
+    const res = await fetch(`${API_BASE}/project/${projectId}/glossary/upload`, {
         method: "POST",
         body: formData,
     });

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import csv
 import io
 
-router = APIRouter(prefix="/projects/{project_id}/glossary", tags=["glossary"])
+router = APIRouter(prefix="/project/{project_id}/glossary", tags=["glossary"])
 
 class GlossaryAddRequest(BaseModel):
     source_term: str
