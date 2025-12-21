@@ -585,6 +585,23 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
     # Let's pass 'skip_ai' arg to generate_segment_draft
     skip_ai = (mode == "analyze")
 
+    # Fetch Context (Neighbors)
+    # Get up to 2 previous and 2 next segments
+    prev_segments = db.query(Segment.source_content).filter(
+        Segment.project_id == project.id,
+        Segment.index >= segment.index - 2,
+        Segment.index < segment.index
+    ).order_by(Segment.index).all()
+    
+    next_segments = db.query(Segment.source_content).filter(
+        Segment.project_id == project.id,
+        Segment.index > segment.index,
+        Segment.index <= segment.index + 2
+    ).order_by(Segment.index).all()
+    
+    prev_context = [s[0] for s in prev_segments]
+    next_context = [s[0] for s in next_segments]
+
     result = generate_segment_draft(
         segment_text=segment.source_content,
         source_lang=project.source_lang,
@@ -595,7 +612,9 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         model_name=model_name,
         tags=tags_data,
         cached_matches=existing_matches,
-        skip_ai=skip_ai
+        skip_ai=skip_ai,
+        prev_context=prev_context,
+        next_context=next_context
     )
     
     if result.get("error"):

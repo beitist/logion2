@@ -587,7 +587,7 @@ def search_context_for_segment(segment_text: str, project_id: str, db: Session, 
     # Return Top 5 for Display
     return final_matches[:5]
 
-def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None, cached_matches=None, skip_ai=False):
+def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str, project_id: str, db: Session, threshold=0.4, model_name=None, custom_prompt="", tags=None, cached_matches=None, skip_ai=False, prev_context=None, next_context=None):
     logger.info(f"--- Generate Start: {segment_text[:20]}... Model:{model_name} SkipAI:{skip_ai} ---")
     """
     Generates a draft translation using aligned context.
@@ -596,6 +596,12 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
     """
     if not model_name:
         model_name = get_default_model_id()
+
+    # Heuristic: Check for complex tags to trigger Two-Pass Mode
+    # Count tags like <1>, <b>, etc.
+    tag_count = len(re.findall(r'<[^>]+>', segment_text))
+    # Threshold > 3 tags
+    is_complex_formatting = tag_count > 3
 
     # 1. Retrieve Context
     matches = []
@@ -718,11 +724,61 @@ def generate_segment_draft(segment_text: str, source_lang: str, target_lang: str
         if custom_prompt and custom_prompt.strip():
             system_instruction += f"\n\nStyle Guide / User Instructions:\n{custom_prompt}"
             
+        # Inject Document Context (Neighbors)
+        if prev_context or next_context:
+             system_instruction += "\n\nContext (Surrounding Text):"
+             if prev_context:
+                 for p in prev_context: system_instruction += f"\n... {p}"
+             
+             # The current segment is implicitly the 'Source' below, but clarifying context helps
+             system_instruction += f"\n>>> {clean_source} <<<"
+             
+             if next_context:
+                 for n in next_context: system_instruction += f"\n... {n}"
+
         draft_model = genai.GenerativeModel(model_name)
         
-        # DEBUG LOGGING SETUP
-        res = draft_model.generate_content(f"{system_instruction}\n\nSource: {clean_source}")
-        mt_draft = res.text.strip()
+        # TWO-PASS LOGIC vs Standard
+        if is_complex_formatting and not skip_ai:
+             logger.info(f"Triggering Two-Pass Translation (Tags: {tag_count})")
+             
+             # Pass 1: Translate Plain
+             # Strip all tags for pure linguistic focus
+             plain_source = re.sub(r'<[^>]+>', '', clean_source).replace("  ", " ").strip()
+             
+             # Simple Prompt for Pass 1
+             pass1_prompt = f"Translate from {source_lang} to {target_lang}. Output ONLY the raw translation text (Plain Text)."
+             
+             if custom_prompt and custom_prompt.strip():
+                 pass1_prompt += f"\n\nStyle Guide:\n{custom_prompt}"
+             
+             pass1_prompt += f"\n\nSource: {plain_source}"
+             
+             # Add Context to Pass 1 too? Yes, usually helpful.
+             if prev_context or next_context:
+                  pass1_prompt = f"Context:\n" + ("\n".join(prev_context) if prev_context else "") + f"\n>>> {plain_source} <<<\n" + ("\n".join(next_context) if next_context else "") + f"\n\n{pass1_prompt}"
+
+             res1 = draft_model.generate_content(pass1_prompt)
+             plain_target = res1.text.strip()
+             
+             # Pass 2: Inject Tags
+             pass2_msg = f"""Here is a source sentence with formatting tags: {clean_source}
+Here is its translation (Plain Text): {plain_target}
+
+Task: Insert the tags from the source into the translation at the semantically corresponding positions.
+Rules:
+- You MUST preserve all tags from the source.
+- Do NOT translate the content again, just place tags.
+- Output ONLY the final tagged translation."""
+             
+             res2 = draft_model.generate_content(pass2_msg)
+             mt_draft = res2.text.strip()
+             
+        else:
+             # Standard Single Pass
+             res = draft_model.generate_content(f"{system_instruction}\n\nSource: {clean_source}")
+             mt_draft = res.text.strip()
+
         logger.debug(f"raw mt_draft: {mt_draft}")
         
         # TAB HANDLING: Post-process (Restore tabs)
