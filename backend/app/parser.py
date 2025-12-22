@@ -510,9 +510,6 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
     if not clean_check:
         return []
 
-    # Decision: Smart Splitting
-    # Always split sentences, then repair tags across boundaries.
-    
     segments_to_create = []
     final_segments = []
 
@@ -550,13 +547,65 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
                 "trailing": src_trailing
             }
         
+        # --- NEW: Wrapper Tag Stripping ---
+        # If the content is wrapped in tags that cover the *entire* text (excluding whitespace), move them to metadata.
+        # e.g. <1><2>Content</2></1> -> Content. Metadata: wrapper_tags = ['1', '2']
+        
+        wrapper_tags = []
+        stripped_content = content.lstrip() # preserve logic if we stripped leading space? No, tag wrapping considers full string.
+        # But leading space is usually OUTSIDE formatting range if it's paragraph indentation, 
+        # or INSIDE if it's just a space.
+        
+        # Iterative stripping
+        current_text = content
+        while True:
+            # Match <ID> at start and </ID> at end
+            # CAUTION: Regex must be non-greedy for inner content but we want outermost pair.
+            # But wait, <1>A</1><1>B</1> -> No.
+            # Only if <1>...content...</1> covers WHOLE string.
+            
+            # Regex: ^<(\d+)>(.*)<\/\1>$
+            m = re.match(r'^<(\d+)>(.*)<\/\1>$', current_text, re.DOTALL)
+            if m:
+                tid = m.group(1)
+                inner = m.group(2)
+                
+                # Verify that this tag isn't closed and reopened inside (e.g. <1>A</1> <1>B</1>)
+                # Although our regex `(.*)` is greedy, `^` and `$` anchor it.
+                # Issue: <1>A</1>text<1>B</1> matches ^<1>...<1>$ if the last tag is <1>.
+                # So we must count occurrences or parse.
+                # Actually, simpler: check if `(.*)` contains `</tid>`.
+                # If the inner content contains `</tid>`, then the outer pair might not be a single continuous wrapper.
+                # Exception: Nested <1><2>...<1> is impossible because IDs are unique.
+                # So `(.*)` CANNOT contain `</tid>` if IDs are unique per run.
+                # WAIT. Run splitting might reuse IDs? NO. `add_tag` increments `tag_counter`. 
+                # IDs are unique per paragraph processing!
+                # So if we see <1>...<1>, it MUST be the same unique tag.
+                # THUS, direct regex stripping is SAFE.
+                
+                wrapper_tags.append(tid)
+                current_text = inner
+                
+                # Update location? No, we store in metadata.
+            else:
+                break
+        
+        if wrapper_tags:
+            seg_loc["wrapper_tags"] = wrapper_tags
+            content = current_text
+        
+        # Re-check clean content after stripping?
+        # If result is empty? e.g. <1></1> -> ""
+        if not re.sub(r'<[^>]+>', '', content).strip():
+             continue
+
         final_segments.append(SegmentInternal(
             id=str(uuid.uuid4()),
             segment_id=str(uuid.uuid4()),
             source_text=content,
             target_content=None, # Translation starts empty/null
             status="draft",
-            tags=tags, # Pass tags to all segments so split parts can reference them
+            tags=tags, # Pass tags
             metadata=seg_loc
         ))
 

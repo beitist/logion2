@@ -319,7 +319,12 @@ export function SplitView({ projectId, onBack }) {
                                         <GlossarySettingsTab project={project} />
                                     )}
                                     {activeSettingsTab === 'workflows' && (
-                                        <WorkflowsTab projectId={projectId} />
+                                        <WorkflowsTab
+                                            project={project}
+                                            segments={segments}
+                                            onQueueAll={queueSegments}
+                                            onReingest={handleReingest}
+                                        />
                                     )}
                                     {activeSettingsTab === 'stats' && (
                                         <StatisticsSettingsTab project={project} />

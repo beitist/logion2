@@ -17,8 +17,6 @@ def ingest_project_files(project_id: str, db: Session):
     Refactored ingestion task.
     Populates ContextChunk with chunk_index.
     """
-    engine = RetrievalEngine() # Ensure models loaded
-    
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project: return
     
@@ -32,7 +30,11 @@ def ingest_project_files(project_id: str, db: Session):
         project.ingestion_logs = list(log_messages) # Copy
         db.commit()
 
+    log("Initializing RAG Engine (Loading Models)...")
+    
     try:
+        engine = RetrievalEngine() # Load models now
+        
         if not engine._bi_encoder:
              log("FATAL: Encoder not loaded.")
              return
