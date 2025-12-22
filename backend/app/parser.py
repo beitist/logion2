@@ -774,7 +774,7 @@ def _get_run_signature(run_element):
         ('color', 'val'),
         ('highlight', 'val'),
         ('sz', 'val'),
-        # ('rFonts', 'ascii'), # Removed to prevent fragmentation due to font shifts
+        ('rFonts', 'ascii'), # Restored to prevent font bleeding (Times New Roman bug)
         ('vertAlign', 'val'),
         ('shd', 'fill'), 
         # Removed 'kern', 'position', 'hAnsi' to encourage merging
