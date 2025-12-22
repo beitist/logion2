@@ -80,6 +80,9 @@ class ContextChunk(Base):
     rich_content = Column(Text, nullable=True) # The chunk text with Tags (<1>...</1>)
     embedding = Column(Vector(768)) # LaBSE Embeddings
     
+    # Retrieval Optimization
+    chunk_index = Column(Integer, nullable=True, index=True) # Position in file (0, 1, 2...) for Context Window
+    
     # Semantic Alignment Fields
     source_segment = Column(Text, nullable=True) # Aligned Source (1 or 2 sent)
     target_segment = Column(Text, nullable=True) # Aligned Target (1 or 2 sent)

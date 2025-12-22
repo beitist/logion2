@@ -520,7 +520,7 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
 # --- Segment Operations ---
 
 @router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
-def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflow: bool = False, force_refresh: bool = False, db: Session = Depends(get_db)):
+async def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflow: bool = False, force_refresh: bool = False, db: Session = Depends(get_db)):
     segment = db.query(Segment).filter(Segment.id == segment_id).first()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
@@ -587,72 +587,50 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
     # Let's pass 'skip_ai' arg to generate_segment_draft
 
 
-    # If mode is 'analyze', we skip AI generation in RAG (we need to pass this down)
-    # OR we handle it here by passing a flag to skip_generation?
-    # Let's pass 'skip_ai' arg to generate_segment_draft
+    # If mode is 'analyze', we skip AI generation in RAG
     skip_ai = (mode == "analyze")
 
-    # Fetch Context (Neighbors)
-    # Fetch Context (Neighbors)
-    # Get up to 2 previous and 2 next segments
-    prev_segments = db.query(Segment.source_content, Segment.target_content).filter(
-        Segment.project_id == project.id,
-        Segment.index >= segment.index - 2,
-        Segment.index < segment.index
-    ).order_by(Segment.index).all()
+    # Use New RAG Manager V2 (Async & Encapsulated)
+    from ..rag import generate_segment_draft_v2
     
-    next_segments = db.query(Segment.source_content).filter(
-        Segment.project_id == project.id,
-        Segment.index > segment.index,
-        Segment.index <= segment.index + 2
-    ).order_by(Segment.index).all()
-    
-    # Format "Before" Context: Include Translation if available
-    prev_context = []
-    for s_src, s_tgt in prev_segments:
-        if s_tgt and len(s_tgt.strip()) > 2 and "<p></p>" not in s_tgt:
-             prev_context.append(f"{s_src} [Translated: {s_tgt}]")
-        else:
-             prev_context.append(s_src)
-             
-    next_context = [s[0] for s in next_segments]
-
     try:
-        result = generate_segment_draft(
-            segment_text=segment.source_content,
-            source_lang=project.source_lang,
-            target_lang=project.target_lang,
+        result_dict = await generate_segment_draft_v2(
+            segment_id=segment.id,
             project_id=str(project.id),
             db=db,
-            threshold=threshold,
             model_name=model_name,
             custom_prompt=custom_prompt,
-            tags=tags_data,
-            cached_matches=existing_matches,
-            skip_ai=skip_ai,
-            prev_context=prev_context,
-            next_context=next_context
+            skip_ai=skip_ai
         )
         
-        if result.get("error"):
-            error_msg = result["error"]
-            logger.error(f"Draft generation failed: {error_msg}")
-            raise HTTPException(status_code=500, detail=f"Analysis failed: {error_msg}")
+        # Adaptation for Router Response
+        target_text = result_dict.get("target_text", "")
+        # context_used contains 'matches' which is what we want for 'context_matches'
+        context_used = result_dict.get("context_used", {})
+        context_matches = context_used.get("matches", [])
+        usage = result_dict.get("usage", {})
+        error = result_dict.get("error")
+        pass # Placeholder for indentation match check
+
+        
+        if error:
+            logger.error(f"Draft generation failed: {error}")
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {error}")
         
         # Update Segment based on Mode
         
         # 1. Update Metadata (Always)
         current_meta = dict(segment.metadata_json or {})
-        current_meta['context_matches'] = result["context_matches"]
+        current_meta['context_matches'] = context_matches
         
         if mode == "translate":
             # Full Overwrite of Target
-            segment.target_content = result["target_text"]
-            current_meta['ai_draft'] = result["target_text"]
+            segment.target_content = target_text
+            current_meta['ai_draft'] = target_text
         
         elif mode == "draft":
             # Only save draft to metadata (suggestion)
-            current_meta['ai_draft'] = result["target_text"]
+            current_meta['ai_draft'] = target_text
             # Do NOT touch target_content
             
         elif mode == "analyze":
@@ -662,18 +640,13 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         # Track Token Usage (DB Logging)
         from ..models import AiUsageLog
         
-        if result.get("usage"):
-            usage = result["usage"]
-            
+        if usage:
             # 1. Log to DB (Concurrency Safe)
-            # Determine trigger type? For now generic 'generation'.
-            # Could parse from custom_prompt if needed or add API param.
-            
             new_log = AiUsageLog(
                 project_id=project.id,
                 segment_id=segment.id,
                 model=model_name,
-                trigger_type="generation", # TODO: Differentiate manual/auto
+                trigger_type="generation",
                 input_tokens=usage.get("input_tokens", 0),
                 output_tokens=usage.get("output_tokens", 0)
             )
@@ -716,7 +689,7 @@ def generate_draft_endpoint(segment_id: str, mode: str = "translate", is_workflo
         db.refresh(segment)
         
         resp_dict = segment.__dict__.copy()
-        resp_dict['context_matches'] = result["context_matches"]
+        resp_dict['context_matches'] = context_matches
         
         # helper to extract json fields
         meta_json = segment.metadata_json or {}
