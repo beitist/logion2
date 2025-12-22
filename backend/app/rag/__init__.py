@@ -2,6 +2,7 @@ from .manager import RAGManager
 from .ingestion import ingest_project_files
 from .retrieval import RetrievalEngine
 from .types import GenerationResult
+from sqlalchemy.orm import Session
 
 # Legacy Support / Route Adapter
 async def generate_segment_draft(

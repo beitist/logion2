@@ -313,7 +313,7 @@ def reinitialize_project(project_id: str, db: Session = Depends(get_db)):
         # But RAG is based on ContextChunks (Files).
         # Theoretically we should re-ingest the file to RAG too if content structure changed.
         # Let's trigger background ingestion just in case.
-        from ..rag import reingest_project
+        # from ..rag import reingest_project
         # reingest_project(project.id) # synchronous for safety or bg?
         # Let's skip automatic RAG re-ingest for this specific scope unless requested, 
         # to keep it fast. The user asked for "reinitialise source". 
@@ -775,14 +775,15 @@ def generate_tmx_content(source_lang, target_lang, segments):
         if not seg.target_content or not seg.source_content:
             continue
             
-        # Strip internal tags for now? Or keep them?
-        # TMX standard supports <bpt>, <ept>, <ph>. 
-        # For simplicity, we might strip or just escape them as text if not strictly TMX tagged.
-        # Let's clean tags for basic TMX to ensure compatibility with standard tools.
-        # Or better: Just escape everything as text.
+        import re
         
-        src_clean = escape(seg.source_content)
-        tgt_clean = escape(seg.target_content)
+        # Strip internal tags (anything looking like <1>, </1>, <b ...>)
+        # We want clean text for TMX to avoid polluting other TMs.
+        src_clean_text = re.sub(r'<[^>]+>', '', seg.source_content)
+        tgt_clean_text = re.sub(r'<[^>]+>', '', seg.target_content)
+        
+        src_clean = escape(src_clean_text)
+        tgt_clean = escape(tgt_clean_text)
 
         tmx_body += f"""
     <tu>

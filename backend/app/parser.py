@@ -350,8 +350,15 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
             current_sig = _get_run_signature(run_buffer[0])
             
             for r in run_buffer[1:]:
+                # Check for Whitespace-Only Run
+                r_text = _get_run_text(r, namespaces)
+                is_whitespace = not r_text.strip() and r_text
+                
                 sig = _get_run_signature(r)
-                if sig == current_sig:
+                
+                # Smart Merge: If it's whitespace, assume it belongs to the previous group
+                # This prevents <1>Word</1><2> </2><3>Word</3> fragmentation.
+                if sig == current_sig or is_whitespace:
                     current_group.append(r)
                 else:
                     groups.append(current_group)
@@ -391,11 +398,9 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
                      full_text += run_text
                  continue
 
-        # For any other tag, flush buffer first
-        flush_run_buffer()
-
         # 2. Hyperlink (w:hyperlink)
         if tag_name == qn('w:hyperlink'):
+            flush_run_buffer() # Hyperlink must be treated as distinct block
             rid = child.get(qn('r:id'))
             
             link_tag = TagModel(type="link", xml_attributes={"is_hyperlink": True, "rid": rid})
@@ -415,6 +420,24 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
 
         # 2b. Comment Range Start
         elif tag_name == qn('w:commentRangeStart'):
+            # Comment ranges break runs logically? 
+            # Usually yes, we want to anchor exactly.
+            flush_run_buffer()
+            # ... (Rest of comment logic)
+
+        # IGNORE LIST (Do not flush)
+        elif tag_name in [qn('w:proofErr'), qn('w:bookmarkStart'), qn('w:bookmarkEnd'), qn('w:permStart'), qn('w:permEnd'), qn('w:noBreakHyphen'), qn('w:lastRenderedPageBreak')]:
+            continue
+
+        # For any other tag, flush buffer first (e.g. unknown inline shapes)
+        elif tag_name == qn('w:commentRangeStart'): 
+             # Re-listing explicit checks to follow logic flow if not handled above
+             pass 
+        else:
+             flush_run_buffer()
+        
+        # 2b. Comment Range Start logic implementation...
+        if tag_name == qn('w:commentRangeStart'):
             comment_id = child.get(qn('w:id'))
             if comment_id and context["comments_map"].get(comment_id):
                 comment_text = context["comments_map"][comment_id]
@@ -479,6 +502,12 @@ def _process_paragraph(para_element, location: dict, context: dict) -> List[Segm
     flush_run_buffer()
 
     if not full_text:
+        return []
+
+    # Filter Empty/Noise Segments
+    # Remove tags and whitespace to check real content
+    clean_check = re.sub(r'<[^>]+>', '', full_text).strip()
+    if not clean_check:
         return []
 
     # Decision: Smart Splitting
@@ -691,16 +720,15 @@ def _get_run_signature(run_element):
     
     # 2. Valued Properties
     # (tag_name, attr_name)
+    # Refined list to merge visually identical runs even if minor tech details differ.
     valued_props = [
         ('color', 'val'),
         ('highlight', 'val'),
         ('sz', 'val'),
-        ('rFonts', 'ascii'), # Simplified: track ascii font as proxy
-        ('rFonts', 'hAnsi'),
+        # ('rFonts', 'ascii'), # Removed to prevent fragmentation due to font shifts
         ('vertAlign', 'val'),
-        ('shd', 'fill'), # Shading
-        ('kern', 'val'),
-        ('position', 'val'),
+        ('shd', 'fill'), 
+        # Removed 'kern', 'position', 'hAnsi' to encourage merging
     ]
     
     for tag, attr in valued_props:
@@ -787,6 +815,13 @@ def _process_run_element(run_element, add_tag_func, context, text_override=None)
             return txt
 
     # 2. Extract formatting from Run XML directly
+    # 0. Check for content
+    # If text_override provided, use it. Else extract.
+    final_text = text_override if text_override is not None else _get_run_text(run_element, {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'})
+    
+    if not final_text:
+        return ""
+        
     extracted_tags = _extract_tags(run_element)
     
     active_ids = []
