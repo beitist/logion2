@@ -735,6 +735,44 @@ async def generate_drafts_endpoint(project_id: str, background_tasks: Background
     
     return {"message": "Batch draft generation started. This may take a while."}
 
+@router.post("/{project_id}/workflow/copy-source")
+async def copy_source_workflow(project_id: str, db: Session = Depends(get_db)):
+    """
+    Workflow: Bulk copy all source content to target content for a project.
+    Efficient SQL implementation.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        # Bulk Update
+        # By default, we overwrite EVERYTHING or only empty?
+        # Workflow usually implies "Do it". 
+        # But safeguards: usually we might want to respect locked segments.
+        # For simplicity and "Copy All" semantics: We update where target is NULL or we overwrite?
+        # User said "Copy All Source to Target".
+        
+        # We'll use a synchronize_session=False for performance
+        db.query(Segment).filter(Segment.project_id == project_id).update(
+            {
+                Segment.target_content: Segment.source_content,
+                Segment.status: "translated",
+                # We can't easily update metadata_json via bulk update in generic SQL easily without JSON functions.
+                # But for pure content copy, this is 100x faster.
+                # Valid trade-off: metadata might not show "modified time"
+            },
+            synchronize_session=False
+        )
+        db.commit()
+        
+        return {"message": "Copy source completed successfully", "project_id": project_id}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Bulk copy failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depends(get_db)):
     """

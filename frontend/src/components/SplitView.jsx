@@ -53,7 +53,9 @@ export function SplitView({ projectId, onBack }) {
         handleNavigation,
         handleSegmentFocus,
         handleContextMenu,
-        handleAiDraft
+        handleAiDraft,
+        queueSegments,
+        refreshProject
     } = useProjectWorkspace(projectId);
 
     if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
@@ -324,6 +326,7 @@ export function SplitView({ projectId, onBack }) {
                                             segments={segments}
                                             onQueueAll={queueSegments}
                                             onReingest={handleReingest}
+                                            onRefresh={refreshProject}
                                         />
                                     )}
                                     {activeSettingsTab === 'stats' && (

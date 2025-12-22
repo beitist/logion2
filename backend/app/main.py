@@ -1,12 +1,79 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .routers import project, translate, segment, glossary
 from .database import engine, Base
+from .logger import main_logger, correlation_id_ctx
+import uuid
+import structlog
 
 # Create DB tables on startup
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Logion 2 API")
+
+# Middleware: Correlation ID
+from .middleware.correlation import CorrelationMiddleware, get_request_id
+
+app.add_middleware(CorrelationMiddleware)
+
+# Global Exception Handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Log the full exception with stack trace
+    # Structlog's format_exc_info will capture the trace
+    main_logger.error("unhandled_exception", error=str(exc), exc_info=True)
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal Server Error",
+            "request_id": get_request_id()
+        }
+    )
+
+from .core.exceptions import LogionException, ProjectNotFound, ModelError
+
+# ...
+
+# Custom Exception Handlers
+@app.exception_handler(ProjectNotFound)
+async def project_not_found_handler(request: Request, exc: ProjectNotFound):
+    return JSONResponse(
+        status_code=404,
+        content={"detail": exc.message, "request_id": get_request_id()}
+    )
+
+@app.exception_handler(ModelError)
+async def model_error_handler(request: Request, exc: ModelError):
+    main_logger.error("model_failure", error=str(exc))
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "AI Model Unavailable", "reason": exc.message, "request_id": correlation_id_ctx.get()}
+    )
+
+@app.exception_handler(LogionException)
+async def domain_exception_handler(request: Request, exc: LogionException):
+    main_logger.warning("domain_exception", error=str(exc), details=exc.details)
+    return JSONResponse(
+        status_code=400,
+        content={"detail": exc.message, "details": exc.details, "request_id": correlation_id_ctx.get()}
+    )
+
+# Global Exception Handler (Catch-All)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Log the full exception with stack trace
+    # Structlog's format_exc_info will capture the trace
+    main_logger.exception("unhandled_exception", error=str(exc))
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal Server Error",
+            "request_id": correlation_id_ctx.get()
+        }
+    )
 
 # CORS
 app.add_middleware(

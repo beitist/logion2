@@ -333,7 +333,26 @@ def _inject_into_container(container, base_metadata, source_segments, shape_map=
         segs_for_para.sort(key=lambda x: x.metadata.get("sub_index", 0))
         for s in segs_for_para:
             text = s.target_content if s.target_content is not None else s.source_text
-            # Restore whitespaces
+            
+            # 1. Restore Wrapper Tags (Fix for Formatting Loss)
+            # If the parser stripped tags that wrapped the entire content (e.g. font size),
+            # we must restore them here so _inject_tagged_text applies the formatting.
+            wrappers = s.metadata.get("wrapper_tags", [])
+            if wrappers:
+                # Apply in reverse order (inner to outer) if we stored them outer-to-inner?
+                # Parser: wrapper_tags.append(tid) as it peeled them off.
+                # Example: <1><2>Text</2></1>
+                # Parser finds <1> first -> wrappers=['1']. Remaining: <2>Text</2>
+                # Then finds <2> -> wrappers=['1', '2']. Remaining: Text
+                # So we have ['1', '2'] (Outer, Inner).
+                # To restore <1><2>Text</2></1>:
+                # 1. Wrap with '2': <2>Text</2>
+                # 2. Wrap with '1': <1>... </1>
+                # So we iterate in REVERSE of the list.
+                for tid in reversed(wrappers):
+                    text = f"<{tid}>{text}</{tid}>"
+
+            # 2. Restore whitespaces
             text = _restore_whitespaces(text, s.metadata)
             
             full_text += text

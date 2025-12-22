@@ -20,20 +20,20 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
     useEffect(() => { projectRef.current = project; }, [project]);
 
     // Load Data
-    useEffect(() => {
-        const loadData = async () => {
-            // Avoid double loading if ID didn't change (strict mode protection?)
-            // But we want to reload if projectId changes.
-            if (!projectId) return;
+    const loadData = async (isInitial = false) => {
+        // Avoid double loading if ID didn't change (strict mode protection?)
+        // But we want to reload if projectId changes.
+        if (!projectId) return;
 
-            try {
-                setLoading(true);
-                const p = await getProject(projectId);
-                setProject(p);
-                const s = await getSegments(projectId);
-                setSegments(s);
-                segmentsRef.current = s;
+        try {
+            setLoading(true);
+            const p = await getProject(projectId);
+            setProject(p);
+            const s = await getSegments(projectId);
+            setSegments(s);
+            segmentsRef.current = s;
 
+            if (isInitial) {
                 // Initial Lookahead Trigger (Delegate to Queue via callback if provided)
                 if (queueSegments && p.config?.ai_settings?.pre_translate_count) {
                     const count = parseInt(p.config.ai_settings.pre_translate_count) || 0;
@@ -56,14 +56,19 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
                         }, 500);
                     }
                 }
-            } catch (err) {
-                console.error(err);
-            } finally {
-                setLoading(false);
             }
-        };
-        loadData();
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadData(true);
     }, [projectId]);
+
+    const refreshProject = () => loadData(false);
 
     const handleSave = async (id, htmlContent) => {
         setSavingId(id);
@@ -154,6 +159,7 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         handleEditorUpdate,
         handleExport,
         handleTmXExport,
-        handleDeleteProject
+        handleDeleteProject,
+        refreshProject
     };
 }

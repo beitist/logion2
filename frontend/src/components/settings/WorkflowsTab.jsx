@@ -1,14 +1,31 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { RefreshCw, Search, Calculator, Database, Copy } from 'lucide-react';
-import { generateDraft } from '../../api/client';
+import { generateDraft, copySourceToTarget } from '../../api/client';
 
-export function WorkflowsTab({ project, segments, onQueueAll, onReingest }) {
+export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh }) {
+    const [copyLoading, setCopyLoading] = useState(false);
 
     const handleRun = (mode) => {
         if (!segments) return;
         const ids = segments.map(s => s.id);
         if (confirm(`Queue ${ids.length} segments for ${mode}?`)) {
             onQueueAll(ids, mode, true);
+        }
+    };
+
+    const handleCopySource = async () => {
+        if (!project) return;
+        if (!confirm("This will overwrite target content for ALL segments with source content. Continue?")) return;
+
+        try {
+            setCopyLoading(true);
+            await copySourceToTarget(project.id);
+            if (onRefresh) onRefresh();
+        } catch (err) {
+            alert("Failed to copy source: " + err.message);
+            console.error(err);
+        } finally {
+            setCopyLoading(false);
         }
     };
 
@@ -90,10 +107,11 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest }) {
                         </div>
                     </div>
                     <button
-                        onClick={() => handleRun("copy_source")}
-                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-orange-50 border border-orange-200 text-orange-700 rounded hover:bg-orange-100 text-xs font-medium"
+                        onClick={handleCopySource}
+                        disabled={copyLoading}
+                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-orange-50 border border-orange-200 text-orange-700 rounded hover:bg-orange-100 text-xs font-medium disabled:opacity-50"
                     >
-                        Copy All Sources
+                        {copyLoading ? "Copying..." : "Copy All Sources"}
                     </button>
                 </div>
 

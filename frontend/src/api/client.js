@@ -101,6 +101,14 @@ export async function generateDraft(segmentId, mode = "translate", isWorkflow = 
     return response.json();
 }
 
+export async function copySourceToTarget(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/workflow/copy-source`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to copy source");
+    return res.json();
+}
+
 export async function generateProjectDrafts(projectId) {
     const res = await fetch(`${API_BASE}/project/${projectId}/generate-drafts`, {
         method: "POST",

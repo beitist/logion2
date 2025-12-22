@@ -1,40 +1,48 @@
 import logging
-import os
 import sys
-from logging.handlers import RotatingFileHandler
+import os
+import structlog
+from logging.handlers import TimedRotatingFileHandler
+from .middleware.correlation import get_request_id
 
 # Constants
-LOG_FILE_PATH = os.path.join(os.getcwd(), "app.log")
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+LOG_FILE_PATH = os.path.join(os.getcwd(), "app.json")
+
+def configure_logger():
+    """
+    Configures structlog to output JSON logs.
+    """
+    
+    # Processor to inject correlation ID
+    def add_correlation_id(logger, log_method, event_dict):
+        request_id = get_request_id()
+        if request_id:
+            event_dict["correlation_id"] = request_id
+        return event_dict
+
+    # 1. Configure Structlog
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            add_correlation_id,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.add_log_level,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.processors.JSONRenderer()
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
 
 def get_logger(name: str):
-    """
-    Returns a configured logger instance.
-    Ensures that we only have one file handler and one stream handler per logger.
-    """
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
+    return structlog.get_logger(name)
 
-    # Check if handlers are already set to avoid duplication
-    if not logger.handlers:
-        from logging.handlers import TimedRotatingFileHandler
-        # 1. File Handler (Timed - Rotate every midnight, keep 1 backup)
-        # This ensures logs are max 24h-48h old and don't grow indefinitely.
-        file_handler = TimedRotatingFileHandler(
-            LOG_FILE_PATH, when='midnight', interval=1, backupCount=1, encoding='utf-8'
-        )
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
-        logger.addHandler(file_handler)
+# Auto-configure on import
+configure_logger()
 
-        # 2. Console Handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO) # Keep console cleaner
-        console_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
-        logger.addHandler(console_handler)
-
-    return logger
-
-# Global instance for quick access
+# Global Access
 main_logger = get_logger("LogionBackend")
