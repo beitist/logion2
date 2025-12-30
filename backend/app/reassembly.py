@@ -377,29 +377,16 @@ def _inject_into_container(container, base_metadata, source_segments, shape_map=
         leading = ws.get("leading", "")
         trailing = ws.get("trailing", "")
         
-        # Restore Leading
+        # Restore Leading (Strict)
         if leading:
-             # Check if already present
-             if not text.startswith(leading):
-                 # If text starts with SOME whitespace, do we replace or append?
-                 # Strategy: Ensure the EXACT whitespace exists.
-                 # If text starts with stripped text, prepend.
-                 # If text starts with different whitespace, maybe AI changed it?
-                 # User wants to FIX truncation.
-                 current_leading = re.match(r'^(\s+)', text)
-                 if not current_leading:
-                     text = leading + text
-                 # If it has whitespace, but different? We trust AI or Source?
-                 # User says "Model cuts them off".
-                 # Providing the source leading space is usually safe for layout.
+             # Remove any existing leading whitespace and enforce source leading
+             text = leading + text.lstrip()
         
-        # Restore Trailing
+        # Restore Trailing (Strict)
         if trailing:
-             if not text.endswith(trailing):
-                 current_trailing = re.search(r'(\s+)$', text)
-                 if not current_trailing:
-                     text = text + trailing
-                     
+             # Remove any existing trailing whitespace and enforce source trailing
+             text = text.rstrip() + trailing
+             
         return text
 
     # 1. Build Grouped Segments from the flat list

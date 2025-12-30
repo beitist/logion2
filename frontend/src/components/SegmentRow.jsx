@@ -208,6 +208,29 @@ export const SegmentRow = memo(({
                         <span className={`font-bold transition-colors ${isMandatoryContext ? 'text-red-800' : 'text-gray-300 group-hover:text-indigo-400'}`}>
                             {isMandatoryContext ? '⚠️ Mandatory Target' : 'Target (DE)'}
                         </span>
+                        {/* Spacing Warning */}
+                        {(() => {
+                            const ws = segment.metadata?.whitespaces;
+                            if (!ws) return null;
+                            const target = segment.target_content || "";
+
+                            const expectedLead = ws.leading || "";
+                            const expectedTrail = ws.trailing || "";
+
+                            let mismatchParts = [];
+                            if (!target.startsWith(expectedLead)) mismatchParts.push("Leading Space");
+                            if (!target.endsWith(expectedTrail)) mismatchParts.push("Trailing Space");
+
+                            if (mismatchParts.length === 0) return null;
+
+                            return (
+                                <div className="ml-2 flex items-center gap-1 text-[10px] text-red-500 bg-red-50 px-1.5 py-0.5 rounded border border-red-100" title={`Mismatch: ${mismatchParts.join(", ")}`}>
+                                    <span className="font-bold font-mono">␣!</span>
+                                    <span className="hidden group-hover:inline">Spacing</span>
+                                </div>
+                            );
+                        })()}
+
                         {segment.metadata && (
                             <div className="flex gap-1">
                                 {segment.metadata.type === 'header' && (
