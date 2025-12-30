@@ -164,7 +164,7 @@ Rules:
 
     async def _generate_pass_1_plain(self, source: str, s_lang: str, t_lang: str, ctx: SegmentContext, model: str, prompt: str):
         """Pass 1: Translate Plain Text (Low Temperature)"""
-        system_instruction = f"Translate from {s_lang} to {t_lang}. Output ONLY the raw translation text (Plain Text). No preamble."
+        system_instruction = f"Translate from {s_lang} to {t_lang}. Output ONLY the raw translation text (Plain Text). No preamble. Do not wrap the output in any delimiters."
         
         if prompt:
             system_instruction += f"\n\nStyle Guide:\n{prompt}"
@@ -193,7 +193,7 @@ Rules:
 
     async def _generate_standard(self, source: str, s_lang: str, t_lang: str, ctx: SegmentContext, model: str, prompt: str):
         """Standard 1-Pass Translation"""
-        system_instruction = f"Translate from {s_lang} to {t_lang}. Output ONLY the raw translation text."
+        system_instruction = f"Translate from {s_lang} to {t_lang}. Output ONLY the raw translation text. Do not wrap the output in any delimiters."
         system_instruction += " The source text may contain XML-like formatting tags. Preserve them."
         
         if prompt:
@@ -229,7 +229,7 @@ Rules:
         # If we have history (Target), it's even better, but usually mixed with source neighbors in display.
         # Let's just put source neighbors as 'Background'.
         
-        out += f"\n\n>>> {source} <<<"
+        out += f"\n\n## Source Text\n{source}"
         
         if ctx.next_chunks:
              for n in ctx.next_chunks: out += f"\n... {n}"

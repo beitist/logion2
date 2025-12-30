@@ -88,6 +88,9 @@ export function useProjectWorkspace(projectId) {
         if (!data.loading && data.segments.length > 0) {
             triggerPreTranslate();
         }
+        if (!data.loading && data.project) {
+            blocking.checkResumableWorkflow();
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data.loading]); // Run once when loading finishes
 

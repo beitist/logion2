@@ -17,7 +17,7 @@ export const SegmentRow = memo(({
     registerEditor
 }) => {
     const comments = getSegmentComments(segment.tags);
-    const hasContext = (segment.context_matches?.length > 0 || segment.metadata?.context_matches?.length > 0);
+    const hasContext = (segment.context_matches?.length > 0 || segment.metadata?.context_matches?.length > 0) || !!segment.metadata?.ai_draft;
 
     // Logic for UI Highlight
     const allMatches = segment.context_matches || segment.metadata?.context_matches || [];
@@ -25,6 +25,32 @@ export const SegmentRow = memo(({
     const isMandatoryContext = !!mandatoryMatch;
     const isFlagged = segment.metadata?.flagged || false;
     const aiSettings = project?.config?.ai_settings || {};
+
+    // --- Matches Calculation (Lifted for TiptapEditor Shortcut) ---
+    let rawMatches = (segment.context_matches || segment.metadata?.context_matches || []);
+
+    // INJECT AI DRAFT AS A MATCH
+    const aiDraft = segment.metadata?.ai_draft;
+    if (aiDraft) {
+        const existingMT = rawMatches.find(m => m.type === 'mt');
+        if (!existingMT) {
+            rawMatches = [...rawMatches, {
+                type: 'mt',
+                content: aiDraft,
+                score: 0,
+                filename: segment.metadata.ai_model || 'AI',
+                model: segment.metadata.ai_model || 'AI'
+            }];
+        }
+    }
+
+    const sortedMatches = rawMatches.sort((a, b) => {
+        if (a.type === 'mt') return -1;
+        if (b.type === 'mt') return 1;
+        return (b.score || 0) - (a.score || 0);
+    });
+    const tmMatches = sortedMatches.filter(m => m.type !== 'mt');
+    // ----------------------------------------------------------------
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
@@ -100,102 +126,81 @@ export const SegmentRow = memo(({
                             </div>
                         </div>
                         <div className="space-y-2">
-                            {(() => {
-                                let rawMatches = (segment.context_matches || segment.metadata?.context_matches || []);
+                            {sortedMatches.map((match, idx) => {
+                                const isMandatory = match.type === 'mandatory';
+                                const isMT = match.type === 'mt';
+                                const isGlossary = match.type === 'glossary';
 
-                                // INJECT AI DRAFT AS A MATCH
-                                const aiDraft = segment.metadata?.ai_draft;
-                                if (aiDraft) {
-                                    const existingMT = rawMatches.find(m => m.type === 'mt');
-                                    if (!existingMT) {
-                                        rawMatches = [...rawMatches, {
-                                            type: 'mt',
-                                            target_text: aiDraft,
-                                            score: 0,
-                                            model: segment.metadata.ai_model || 'AI'
-                                        }];
-                                    }
+                                const aiConfig = project?.config?.ai_settings || {};
+                                const tMandatory = aiConfig.threshold_mandatory !== undefined ? aiConfig.threshold_mandatory : 60;
+                                const tOptional = aiConfig.threshold_optional !== undefined ? aiConfig.threshold_optional : 40;
+                                const score = match.score || 0;
+
+                                if (isGlossary) { /* Always show */ }
+                                else if (isMandatory) { if (score < tMandatory) return null; }
+                                else if (!isMT) { if (score < tOptional) return null; }
+
+                                let shortcutLabel = '';
+                                if (isMT) shortcutLabel = 'Cmd+Opt+0';
+                                else if (!isGlossary) {
+                                    const tmIdx = tmMatches.indexOf(match);
+                                    if (tmIdx === 0) shortcutLabel = 'Cmd+Opt+9';
+                                    else if (tmIdx === 1) shortcutLabel = 'Cmd+Opt+8';
+                                    else if (tmIdx === 2) shortcutLabel = 'Cmd+Opt+7';
                                 }
 
-                                const sortedMatches = rawMatches.sort((a, b) => (b.score || 0) - (a.score || 0));
-                                const tmMatches = sortedMatches.filter(m => m.type !== 'mt');
+                                let borderClass = isMandatory ? 'border-l-red-500' : 'border-l-blue-400';
+                                let bgClass = 'bg-white';
+                                let textClass = isMandatory ? 'text-red-700' : 'text-blue-700';
+                                let label = isMandatory ? '⚖️ Vorgabe' : '💡 Vorschlag aus Archiv';
 
-                                return sortedMatches.map((match, idx) => {
-                                    const isMandatory = match.type === 'mandatory';
-                                    const isMT = match.type === 'mt';
-                                    const isGlossary = match.type === 'glossary';
+                                if (isMT) {
+                                    borderClass = 'border-l-purple-500';
+                                    bgClass = 'bg-purple-50';
+                                    textClass = 'text-purple-700';
+                                    label = '🤖 Machine Translation';
+                                    if (flashingSegments[segment.id]) bgClass = 'animate-flash-purple';
+                                } else if (isGlossary) {
+                                    borderClass = 'border-l-teal-500';
+                                    bgClass = 'bg-teal-50';
+                                    textClass = 'text-teal-700';
+                                    label = '📚 Glossary Term';
+                                }
 
-                                    const aiConfig = project?.config?.ai_settings || {};
-                                    const tMandatory = aiConfig.threshold_mandatory !== undefined ? aiConfig.threshold_mandatory : 60;
-                                    const tOptional = aiConfig.threshold_optional !== undefined ? aiConfig.threshold_optional : 40;
-                                    const score = match.score || 0;
-
-                                    if (isGlossary) { /* Always show */ }
-                                    else if (isMandatory) { if (score < tMandatory) return null; }
-                                    else if (!isMT) { if (score < tOptional) return null; }
-
-                                    let shortcutLabel = '';
-                                    if (isMT) shortcutLabel = 'Cmd+Opt+0';
-                                    else if (!isGlossary) {
-                                        const tmIdx = tmMatches.indexOf(match);
-                                        if (tmIdx === 0) shortcutLabel = 'Cmd+Opt+9';
-                                        else if (tmIdx === 1) shortcutLabel = 'Cmd+Opt+8';
-                                        else if (tmIdx === 2) shortcutLabel = 'Cmd+Opt+7';
-                                    }
-
-                                    let borderClass = isMandatory ? 'border-l-red-500' : 'border-l-blue-400';
-                                    let bgClass = 'bg-white';
-                                    let textClass = isMandatory ? 'text-red-700' : 'text-blue-700';
-                                    let label = isMandatory ? '⚖️ Vorgabe' : '💡 Vorschlag aus Archiv';
-
-                                    if (isMT) {
-                                        borderClass = 'border-l-purple-500';
-                                        bgClass = 'bg-purple-50';
-                                        textClass = 'text-purple-700';
-                                        label = '🤖 Machine Translation';
-                                        if (flashingSegments[segment.id]) bgClass = 'animate-flash-purple';
-                                    } else if (isGlossary) {
-                                        borderClass = 'border-l-teal-500';
-                                        bgClass = 'bg-teal-50';
-                                        textClass = 'text-teal-700';
-                                        label = '📚 Glossary Term';
-                                    }
-
-                                    return (
-                                        <div key={idx} className={`p-2.5 rounded border transition-all hover:shadow-sm ${bgClass} ${borderClass} border-gray-200`}>
-                                            <div className="flex justify-between items-start mb-1">
-                                                <div className="flex items-center gap-2">
-                                                    <span className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${textClass}`}>
-                                                        {label}
+                                return (
+                                    <div key={idx} className={`p-2.5 rounded border transition-all hover:shadow-sm ${bgClass} ${borderClass} border-gray-200`}>
+                                        <div className="flex justify-between items-start mb-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${textClass}`}>
+                                                    {label}
+                                                </span>
+                                                {match.score !== undefined && !isMT && (
+                                                    <span className={`text-[9px] font-bold px-1.5 rounded-full ${match.score > 85 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                        {match.score}%
                                                     </span>
-                                                    {match.score !== undefined && !isMT && (
-                                                        <span className={`text-[9px] font-bold px-1.5 rounded-full ${match.score > 85 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                                            {match.score}%
-                                                        </span>
-                                                    )}
-                                                    <span className="text-[9px] font-mono text-gray-400 bg-white/50 px-1 rounded border border-gray-100 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        {shortcutLabel}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-1 text-[9px] text-gray-400 font-mono" title={match.filename}>
-                                                    <span className="truncate max-w-[100px]">
-                                                        {isMT ? (project?.config?.ai_settings?.model || match.filename) : match.filename}
-                                                    </span>
-                                                </div>
+                                                )}
+                                                <span className="text-[9px] font-mono text-gray-400 bg-white/50 px-1 rounded border border-gray-100 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    {shortcutLabel}
+                                                </span>
                                             </div>
-                                            <div
-                                                className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100"
-                                                dangerouslySetInnerHTML={{ __html: formatSourceContent(match.content, null, false) }}
-                                            />
-                                            {match.note && (
-                                                <div className="mt-1 text-[10px] text-gray-500 italic border-t border-gray-200/50 pt-1">
-                                                    Note: {match.note}
-                                                </div>
-                                            )}
+                                            <div className="flex items-center gap-1 text-[9px] text-gray-400 font-mono" title={match.filename}>
+                                                <span className="truncate max-w-[100px]">
+                                                    {isMT ? (project?.config?.ai_settings?.model || match.filename) : match.filename}
+                                                </span>
+                                            </div>
                                         </div>
-                                    )
-                                })
-                            })()}
+                                        <div
+                                            className="text-gray-800 text-[13px] leading-snug font-source selection:bg-yellow-100"
+                                            dangerouslySetInnerHTML={{ __html: formatSourceContent(match.content, null, false) }}
+                                        />
+                                        {match.note && (
+                                            <div className="mt-1 text-[10px] text-gray-500 italic border-t border-gray-200/50 pt-1">
+                                                Note: {match.note}
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            })}
                         </div>
                     </div>
                 )}
@@ -263,7 +268,7 @@ export const SegmentRow = memo(({
                         content={hydrateContent(segment.target_content, segment.tags)}
                         segmentId={segment.id}
                         availableTags={segment.tags}
-                        contextMatches={segment.context_matches || (segment.metadata && segment.metadata.context_matches)}
+                        contextMatches={sortedMatches} // Use injected matches
                         onSave={onSave}
                         aiSettings={aiSettings}
                         onAiDraft={(id) => onAiDraft(id)}
@@ -280,6 +285,6 @@ export const SegmentRow = memo(({
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 });

@@ -192,7 +192,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
             }
 
             const isTranslated = analyzedSeg.status === 'translated' || analyzedSeg.status === 'approved';
-            const hasDraft = analyzedSeg.context_matches?.some(m => m.type === 'mt');
+            const hasDraft = analyzedSeg.context_matches?.some(m => m.type === 'mt') || !!analyzedSeg.metadata?.ai_draft;
             const hasContent = analyzedSeg.target_content && analyzedSeg.target_content.trim().length > 0;
 
             if (projectRef.current?.use_ai && !isTranslated && !hasDraft && !hasContent) {

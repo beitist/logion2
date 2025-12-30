@@ -178,7 +178,7 @@ class SegmentService:
                  "status": segment.status,
                  "project_id": segment.project_id,
                  "context_matches": [],
-                 "metadata": md.get("metadata"),
+                 "segment_metadata": md.get("metadata"),
                  "tags": md.get("tags")
              }
 
@@ -220,13 +220,18 @@ class SegmentService:
             
             # 4. Update Segment
             current_meta = dict(segment.metadata_json or {})
+            
+            # Ensure inner metadata dict exists (This is what is exposed as 'metadata' in Schema)
+            inner_meta = current_meta.get("metadata", {})
+            if not isinstance(inner_meta, dict): inner_meta = {}
+            
             current_meta['context_matches'] = context_matches
             
             if mode == "translate":
                 segment.target_content = target_text
-                current_meta['ai_draft'] = target_text
+                inner_meta['ai_draft'] = target_text
             elif mode == "draft":
-                current_meta['ai_draft'] = target_text
+                inner_meta['ai_draft'] = target_text
             
             # 5. Log Usage
             if usage:
@@ -254,7 +259,8 @@ class SegmentService:
                 project.config = current_config
                 flag_modified(project, "config")
                 
-            current_meta['ai_model'] = model_name
+            inner_meta['ai_model'] = model_name
+            current_meta['metadata'] = inner_meta # Save back nested
             segment.metadata_json = current_meta
             flag_modified(segment, "metadata_json")
             
@@ -266,7 +272,7 @@ class SegmentService:
             resp_dict['context_matches'] = context_matches
             
             meta_json = segment.metadata_json or {}
-            resp_dict['metadata'] = meta_json.get("metadata")
+            resp_dict['segment_metadata'] = meta_json.get("metadata")
             resp_dict['tags'] = meta_json.get("tags")
             
             return resp_dict
@@ -341,21 +347,29 @@ class SegmentService:
                 res = results.get(seg.id)
                 if not res: continue
                 
-                context_matches = res.context_used.matches if res.context_used else []
+                # FIX: Convert Pydantic models to Dicts for JSON serialization
+                context_matches = [m.model_dump() for m in res.context_used.matches] if res.context_used else []
+                
                 current_meta = dict(seg.metadata_json or {})
+                
+                # Nested Metadata
+                inner_meta = current_meta.get("metadata", {})
+                if not isinstance(inner_meta, dict): inner_meta = {}
+
                 current_meta['context_matches'] = context_matches
-                current_meta['ai_model'] = model_name
+                inner_meta['ai_model'] = model_name
                 
                 target_text = res.target_text
                 
                 if mode == "translate":
                    seg.target_content = target_text
-                   current_meta['ai_draft'] = target_text
+                   inner_meta['ai_draft'] = target_text
                    if not res.is_exact: # If exact match, maybe status is approved? or translated?
                        seg.status = "translated" 
                 elif mode == "draft":
-                   current_meta['ai_draft'] = target_text
+                   inner_meta['ai_draft'] = target_text
                    
+                current_meta['metadata'] = inner_meta 
                 seg.metadata_json = current_meta
                 flag_modified(seg, "metadata_json")
                 

@@ -68,7 +68,7 @@ class SegmentResponse(BaseModel):
     status: str
     project_id: str
     tags: Optional[Dict[str, TagModel]] = None
-    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias="segment_metadata")
+    segment_metadata: Optional[Dict[str, Any]] = Field(default=None, serialization_alias="metadata")
     context_matches: Optional[list[Any]] = None
     
     class Config:

@@ -56,7 +56,8 @@ export function SplitView({ projectId, onBack }) {
         handleContextMenu,
         handleAiDraft,
         queueSegments,
-        refreshProject
+        refreshProject,
+        setProject // Destructure setProject to allow updates
     } = useProjectWorkspace(projectId);
 
     if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
@@ -125,46 +126,6 @@ export function SplitView({ projectId, onBack }) {
                     </button>
 
                     <div className="h-6 w-px bg-gray-300 mx-2" />
-
-                    {/* AI Actions Dropdown */}
-                    <div className="relative group">
-                        <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg hover:border-indigo-300 hover:text-indigo-600 transition-colors shadow-sm text-sm font-medium text-gray-700">
-                            <span className="bg-gradient-to-r from-indigo-500 to-purple-500 bg-clip-text text-transparent font-bold">AI</span>
-                            <span>Compagnon</span>
-                            <ChevronDown size={14} className="opacity-50" />
-                        </button>
-                        <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-20 hidden group-hover:block animate-in fade-in slide-in-from-top-2 duration-200">
-                            <div className="p-1">
-                                <button onClick={() => handleBatchProcess('draft')} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
-                                    <div className="p-1 bg-indigo-50 rounded text-indigo-600">
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                                    </div>
-                                    <div>
-                                        <div className="font-medium">Pre-Translate (Draft)</div>
-                                        <div className="text-xs text-gray-400">Gen drafts for ALL segments</div>
-                                    </div>
-                                </button>
-                                <button onClick={() => handleBatchProcess('translate')} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left mt-1">
-                                    <div className="p-1 bg-green-50 rounded text-green-600">
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
-                                    </div>
-                                    <div>
-                                        <div className="font-medium">Machine Translation</div>
-                                        <div className="text-xs text-gray-400">Fill EMPTY targets only</div>
-                                    </div>
-                                </button>
-                                <button onClick={handleFullReinit} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left mt-1">
-                                    <div className="p-1 bg-orange-50 rounded text-orange-600">
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                    </div>
-                                    <div>
-                                        <div className="font-medium">Re-Initialize</div>
-                                        <div className="text-xs text-gray-400">Re-parse source & Vectors</div>
-                                    </div>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
 
                     {/* Export Menu */}
                     <div className="relative">
@@ -314,6 +275,7 @@ export function SplitView({ projectId, onBack }) {
                                     {activeSettingsTab === 'files' && (
                                         <ProjectSettingsTab
                                             project={project}
+                                            onUpdate={setProject} // Fix: Pass setProject as onUpdate handler
                                             onReingest={handleReingest}
                                             onFullReinit={handleFullReinit}
                                         />
@@ -322,10 +284,11 @@ export function SplitView({ projectId, onBack }) {
                                         <AISettingsTab
                                             project={project}
                                             aiSettings={aiSettings}
+                                            onUpdate={setProject}
                                         />
                                     )}
                                     {activeSettingsTab === 'rag' && (
-                                        <RAGSettingsTab project={project} />
+                                        <RAGSettingsTab project={project} onUpdate={setProject} />
                                     )}
                                     {activeSettingsTab === 'glossary' && (
                                         <GlossarySettingsTab project={project} />
@@ -335,6 +298,7 @@ export function SplitView({ projectId, onBack }) {
                                             project={project}
                                             segments={segments}
                                             onQueueAll={queueSegments}
+                                            onBatchProcess={handleBatchProcess} // Allow Blocking Workflows
                                             onReingest={handleReingest}
                                             onRefresh={refreshProject}
                                         />

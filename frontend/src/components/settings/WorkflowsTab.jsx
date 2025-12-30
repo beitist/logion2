@@ -2,13 +2,27 @@ import React, { useState } from 'react';
 import { RefreshCw, Search, Calculator, Database, Copy } from 'lucide-react';
 import { generateDraft, copySourceToTarget } from '../../api/client';
 
-export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh }) {
+export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess }) {
     const [copyLoading, setCopyLoading] = useState(false);
 
     const handleRun = (mode) => {
         if (!segments) return;
+
+        // Blocking Batch Workflows (Preferred by User)
+        if (onBatchProcess && (mode === 'draft' || mode === 'translate')) {
+            // onBatchProcess handles confirmation and execution internally?
+            // No, handleBatchProcess in useBlockingTask starts immediately? 
+            // Let's check. It sets isOpen=true immediately.
+            // We should confirm first.
+            if (confirm(`Start Blocking Workflow: ${mode.toUpperCase()} for ${segments.length} segments?`)) {
+                onBatchProcess(mode);
+            }
+            return;
+        }
+
+        // Fallback or Context Analysis (Background Queue)
         const ids = segments.map(s => s.id);
-        if (confirm(`Queue ${ids.length} segments for ${mode}?`)) {
+        if (confirm(`Queue ${ids.length} segments for ${mode} (Background)?`)) {
             onQueueAll(ids, mode, true);
         }
     };

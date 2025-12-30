@@ -99,6 +99,7 @@ def reconfigure():
     )
      
      # Setup Handlers
+     # Setup Handlers
      file_handler = TimedRotatingFileHandler(
         LOG_FILE_PATH, when='midnight', interval=1, backupCount=3, encoding='utf-8'
     )

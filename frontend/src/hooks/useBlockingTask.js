@@ -136,27 +136,60 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         } catch (e) { alert("Failed: " + e.message); }
     };
 
-    // Generic Batch Processor
-    const handleBatchProcess = async (mode) => {
+    // State Tracking Helper
+    const updateWorkflowState = async (status, mode = null) => {
+        if (!projectRef.current) return;
+        const currentConfig = projectRef.current.config || {};
+        const workflowState = status === 'idle' ? null : {
+            status,
+            active_mode: mode,
+            timestamp: Date.now()
+        };
+
+        // Optimistic update? No, rely on refetch for safety or local ref
+        // deep merge config
+        const newConfig = { ...currentConfig, workflow: workflowState };
+
+        try {
+            // We use the client directly to avoid circular hook dependency if possible
+            // But we need to import updateProject
+            const { updateProject } = require("../api/client");
+            await updateProject(projectId, { config: newConfig });
+        } catch (e) {
+            console.error("Failed to update workflow state in DB", e);
+        }
+    };
+
+    const handleBatchProcess = async (mode, options = {}) => {
+        const { resume = false } = options;
         const aiSettings = projectRef.current?.config?.ai_settings || {};
         const batchSize = aiSettings.batch_size || 10;
         const workflowModel = aiSettings.workflow_model || "Fast Model";
 
         const modeLabel = mode === 'draft' ? "Pre-Translate" : "Machine Translation";
-        if (!confirm(`Start ${modeLabel}?\n\nModel: ${workflowModel}\nBatch Size: ${batchSize}`)) return;
+
+        // Confirmation (Skip if resuming autonomously, but usually user triggers resume)
+        if (!resume && !confirm(`Start ${modeLabel}?\n\nModel: ${workflowModel}\nBatch Size: ${batchSize}`)) return;
 
         // Filter Candidates
         let candidates = [];
         if (mode === 'draft') {
             // Pre-Translate: Process ALL segments (update drafts)
+            // If Resuming, skip those that already have ai_draft and match the model
             candidates = segmentsRef.current;
+            if (resume) {
+                candidates = candidates.filter(s => !s.metadata?.ai_draft);
+            }
         } else {
             // Machine Translation: Process only EMPTY targets (fill gaps)
             candidates = segmentsRef.current.filter(s => !s.target_content);
+            // Resume for Translate is implicit as we filter fulfilled ones
         }
 
         if (candidates.length === 0) {
             alert("No applicable segments found.");
+            // Clear state if we were trying to resume
+            if (resume) updateWorkflowState('idle');
             return;
         }
 
@@ -165,10 +198,13 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
             isOpen: true,
             type: 'batch',
             status: 'running',
-            title: `${modeLabel} (${candidates.length})`,
+            title: `${modeLabel} ${resume ? '(Resuming)' : ''} (${candidates.length})`,
             logs: [`Starting ${modeLabel}...`, `Batch Size: ${batchSize}`],
             progress: 0
         });
+
+        // Track Start in DB
+        await updateWorkflowState('running', mode);
 
         let processed = 0;
         let errors = 0;
@@ -177,6 +213,12 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         for (let i = 0; i < candidates.length; i += batchSize) {
             if (stopRef.current) {
                 setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...prev.logs, "Stopped by user."] }));
+                // Track Paused (or Idle if strict stop)
+                // User said "erase ephemeral data" if they say NO to resume. 
+                // But here we just stop. We should leave it as 'running' or set to 'paused' so on reload we ask?
+                // Let's set to 'running' (idempotent) or 'paused'.
+                // If we set 'idle', we lose progress tracking.
+                // Let's leave it as is (so on reload it detects 'running' and asks).
                 break;
             }
 
@@ -193,43 +235,53 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
                 // Call Batch API
                 await batchTranslate(projectId, batchIds, mode);
 
-                // Refresh Frontend State (Naive: Fetch all segments to ensure consistency)
-                // Optimization: Be optimistic? No, safer to fetch or we miss side-effects.
-                // Or better: The API returns list of updated segments? 
-                // Currently API returns success status. Implementation Plan says "Bulk update DB".
-                // We should re-fetch segments for the updated range or all.
-                // Fetching all is safest for now.
-
-                // Partially update memory for smoothness?
-                // Real: Fetch only updated? We don't have endpoint for "get segments by ids".
-                // Let's silent re-fetch all for sync.
+                // Refresh Frontend State (Sync)
+                // fetch full validation
                 const updatedSegments = await getSegments(projectId);
-                setSegments(updatedSegments.segments || updatedSegments); // Handle if wrapper used
+                setSegments(updatedSegments.segments || updatedSegments);
 
             } catch (err) {
                 console.error(err);
-                errors += batch.length; // Assume whole batch failed
+                errors += batch.length;
                 setBlockingTask(prev => ({ ...prev, logs: [...prev.logs, `Batch Error: ${err.message}`] }));
             }
 
             processed += batch.length;
         }
 
-        setBlockingTask(prev => ({
-            ...prev,
-            status: 'done',
-            title: "Workflow Complete",
-            progress: 1,
-            logs: [...prev.logs, `Done. Processed: ${processed}, Errors: ${errors}`]
-        }));
+        if (!stopRef.current) {
+            setBlockingTask(prev => ({
+                ...prev,
+                status: 'done',
+                title: "Workflow Complete",
+                progress: 1,
+                logs: [...prev.logs, `Done. Processed: ${processed}, Errors: ${errors}`]
+            }));
+            // Clear DB State
+            await updateWorkflowState('idle');
+        }
+    };
+
+    const checkResumableWorkflow = async () => {
+        if (!projectRef.current) return;
+        const wf = projectRef.current.config?.workflow;
+        if (wf && wf.status === 'running' && wf.active_mode) {
+            if (confirm(`Uncompleted workflow detected (${wf.active_mode}).\nDo you want to continue?`)) {
+                handleBatchProcess(wf.active_mode, { resume: true });
+            } else {
+                // Erase ephemeral data
+                await updateWorkflowState('idle');
+            }
+        }
     };
 
     return {
         blockingTask, setBlockingTask,
         stopRef,
-        handleAutoTranslate, // Legacy (Sequential)
+        handleAutoTranslate,
         handleFullReinit,
         handleReingest,
-        handleBatchProcess // New
+        handleBatchProcess,
+        checkResumableWorkflow
     };
 }
