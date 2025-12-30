@@ -18,19 +18,7 @@ from .middleware.correlation import CorrelationMiddleware, get_request_id
 app.add_middleware(CorrelationMiddleware)
 
 # Global Exception Handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    # Log the full exception with stack trace
-    # Structlog's format_exc_info will capture the trace
-    main_logger.error("unhandled_exception", error=str(exc), exc_info=True)
-    
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "Internal Server Error",
-            "request_id": get_request_id()
-        }
-    )
+
 
 from .core.exceptions import LogionException, ProjectNotFound, ModelError
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, Optional, Any
 from datetime import datetime
 
@@ -67,7 +67,7 @@ class SegmentResponse(BaseModel):
     status: str
     project_id: str
     tags: Optional[Dict[str, TagModel]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias="segment_metadata")
     context_matches: Optional[list[Any]] = None
     
     class Config:
