@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 import enum
+from pgvector.sqlalchemy import Vector
 
 from .database import Base
 
@@ -83,7 +84,6 @@ class Segment(Base):
 
 
 # --- RAG Models ---
-from pgvector.sqlalchemy import Vector
 
 class ContextChunk(Base):
     """Stores vector embeddings for RAG"""
