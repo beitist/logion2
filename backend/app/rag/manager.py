@@ -72,6 +72,89 @@ class RAGManager:
         
         return result
 
+    async def generate_batch_draft(
+        self,
+        segment_ids: List[str],
+        source_lang: str,
+        target_lang: str,
+        model_name: str = None,
+        custom_prompt: str = ""
+    ) -> Dict[str, GenerationResult]:
+        """
+        Batch Generation Logic.
+        1. Retrieve/Assemble Context for all segments (Sync/Async wrap).
+        2. Filter Exact Matches.
+        3. Send remaining to Batch Inference.
+        4. Merge results.
+        """
+        results = {}
+        batch_payload = []
+        batch_map = {} # map id -> context
+        
+        # 1. Assemble Context (Loop or Parallel)
+        # We need segment objects first
+        segments = self.db.query(Segment).filter(Segment.id.in_(segment_ids)).all()
+        seg_map = {s.id: s for s in segments}
+        
+        # We re-order based on input list to maintain logic? Not strictly needed for dict result.
+        
+        import asyncio
+        loop = asyncio.get_event_loop()
+        
+        for seg_id in segment_ids:
+            seg = seg_map.get(seg_id)
+            if not seg: continue
+            
+            # Assemble Context (Blocking DB)
+            ctx = await loop.run_in_executor(None, lambda: self.assembler.assemble_context(seg))
+            
+            # Check Exact Match
+            exact_match = next((m for m in ctx.matches if m.score >= 100 and m.type != "glossary"), None)
+            
+            if exact_match:
+                results[seg_id] = GenerationResult(
+                    target_text=exact_match.content,
+                    context_used=ctx,
+                    is_exact=True
+                )
+            else:
+                # Prepare for Batch Inference
+                # Serialize Context for Prompt
+                ctx_str = ""
+                if ctx.matches:
+                    ctx_str += "TM:\n" + "\n".join([f"- {m.source_text} -> {m.content}" for m in ctx.matches[:3]])
+                gloss_str = ""
+                if ctx.glossary_hits:
+                    gloss_str += "Glossary:\n" + "\n".join([f"- {g.source_text} -> {g.content}" for g in ctx.glossary_hits])
+                
+                payload_item = {
+                    "id": seg_id,
+                    "source": seg.source_content,
+                    "context": ctx_str,
+                    "glossary": gloss_str
+                }
+                batch_payload.append(payload_item)
+                batch_map[seg_id] = ctx
+                
+        # 2. Batch Inference
+        if batch_payload:
+            translations, usage = await self.orchestrator.generate_batch(
+                batch_payload, source_lang, target_lang, model_name, custom_prompt
+            )
+            
+            # Distribute Usage? Simplified: Assign total to first or average? 
+            # We'll attach full usage to a "batch" log or split it.
+            # Splitting effectively is hard. We assign 0 to individual and handle bulk logging in service.
+            
+            for seg_id, target_text in translations.items():
+                results[seg_id] = GenerationResult(
+                    target_text=target_text,
+                    context_used=batch_map.get(seg_id),
+                    usage=usage if seg_id == batch_payload[0]['id'] else {} # Hack: Attach usage to first item for logging
+                )
+                
+        return results
+
 # --- Public API Facade ---
 
 async def generate_segment_draft(

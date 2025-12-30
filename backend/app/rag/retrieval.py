@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text, or_
 
-from ..models import TranslationUnit, TranslationOrigin, ContextChunk, ProjectFile, ProjectFileCategory
+from ..models import TranslationUnit, TranslationOrigin, ContextChunk, ProjectFile, ProjectFileCategory, Segment
 from ..tmx import compute_hash, normalize_text
 from .types import TranslationMatch
 from sentence_transformers import SentenceTransformer, CrossEncoder
@@ -73,7 +73,7 @@ class RetrievalEngine:
                 
         return prev_ctx, next_ctx
 
-    def retrieve_matches(self, db: Session, project_id: str, query: str, limit: int = 5) -> List[TranslationMatch]:
+    def retrieve_matches(self, db: Session, project_id: str, query: str, limit: int = 5, segment_id: str = None) -> List[TranslationMatch]:
         """
         Main retrieval pipeline:
         1. Exact/TM Lookup
@@ -89,7 +89,7 @@ class RetrievalEngine:
         # 2. Vector Search (if needed or for optional context)
         # Only search if we don't have a mandatory exact match? 
         # Actually user wants "ContextAssembler" to pick. We provide all candidates.
-        vector_matches = self._search_vector_chunks(db, project_id, query, top_k=20)
+        vector_matches = self._search_vector_chunks(db, project_id, query, top_k=20, segment_id=segment_id)
         
         # 3. Rerank Vector Matches
         reranked = self._rerank(query, vector_matches)
@@ -132,14 +132,29 @@ class RetrievalEngine:
             ))
         return results
 
-    def _search_vector_chunks(self, db: Session, project_id: str, query: str, top_k: int = 30) -> List[TranslationMatch]:
+    def _search_vector_chunks(self, db: Session, project_id: str, query: str, top_k: int = 30, segment_id: str = None) -> List[TranslationMatch]:
         if not self._bi_encoder: return []
         
-        clean_query = self.clean_tags(query)
-        try:
-            query_vec = self._bi_encoder.encode(clean_query, normalize_embeddings=True).tolist()
-        except:
-            return []
+        query_vec = None
+        
+        # Try to use pre-calculated Segment Vector
+        if segment_id:
+            seg = db.query(Segment).filter(Segment.id == segment_id).first()
+            # Check if seg exists AND has embedding (must be list/array, not None)
+            if seg and seg.embedding is not None:
+                # pgvector returns numpy array or list? 
+                # SQLAlchemy model usually returns list or string depending on driver.
+                # Assuming list/numpy compatible.
+                query_vec = seg.embedding
+                # logger.info(f"Using pre-calculated vector for segment {segment_id}")
+
+        # Fallback to Inference
+        if query_vec is None:
+            clean_query = self.clean_tags(query)
+            try:
+                query_vec = self._bi_encoder.encode(clean_query, normalize_embeddings=True).tolist()
+            except:
+                return []
             
         # Database Vector Search
         # Joining ProjectFile to filter by Project

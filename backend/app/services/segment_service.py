@@ -299,3 +299,97 @@ class SegmentService:
             self.db.rollback()
             logger.error(f"Bulk copy failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    async def process_batch_translation(self, project_id: str, segment_ids: List[str], mode: str = "draft"):
+        """
+        Batched Translation Workflow.
+        mode="draft": Update ai_draft only, status=draft.
+        mode="translate": Update target_content and ai_draft, status=translated.
+        """
+        project = self.db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        config = project.config or {}
+        ai_settings = config.get("ai_settings", {})
+        model_name = ai_settings.get("workflow_model") or get_default_model_id() # Use Faster Model!
+        custom_prompt = ai_settings.get("custom_prompt", "")
+
+        from ..rag import RAGManager
+        manager = RAGManager(project_id, self.db)
+        
+        try:
+            # Call Batch Draft Generation
+            results = await manager.generate_batch_draft(
+                segment_ids=segment_ids,
+                source_lang=project.source_lang,
+                target_lang=project.target_lang,
+                model_name=model_name,
+                custom_prompt=custom_prompt
+            )
+            
+            # Bulk Update DB
+            total_input_tokens = 0
+            total_output_tokens = 0
+            
+            # We fetch segments again to update them in session? Or just iterate results
+            # Results dict keyed by ID.
+            
+            segments = self.db.query(Segment).filter(Segment.id.in_(results.keys())).all()
+            
+            for seg in segments:
+                res = results.get(seg.id)
+                if not res: continue
+                
+                context_matches = res.context_used.matches if res.context_used else []
+                current_meta = dict(seg.metadata_json or {})
+                current_meta['context_matches'] = context_matches
+                current_meta['ai_model'] = model_name
+                
+                target_text = res.target_text
+                
+                if mode == "translate":
+                   seg.target_content = target_text
+                   current_meta['ai_draft'] = target_text
+                   if not res.is_exact: # If exact match, maybe status is approved? or translated?
+                       seg.status = "translated" 
+                elif mode == "draft":
+                   current_meta['ai_draft'] = target_text
+                   
+                seg.metadata_json = current_meta
+                flag_modified(seg, "metadata_json")
+                
+                # Accumulate Usage
+                if res.usage:
+                    total_input_tokens += res.usage.get("input_tokens", 0)
+                    total_output_tokens += res.usage.get("output_tokens", 0)
+                    
+            # Log Aggregate Usage
+            if total_input_tokens > 0 or total_output_tokens > 0:
+                 # Log to Project Stats
+                 usage_stats = config.get("usage_stats", {})
+                 model_stats = usage_stats.get(model_name, {"input_tokens": 0, "output_tokens": 0})
+                 model_stats["input_tokens"] += total_input_tokens
+                 model_stats["output_tokens"] += total_output_tokens
+                 usage_stats[model_name] = model_stats
+                 config["usage_stats"] = usage_stats
+                 project.config = config
+                 flag_modified(project, "config")
+                 
+                 # Add a single Log entry for the batch? Or per segment?
+                 # Per segment is cleaner for detailed stats but spammy. 
+                 # Let's log a meaningful "Batch" entry?
+                 # AiUsageLog requires segment_id.
+                 # We will skip per-segment logging for batch workflow to save DB space, 
+                 # OR log one entry with segment_id=None (if nullable)? 
+                 # Model says segment_id is ForeignKey. 
+                 # We'll just skip detailed logs and rely on Project Stats for cost tracking.
+                 pass
+
+            self.db.commit()
+            return {"status": "success", "processed": len(results)}
+            
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Batch Process Failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))

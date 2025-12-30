@@ -32,6 +32,7 @@ class Project(Base):
     file_hash = Column(String, nullable=True) 
     config = Column(JSON, nullable=True) 
     ingestion_logs = Column(JSON, default=[]) # List of log strings 
+    rag_progress = Column(Integer, default=0) # percent 0-100 
 
     segments = relationship("Segment", back_populates="project", cascade="all, delete-orphan")
     files = relationship("ProjectFile", back_populates="project", cascade="all, delete-orphan")
@@ -63,6 +64,7 @@ class Segment(Base):
     target_content = Column(Text, nullable=True)
     status = Column(String, default=SegmentStatus.draft.value)
     metadata_json = Column(JSON, nullable=True) # Renamed to avoid confusion with internal metadata
+    embedding = Column(Vector(768)) # Pre-calculated Source Vector
 
 
     project = relationship("Project", back_populates="segments")

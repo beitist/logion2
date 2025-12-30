@@ -133,6 +133,16 @@ export async function reinitializeProject(projectId) {
     return res.json();
 }
 
+export async function batchTranslate(projectId, segmentIds, mode = "draft") {
+    const res = await fetch(`${API_BASE}/project/${projectId}/batch-translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ segment_ids: segmentIds, mode }),
+    });
+    if (!res.ok) throw new Error("Batch translation failed");
+    return res.json();
+}
+
 // Glossary API
 
 export async function addGlossaryTerm(projectId, source, target, note) {

@@ -41,6 +41,7 @@ class ProjectResponse(BaseModel):
     use_ai: bool = False
     rag_status: Optional[str] = "created"
     ingestion_logs: Optional[list[str]] = []
+    rag_progress: int = 0
     files: Optional[list[ProjectFileSchema]] = []
     config: Optional[Dict[str, Any]] = None
     
@@ -82,4 +83,6 @@ class SegmentInternal(BaseModel):
     source_text: str # Text with <n> tags
     target_content: Optional[str] = None
     tags: Dict[str, TagModel] # Map of "1" -> TagModel
-    metadata: Optional[Dict[str, Any]] = None
+class BatchTranslateRequest(BaseModel):
+    segment_ids: list[str]
+    mode: str = "draft" # "draft" (Pre-Translate) or "translate" (MT)

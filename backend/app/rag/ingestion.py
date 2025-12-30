@@ -4,133 +4,200 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import List
 
-from ..models import Project, ProjectFile, ContextChunk, ProjectFileCategory, TranslationUnit, TranslationOrigin
+from ..models import Project, ProjectFile, ContextChunk, ProjectFileCategory, TranslationUnit, TranslationOrigin, Segment
 from ..storage import download_file
 from ..parser import parse_docx
 from ..tmx import parse_tmx_units, compute_hash, ingest_tmx_direct
 from .retrieval import RetrievalEngine
+from ..database import SessionLocal
 
 logger = logging.getLogger("RAG.Ingest")
 
-def ingest_project_files(project_id: str, db: Session):
+def ingest_project_files(project_id: str):
     """
-    Refactored ingestion task.
-    Populates ContextChunk with chunk_index.
+    Background Task Wrapper.
+    Creates a new DB session and delegates to the logic handler.
+    Ensures safe session cleanup.
+    """
+    db = SessionLocal()
+    try:
+        _ingest_logic(project_id, db)
+    except Exception as e:
+        logger.error(f"Fatal Ingestion Error: {e}")
+        try:
+             project = db.query(Project).filter(Project.id == project_id).first()
+             if project:
+                 project.rag_status = "error"
+                 db.commit()
+        except:
+             pass
+    finally:
+        db.close()
+
+def _ingest_logic(project_id: str, db: Session):
+    """
+    Core Ingestion Logic.
+    Implements Two-Pass Logic: 
+    1. Parse all files & Count Chunks.
+    2. Embed & Insert with Progress Updates.
     """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project: return
     
     project.rag_status = "ingesting"
+    project.rag_progress = 0
     db.commit()
     
+    # helper for logging to DB
     log_messages = []
     def log(msg):
         logger.info(msg)
-        log_messages.append(f"[{datetime.utcnow().strftime('%H:%M:%S')}] {msg}")
-        project.ingestion_logs = list(log_messages) # Copy
+        display_msg = f"[{datetime.utcnow().strftime('%H:%M:%S')}] {msg}"
+        log_messages.append(display_msg)
+        # Refresh project to avoid stale object if committed elsewhere
+        project.ingestion_logs = list(log_messages) 
+        db.commit()
+
+    def update_progress(p):
+        project.rag_progress = int(p)
         db.commit()
 
     log("Initializing RAG Engine (Loading Models)...")
     
-    try:
-        engine = RetrievalEngine() # Load models now
-        
-        if not engine._bi_encoder:
-             log("FATAL: Encoder not loaded.")
-             return
+    engine = RetrievalEngine() # Load models now
+    
+    if not engine._bi_encoder:
+        log("FATAL: Encoder not loaded.")
+        project.rag_status = "error"
+        db.commit()
+        return
 
-        files = db.query(ProjectFile).filter(
-            ProjectFile.project_id == project_id,
-            ProjectFile.category.in_([ProjectFileCategory.legal.value, ProjectFileCategory.background.value])
-        ).all()
-        
-        log(f"Found {len(files)} context files.")
-        
-        total_chunks = 0
-        BATCH_SIZE = 32
-        
-        for file in files:
-            log(f"Processing {file.filename}...")
-            temp_path = f"temp_rag_{file.id}_{file.filename}"
+    files = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id,
+        ProjectFile.category.in_([ProjectFileCategory.legal.value, ProjectFileCategory.background.value])
+    ).all()
+    
+    log(f"Found {len(files)} context files. Starting Phase 1: Parsing...")
+    
+    # --- Phase 1: Parse & Prepare (In Memory) ---
+    # We parse all files to get the Total Chunk Count for proper progress bars.
+    
+    all_chunks_to_persist = []
+    
+    for file in files:
+        temp_path = f"temp_rag_{file.id}_{file.filename}"
+        try:
+            download_file(file.file_path, temp_path)
+            
+            # DOCX Handler
+            if file.filename.endswith(".docx"):
+                    segments = parse_docx(temp_path)
+                    for idx, seg in enumerate(segments):
+                        txt = seg.source_text.strip()
+                        if len(txt) > 3:
+                            all_chunks_to_persist.append({
+                                "file_id": file.id,
+                                "text": txt,
+                                "rich": txt, 
+                                "index": idx
+                            })
+                            
+            # TMX Handler
+            elif file.filename.endswith(".tmx"):
+                    # Direct TMX ingest for TM (Exact Match)
+                    log(f"Processing TMX {file.filename}...")
+                    origin = TranslationOrigin.mandatory if file.category == "legal" else TranslationOrigin.optional
+                    ingest_tmx_direct(temp_path, project_id, origin, db)
+                    
+                    # Also ingest as Vectors
+                    idx = 0
+                    for unit in parse_tmx_units(temp_path):
+                        all_chunks_to_persist.append({
+                            "file_id": file.id,
+                            "text": unit['source_text'],
+                            "rich": unit['target_text'], 
+                            "index": idx
+                        })
+                        idx += 1
+                        
+        except Exception as e:
+            log(f"Error parsing {file.filename}: {e}")
+        finally:
+            if os.path.exists(temp_path): os.remove(temp_path)
+    
+    total_chunks = len(all_chunks_to_persist)
+    log(f"Phase 1 Complete. Total Vectors to generate: {total_chunks}")
+    
+    # --- Phase 2: Embed & Insert ---
+    
+    BATCH_SIZE = 32
+    processed = 0
+    
+    # Calculate Total Work (Chunks + Segments)
+    segments = db.query(Segment).filter(Segment.project_id == project_id).all()
+    total_segments = len(segments)
+    
+    total_work = total_chunks + total_segments
+    log(f"Phase 1 Complete. Total Work: {total_chunks} chunks + {total_segments} segments = {total_work} vectors.")
+
+    if total_work == 0:
+        update_progress(100)
+    else:
+        # 1. Chunks
+        for i in range(0, total_chunks, BATCH_SIZE):
+            batch = all_chunks_to_persist[i : i+BATCH_SIZE]
+            texts = [engine.clean_tags(b['text']) for b in batch]
             
             try:
-                download_file(file.file_path, temp_path)
-                
-                chunks_to_persist = []
-                
-                # DOCX Handler
-                if file.filename.endswith(".docx"):
-                     # ... (Use parse_docx logic from legacy)
-                     # For simplicity, using standard parser
-                     segments = parse_docx(temp_path)
-                     
-                     # Convert to chunks with Index
-                     for idx, seg in enumerate(segments):
-                         txt = seg.source_text.strip()
-                         if len(txt) > 3:
-                             chunks_to_persist.append({
-                                 "text": txt,
-                                 "rich": txt, # DOCX usually plain, but if parser supports rich, use it
-                                 "index": idx
-                             })
-                             
-                # TMX Handler
-                elif file.filename.endswith(".tmx"):
-                     # Adapt TMX logic
-                     # TMX implies alignment. We ingest as ContextChunks AND TranslationUnits?
-                     # Legacy rag.py did both.
-                     log("Ingesting TMX...")
-                     # Direct TMX ingest for TM (Exact Match)
-                     origin = TranslationOrigin.mandatory if file.category == "legal" else TranslationOrigin.optional
-                     ingest_tmx_direct(temp_path, project_id, origin, db)
-                     
-                     # Also ingest as Vectors (Chunks)
-                     # We treat each TU as a chunk.
-                     # Index is sequential in file.
-                     idx = 0
-                     for unit in parse_tmx_units(temp_path):
-                         chunks_to_persist.append({
-                             "text": unit['source_text'],
-                             "rich": unit['target_text'], # Store target in rich_content
-                             "index": idx
-                         })
-                         idx += 1
-                
-                # Batch Embed & Insert
-                for i in range(0, len(chunks_to_persist), BATCH_SIZE):
-                    batch = chunks_to_persist[i : i+BATCH_SIZE]
-                    texts = [engine.clean_tags(b['text']) for b in batch]
-                    
-                    try:
-                        embeddings = engine._bi_encoder.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-                    except Exception as e:
-                        log(f"Embedding error: {e}")
-                        continue
-                        
-                    db_objs = []
-                    for b, vec in zip(batch, embeddings):
-                        db_objs.append(ContextChunk(
-                            file_id=file.id,
-                            content=b['text'],
-                            rich_content=b['rich'],
-                            embedding=vec.tolist(),
-                            chunk_index=b['index'] # <--- NEW
-                        ))
-                    
-                    db.add_all(db_objs)
-                    db.commit()
-                    total_chunks += len(batch)
-                    
+                embeddings = engine._bi_encoder.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
             except Exception as e:
-                log(f"Error file {file.filename}: {e}")
-            finally:
-                if os.path.exists(temp_path): os.remove(temp_path)
+                log(f"Embedding error: {e}")
+                continue
                 
-        project.rag_status = "ready"
-        log(f"Ingestion complete. {total_chunks} vectors.")
+            db_objs = []
+            for b, vec in zip(batch, embeddings):
+                db_objs.append(ContextChunk(
+                    file_id=b['file_id'], # Use stored file_id
+                    content=b['text'],
+                    rich_content=b['rich'],
+                    embedding=vec.tolist(),
+                    chunk_index=b['index']
+                ))
+            
+            db.add_all(db_objs)
+            db.commit()
+            
+            processed += len(batch)
+            progress = int((processed / total_work) * 100)
+            update_progress(progress)
+            
+            if i % (BATCH_SIZE * 5) == 0:
+                log(f"Vectorized {processed}/{total_work} items...")
         
-    except Exception as e:
-        log(f"Fatal Ingestion Error: {e}")
-        project.rag_status = "error"
-    finally:
-        db.commit()
+        # 2. Segments (Phase 3)
+        log("Starting Phase 3: Pre-vectorizing Source Segments...")
+        
+        # We need to process existing SQL objects. 
+        # Ideally we iterate by batches to avoid massive RAM if thousands of segments.
+        for i in range(0, total_segments, BATCH_SIZE):
+            batch_segs = segments[i : i+BATCH_SIZE]
+            texts = [engine.clean_tags(s.source_content) for s in batch_segs]
+            
+            try:
+                embeddings = engine._bi_encoder.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+                
+                for s, vec in zip(batch_segs, embeddings):
+                    s.embedding = vec.tolist()
+                
+                db.commit() # Save updates
+                
+                processed += len(batch_segs)
+                progress = int((processed / total_work) * 100)
+                update_progress(progress)
+                
+            except Exception as e:
+                log(f"Segment embedding error: {e}")
+    
+    project.rag_status = "ready"
+    project.rag_progress = 100
+    log(f"Ingestion complete. {total_work} vectors stored.")

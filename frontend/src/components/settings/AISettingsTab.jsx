@@ -8,6 +8,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
         workflow_model: '',
         custom_prompt: '',
         pre_translate_count: 0,
+        batch_size: 10,
         preload_mode: false
     });
 
@@ -23,6 +24,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                 workflow_model: ai.workflow_model || '',
                 custom_prompt: ai.custom_prompt || '',
                 pre_translate_count: ai.pre_translate_count || 0,
+                batch_size: ai.batch_size || 10,
                 preload_mode: ai.preload_mode || false
             });
         }
@@ -123,6 +125,19 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                             </select>
                         )}
                         <p className="text-xs text-gray-500 mt-1">Used for "Generate Suggestions" and "Translate All". Choose a faster model.</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Batch Size (Workflow)</label>
+                        <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={settings.batch_size}
+                            onChange={(e) => setSettings({ ...settings, batch_size: parseInt(e.target.value) })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Number of segments to process in one request (Pre-Translate/MT).</p>
                     </div>
                 </div>
 

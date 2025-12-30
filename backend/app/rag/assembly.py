@@ -25,7 +25,12 @@ class ContextAssembler:
         4. History (Short Term Memory)
         """
         # 1. Retrieval
-        matches = self.retrieval.retrieve_matches(self.db, self.project_id, segment.source_content)
+        matches = self.retrieval.retrieve_matches(
+            db=self.db, 
+            project_id=self.project_id, 
+            query=segment.source_content,
+            segment_id=segment.id
+        )
         
         # 2. Neighbors (Source File Context)
         # We need the file_id and chunk_index.

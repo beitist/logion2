@@ -43,7 +43,8 @@ export function SplitView({ projectId, onBack }) {
         // Handlers
         handleToggleFlag,
         handleFullReinit,
-        handleAutoTranslate,
+        handleAutoTranslate, // Keep for backward compatibility if needed, or remove if fully replaced
+        handleBatchProcess, // New
         handleReingest,
         handleEditorUpdate,
         handleSave,
@@ -134,61 +135,71 @@ export function SplitView({ projectId, onBack }) {
                         </button>
                         <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-20 hidden group-hover:block animate-in fade-in slide-in-from-top-2 duration-200">
                             <div className="p-1">
-                                <button onClick={handleAutoTranslate} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
-                                    <div className="p-1 bg-indigo-50 rounded text-indigo-600">
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                                    </div>
-                                    <div>
-                                        <div className="font-medium">Auto-Translate All</div>
-                                        <div className="text-xs text-gray-400">Process all untranslated</div>
-                                    </div>
-                                </button>
-                                <button onClick={handleFullReinit} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left mt-1">
-                                    <div className="p-1 bg-orange-50 rounded text-orange-600">
-                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                    </div>
-                                    <div>
-                                        <div className="font-medium">Re-Initialize</div>
-                                        <div className="text-xs text-gray-400">Re-parse source & Vectors</div>
-                                    </div>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Export Menu */}
-                    <div className="relative">
-                        <button
-                            onClick={() => setShowExportMenu(!showExportMenu)}
-                            className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
-                        >
-                            <Download size={16} />
-                            Export
-                        </button>
-                        {showExportMenu && (
-                            <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-20">
                                 <div className="p-1">
-                                    <button onClick={handleExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
-                                        <FileText size={16} className="text-blue-500" />
-                                        <span className="font-medium">Export DOCX</span>
+                                    <button onClick={() => handleBatchProcess('draft')} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
+                                        <div className="p-1 bg-indigo-50 rounded text-indigo-600">
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                                        </div>
+                                        <div>
+                                            <div className="font-medium">Pre-Translate (Draft)</div>
+                                            <div className="text-xs text-gray-400">Gen drafts for ALL segments</div>
+                                        </div>
                                     </button>
-                                    <button onClick={handleTmXExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
-                                        <FileText size={16} className="text-green-500" />
-                                        <span className="font-medium">Export TMX</span>
+                                    <button onClick={() => handleBatchProcess('translate')} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left mt-1">
+                                        <div className="p-1 bg-green-50 rounded text-green-600">
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
+                                        </div>
+                                        <div>
+                                            <div className="font-medium">Machine Translation</div>
+                                            <div className="text-xs text-gray-400">Fill EMPTY targets only</div>
+                                        </div>
+                                    </button>
+                                    <button onClick={handleFullReinit} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left mt-1">
+                                        <div className="p-1 bg-orange-50 rounded text-orange-600">
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                        </div>
+                                        <div>
+                                            <div className="font-medium">Re-Initialize</div>
+                                            <div className="text-xs text-gray-400">Re-parse source & Vectors</div>
+                                        </div>
                                     </button>
                                 </div>
                             </div>
-                        )}
-                    </div>
+                        </div>
 
-                    <button
-                        onClick={() => setShowSettings(true)}
-                        className="p-2 hover:bg-gray-200 rounded-lg text-gray-600 transition-colors ml-1"
-                        title="Settings"
-                    >
-                        <MoreVertical size={20} />
-                    </button>
-                </div>
+                        {/* Export Menu */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowExportMenu(!showExportMenu)}
+                                className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
+                            >
+                                <Download size={16} />
+                                Export
+                            </button>
+                            {showExportMenu && (
+                                <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-20">
+                                    <div className="p-1">
+                                        <button onClick={handleExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
+                                            <FileText size={16} className="text-blue-500" />
+                                            <span className="font-medium">Export DOCX</span>
+                                        </button>
+                                        <button onClick={handleTmXExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
+                                            <FileText size={16} className="text-green-500" />
+                                            <span className="font-medium">Export TMX</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <button
+                            onClick={() => setShowSettings(true)}
+                            className="p-2 hover:bg-gray-200 rounded-lg text-gray-600 transition-colors ml-1"
+                            title="Settings"
+                        >
+                            <MoreVertical size={20} />
+                        </button>
+                    </div>
             </header>
 
             {/* Shortcuts Panel - Collapsible */}

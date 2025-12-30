@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from ..database import get_db
-from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse
+from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse, BatchTranslateRequest
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
 from ..logger import get_logger
 from ..config import get_default_model_id
@@ -151,6 +151,17 @@ async def copy_source_workflow(project_id: str, service: SegmentService = Depend
     service.bulk_copy_source_to_target(project_id)
     return {"message": "Copy source completed successfully", "project_id": project_id}
 
+
+@router.post("/{project_id}/batch-translate")
+async def batch_translate(
+    project_id: str, 
+    payload: BatchTranslateRequest,
+    service: SegmentService = Depends(get_segment_service)
+):
+    """
+    Translates a batch of segments (Synchronous).
+    """
+    return await service.process_batch_translation(project_id, payload.segment_ids, payload.mode)
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(

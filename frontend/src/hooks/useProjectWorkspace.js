@@ -108,6 +108,7 @@ export function useProjectWorkspace(projectId) {
         ...ai,
         // ...blocking
         ...blocking,
+        handleBatchProcess: blocking.handleBatchProcess, // Explicitly expose new method
 
         // Manual Overrides or Composition
         // e.g. handleSave uses data.handleSave

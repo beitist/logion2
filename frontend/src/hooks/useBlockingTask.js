@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject } from "../api/client";
+import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, getSegments } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -29,11 +29,16 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
                     });
 
                     if (p.rag_status === 'ready') {
-                        setBlockingTask(prev => ({ ...prev, status: 'done', logs: [...(p.ingestion_logs || []), "Ingestion Complete."] }));
+                        setBlockingTask(prev => ({ ...prev, status: 'done', logs: [...(p.ingestion_logs || []), "Ingestion Complete."], progress: 1 }));
                         clearInterval(interval);
                     } else if (p.rag_status === 'error') {
-                        setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...(p.ingestion_logs || []), "Ingestion Failed."] }));
+                        setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...(p.ingestion_logs || []), "Ingestion Failed."], progress: 1 }));
                         clearInterval(interval);
+                    } else {
+                        // Update Progress (Backend sends 0-100 int, Frontend expects 0-1 float)
+                        if (p.rag_progress !== undefined) {
+                            setBlockingTask(prev => ({ ...prev, progress: p.rag_progress / 100 }));
+                        }
                     }
                 } catch (e) { console.error(e); }
             }, 1000);
@@ -131,11 +136,100 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         } catch (e) { alert("Failed: " + e.message); }
     };
 
+    // Generic Batch Processor
+    const handleBatchProcess = async (mode) => {
+        const aiSettings = projectRef.current?.config?.ai_settings || {};
+        const batchSize = aiSettings.batch_size || 10;
+        const workflowModel = aiSettings.workflow_model || "Fast Model";
+
+        const modeLabel = mode === 'draft' ? "Pre-Translate" : "Machine Translation";
+        if (!confirm(`Start ${modeLabel}?\n\nModel: ${workflowModel}\nBatch Size: ${batchSize}`)) return;
+
+        // Filter Candidates
+        let candidates = [];
+        if (mode === 'draft') {
+            // Pre-Translate: Process ALL segments (update drafts)
+            candidates = segmentsRef.current;
+        } else {
+            // Machine Translation: Process only EMPTY targets (fill gaps)
+            candidates = segmentsRef.current.filter(s => !s.target_content);
+        }
+
+        if (candidates.length === 0) {
+            alert("No applicable segments found.");
+            return;
+        }
+
+        stopRef.current = false;
+        setBlockingTask({
+            isOpen: true,
+            type: 'batch',
+            status: 'running',
+            title: `${modeLabel} (${candidates.length})`,
+            logs: [`Starting ${modeLabel}...`, `Batch Size: ${batchSize}`],
+            progress: 0
+        });
+
+        let processed = 0;
+        let errors = 0;
+
+        // Chunking
+        for (let i = 0; i < candidates.length; i += batchSize) {
+            if (stopRef.current) {
+                setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...prev.logs, "Stopped by user."] }));
+                break;
+            }
+
+            const batch = candidates.slice(i, i + batchSize);
+            const batchIds = batch.map(s => s.id);
+
+            try {
+                setBlockingTask(prev => ({
+                    ...prev,
+                    logs: [...prev.logs.slice(-4), `Processing batch ${Math.floor(i / batchSize) + 1}...`],
+                    progress: processed / candidates.length
+                }));
+
+                // Call Batch API
+                await batchTranslate(projectId, batchIds, mode);
+
+                // Refresh Frontend State (Naive: Fetch all segments to ensure consistency)
+                // Optimization: Be optimistic? No, safer to fetch or we miss side-effects.
+                // Or better: The API returns list of updated segments? 
+                // Currently API returns success status. Implementation Plan says "Bulk update DB".
+                // We should re-fetch segments for the updated range or all.
+                // Fetching all is safest for now.
+
+                // Partially update memory for smoothness?
+                // Real: Fetch only updated? We don't have endpoint for "get segments by ids".
+                // Let's silent re-fetch all for sync.
+                const updatedSegments = await getSegments(projectId);
+                setSegments(updatedSegments.segments || updatedSegments); // Handle if wrapper used
+
+            } catch (err) {
+                console.error(err);
+                errors += batch.length; // Assume whole batch failed
+                setBlockingTask(prev => ({ ...prev, logs: [...prev.logs, `Batch Error: ${err.message}`] }));
+            }
+
+            processed += batch.length;
+        }
+
+        setBlockingTask(prev => ({
+            ...prev,
+            status: 'done',
+            title: "Workflow Complete",
+            progress: 1,
+            logs: [...prev.logs, `Done. Processed: ${processed}, Errors: ${errors}`]
+        }));
+    };
+
     return {
         blockingTask, setBlockingTask,
         stopRef,
-        handleAutoTranslate,
+        handleAutoTranslate, // Legacy (Sequential)
         handleFullReinit,
-        handleReingest
+        handleReingest,
+        handleBatchProcess // New
     };
 }

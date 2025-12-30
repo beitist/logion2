@@ -95,6 +95,73 @@ class InferenceOrchestrator:
                 error=str(e)
             )
 
+    async def generate_batch(
+        self,
+        batch_data: List[Dict], # [{id, source, context_str, glossary_str}]
+        source_lang: str,
+        target_lang: str,
+        model_name: str = None,
+        custom_prompt: str = ""
+    ) -> Dict[str, str]:
+        """
+        Translates a batch of segments using a single JSON prompt.
+        Returns Dict { segment_id: translation }
+        """
+        if not model_name: model_name = get_default_model_id()
+        
+        # Build JSON Prompt
+        import json
+        
+        system_instruction = f"""You are a professional translator. Translate the following list of segments from {source_lang} to {target_lang}.
+Rules:
+1. Output valid JSON array: [{{ "id": "segment_id", "target": "translated_text" }}, ...]
+2. Preserve XML-like tags (e.g. <1>, <b>) in the translation.
+3. Use the provided context/glossary for each segment if available.
+"""
+        if custom_prompt:
+            system_instruction += f"\nStyle Guide:\n{custom_prompt}\n"
+            
+        user_content = {
+            "task": "Translate batch",
+            "segments": []
+        }
+        
+        for item in batch_data:
+            seg_obj = {
+                "id": item['id'],
+                "source": item['source']
+            }
+            if item.get('context'):
+                seg_obj['context'] = item['context']
+            if item.get('glossary'):
+                seg_obj['glossary'] = item['glossary']
+            user_content['segments'].append(seg_obj)
+            
+        prompt = f"{system_instruction}\n\nInput Data:\n{json.dumps(user_content, indent=2)}\n\nOutput JSON:"
+        
+        try:
+            # Force JSON mode not strictly available in all models via config yet, 
+            # but usually fine with prompt engineering.
+            # Using same _call_gemini wrapper.
+            response_text, usage = await self._call_gemini(prompt, model_name, temperature=0.2)
+            
+            # Clean Markdown Wrapper ```json ... ```
+            clean_json = response_text.replace("```json", "").replace("```", "").strip()
+            
+            data = json.loads(clean_json)
+            
+            results = {}
+            if isinstance(data, list):
+                for item in data:
+                    if 'id' in item and 'target' in item:
+                        results[item['id']] = item['target']
+            return results, usage
+            
+        except Exception as e:
+            logger.error(f"Batch Inference Failed: {e}")
+            logger.error(f"Raw Response: {response_text if 'response_text' in locals() else 'None'}")
+            return {}, {"input_tokens": 0, "output_tokens": 0}
+
     async def _generate_pass_1_plain(self, source: str, s_lang: str, t_lang: str, ctx: SegmentContext, model: str, prompt: str):
         """Pass 1: Translate Plain Text (Low Temperature)"""
         system_instruction = f"Translate from {s_lang} to {t_lang}. Output ONLY the raw translation text (Plain Text). No preamble."
