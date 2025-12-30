@@ -222,7 +222,36 @@ class ProjectService:
             )
             self.db.add(new_entry)
 
+
         self.db.commit()
         self.db.refresh(new_project)
         return new_project
+        
+    def update_project(self, project_id: str, update_data: dict) -> Project:
+        project = self.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        for key, value in update_data.items():
+            setattr(project, key, value)
+        
+        self.db.commit()
+        self.db.refresh(project)
+        return project
+
+    def trigger_reingestion(self, project_id: str, background_tasks: BackgroundTasks):
+        project = self.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        from ..rag import reingest_project
+        background_tasks.add_task(reingest_project, project_id)
+
+    def trigger_draft_generation(self, project_id: str, background_tasks: BackgroundTasks):
+        project = self.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        from ..rag import generate_project_drafts
+        background_tasks.add_task(generate_project_drafts, project_id)
 

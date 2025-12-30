@@ -64,7 +64,21 @@ class Segment(Base):
     status = Column(String, default=SegmentStatus.draft.value)
     metadata_json = Column(JSON, nullable=True) # Renamed to avoid confusion with internal metadata
 
+
     project = relationship("Project", back_populates="segments")
+
+    @property
+    def tags(self):
+        return (self.metadata_json or {}).get("tags")
+
+    @property
+    def segment_metadata(self):
+        return (self.metadata_json or {}).get("metadata")
+
+    @property
+    def context_matches(self):
+        return (self.metadata_json or {}).get("context_matches")
+
 
 # --- RAG Models ---
 from pgvector.sqlalchemy import Vector
