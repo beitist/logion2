@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from ..models import Segment, ProjectFile, ProjectFileCategory
 from ..schemas import SegmentInternal, TagModel
 from ..storage import download_file
-from ..reassembly import reassemble_docx
+from ..document.assembler import reassemble_docx
 from ..tmx import export_tmx
 from .base import BaseWorkflow
 

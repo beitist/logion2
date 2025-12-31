@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
 from ..storage import download_file
-from ..parser import parse_docx
+from ..document.parser import parse_docx
 from ..logger import get_logger
 from ..schemas import SegmentInternal
 from ..config import get_default_model_id

@@ -8,7 +8,7 @@ from datetime import datetime
 
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
 from ..storage import download_file
-from ..parser import parse_docx
+from ..document.parser import parse_docx
 from ..rag.retrieval import RetrievalEngine
 from .base import BaseWorkflow
 from ..database import SessionLocal

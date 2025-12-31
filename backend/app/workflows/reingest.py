@@ -2,7 +2,7 @@ import os
 import logging
 from ..models import ProjectFile, ContextChunk, ProjectFileCategory, TranslationOrigin, Segment
 from ..storage import download_file
-from ..parser import parse_docx
+from ..document.parser import parse_docx
 from ..tmx import parse_tmx_units, ingest_tmx_direct
 from ..rag.retrieval import RetrievalEngine
 from ..database import SessionLocal

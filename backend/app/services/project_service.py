@@ -7,7 +7,7 @@ from fastapi import UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from ..models import Project, ProjectFile, ProjectFileCategory, Segment, GlossaryEntry, TranslationUnit, AiUsageLog
 from ..storage import upload_file, download_file
-from ..parser import parse_docx
+from ..document.parser import parse_docx
 from ..logger import get_logger
 from ..workflows.reingest import run_background_reingest
 
