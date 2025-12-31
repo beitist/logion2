@@ -1,6 +1,8 @@
 import logging
 import difflib
 import re
+import os
+import voyageai
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text, or_
@@ -8,14 +10,14 @@ from sqlalchemy import text, or_
 from ..models import TranslationUnit, TranslationOrigin, ContextChunk, ProjectFile, ProjectFileCategory, Segment
 from ..tmx import compute_hash, normalize_text
 from .types import TranslationMatch
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from sentence_transformers import CrossEncoder # Keep CrossEncoder for reranking!
 import numpy as np
 
 logger = logging.getLogger("RAG.Retrieval")
 
 class RetrievalEngine:
     _instance = None
-    _bi_encoder = None
+    _client = None
     _cross_encoder = None
     
     def __new__(cls):
@@ -25,15 +27,24 @@ class RetrievalEngine:
         return cls._instance
 
     def _load_models(self):
-        # Force CPU as per legacy config to avoid MPS issues
-        device = "cpu" 
         try:
-            logger.info(f"Loading Models on {device}...")
-            # 1. Bi-Encoder (LaBSE)
-            self._bi_encoder = SentenceTransformer('sentence-transformers/LaBSE', device=device)
-            # 2. Cross-Encoder (Reranking)
+            logger.info("Loading Retrieval Models...")
+            
+            # 1. Voyage AI Client
+            api_key = os.getenv("VOYAGE_API_KEY")
+            if not api_key:
+                logger.warning("⚠️ VOYAGE_API_KEY not found. Vector embedding will fail.")
+            else:
+                self._client = voyageai.Client(api_key=api_key)
+                
+            # 2. Cross-Encoder (Reranking) - Keep local for speed/cost?
+            # Or use Voyage reranker? User asked to replace LaBSE algorithm.
+            # Local reranker is fine to keep for now unless specified.
+            # It's small.
+            device = "cpu"
             self._cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1', device=device)
-            logger.info("✅ Retrieval Models Loaded.")
+            
+            logger.info("✅ Retrieval Models Loaded (Voyage AI + CrossEncoder).")
         except Exception as e:
             logger.error(f"❌ Error loading models: {e}", exc_info=True)
 
@@ -43,6 +54,42 @@ class RetrievalEngine:
         text = re.sub(r'<[^>]+>', '', text)
         text = re.sub(r'\[(TAB|COMMENT|SHAPE)\]', '', text)
         return text.strip()
+
+    def embed_batch(self, texts: List[str], input_type: str = "document") -> List[List[float]]:
+        """
+        Wraps Voyage AI embedding call.
+        """
+        if not self._client or not texts:
+            return []
+            
+        try:
+            # Voyage 3.5 is the current recommendation (2048 or 1024 dim).
+            # User requested 2048 explicitly in prompt.
+            # "upgrade our vector to 2048"
+            # model="voyage-3-large" or "voyage-3.5" (supports 2048)
+            # Default for 3.5 is 1024. Need to specify output_dimension=2048?
+            # Docs say: voyage-3.5 supports 2048.
+            
+            # Filter empty strings to avoid API error
+            valid_texts = [t for t in texts if t.strip()]
+            if not valid_texts: return []
+            
+            # Map back indices if we filtered blanks? 
+            # Ideally we send blanks as something or just handle mismatch.
+            # Simpler: replace blank with " "
+            sanitized = [t if t.strip() else " " for t in texts]
+
+            result = self._client.embed(
+                sanitized, 
+                model="voyage-3-large", 
+                input_type=input_type,
+                output_dimension=2048
+            )
+            return result.embeddings
+            
+        except Exception as e:
+            logger.error(f"Voyage AI Embedding Error: {e}")
+            return []
 
     def get_neighbors(self, db: Session, file_id: str, chunk_index: int, window: int = 2) -> Tuple[List[str], List[str]]:
         """
@@ -86,9 +133,7 @@ class RetrievalEngine:
         exact_matches = self._lookup_tm(db, project_id, query)
         matches.extend(exact_matches)
         
-        # 2. Vector Search (if needed or for optional context)
-        # Only search if we don't have a mandatory exact match? 
-        # Actually user wants "ContextAssembler" to pick. We provide all candidates.
+        # 2. Vector Search
         vector_matches = self._search_vector_chunks(db, project_id, query, top_k=20, segment_id=segment_id)
         
         # 3. Rerank Vector Matches
@@ -133,18 +178,14 @@ class RetrievalEngine:
         return results
 
     def _search_vector_chunks(self, db: Session, project_id: str, query: str, top_k: int = 30, segment_id: str = None) -> List[TranslationMatch]:
-        if not self._bi_encoder: return []
+        if not self._client: return []
         
         query_vec = None
         
         # Try to use pre-calculated Segment Vector
         if segment_id:
             seg = db.query(Segment).filter(Segment.id == segment_id).first()
-            # Check if seg exists AND has embedding (must be list/array, not None)
             if seg and seg.embedding is not None:
-                # pgvector returns numpy array or list? 
-                # SQLAlchemy model usually returns list or string depending on driver.
-                # Assuming list/numpy compatible.
                 query_vec = seg.embedding
                 # logger.info(f"Using pre-calculated vector for segment {segment_id}")
 
@@ -152,9 +193,13 @@ class RetrievalEngine:
         if query_vec is None:
             clean_query = self.clean_tags(query)
             try:
-                query_vec = self._bi_encoder.encode(clean_query, normalize_embeddings=True).tolist()
+                # Use query input_type
+                b = self.embed_batch([clean_query], input_type="query")
+                if b: query_vec = b[0]
             except:
                 return []
+        
+        if not query_vec: return []
             
         # Database Vector Search
         # Joining ProjectFile to filter by Project
@@ -167,19 +212,14 @@ class RetrievalEngine:
             
         matches = []
         for chunk, file in results:
-            # Initial cosine score is implicit in order, but we can't easily get the float from pgvector query in ORM easily 
-            # without custom select. 
-            # We will rely on Reranker for the score. 
-            # We assign a dummy candidate score.
-            
             matches.append(TranslationMatch(
                 id=chunk.id,
                 content=chunk.rich_content or chunk.content,
                 source_text=chunk.content, # The source chunk
                 filename=file.filename,
-                type="context", # refined later
+                type="context", 
                 category=file.category,
-                score=0, # Placeholder
+                score=0, # Placeholder, updated by reranker
                 chunk_index=chunk.chunk_index,
                 file_id=file.id
             ))
@@ -197,20 +237,14 @@ class RetrievalEngine:
             return candidates
             
         for i, match in enumerate(candidates):
-            # Sigmoid or just approximate mapping of logit to 0-100
             logit = float(scores[i])
             match.raw_logit = logit
             
-            # Heuristic map: >3 is good match (~80%), >6 is excellent (~95%)
-            # Using simple scaling for now.
-            # 1 / (1 + exp(-x)) -> 0.0 to 1.0
             import math
             prob = 1 / (1 + math.exp(-logit))
             match.score = int(prob * 100)
             
-            # Penalize 'optional' slightly (Business Rule)
             if match.category != ProjectFileCategory.legal:
                 match.score = max(0, match.score - 5)
                 
-        # Filter low scores
         return [m for m in candidates if m.score > 40]

@@ -65,7 +65,7 @@ class Segment(Base):
     target_content = Column(Text, nullable=True)
     status = Column(String, default=SegmentStatus.draft.value)
     metadata_json = Column(JSON, nullable=True) # Renamed to avoid confusion with internal metadata
-    embedding = Column(Vector(768)) # Pre-calculated Source Vector
+    embedding = Column(Vector(2048)) # Voyage AI Embeddings (large/3.5)
 
 
     project = relationship("Project", back_populates="segments")
@@ -94,7 +94,7 @@ class ContextChunk(Base):
     
     content = Column(Text, nullable=False) # The chunk text (Plain for embedding)
     rich_content = Column(Text, nullable=True) # The chunk text with Tags (<1>...</1>)
-    embedding = Column(Vector(768)) # LaBSE Embeddings
+    embedding = Column(Vector(2048)) # Voyage AI Embeddings
     
     # Retrieval Optimization
     chunk_index = Column(Integer, nullable=True, index=True) # Position in file (0, 1, 2...) for Context Window
@@ -140,7 +140,7 @@ class TranslationMemoryUnit(Base):
     
     # Vector
     # Using 384 dimensions for all-MiniLM-L6-v2 (default SentenceTransformer)
-    embedding = Column(Vector(384)) 
+    embedding = Column(Vector(2048)) 
     
     created_at = Column(DateTime, default=datetime.utcnow)
 

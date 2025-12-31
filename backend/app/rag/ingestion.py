@@ -66,8 +66,8 @@ def _ingest_logic(project_id: str, db: Session):
     
     engine = RetrievalEngine() # Load models now
     
-    if not engine._bi_encoder:
-        log("FATAL: Encoder not loaded.")
+    if not engine._client:
+        log("FATAL: Voyage AI Client not loaded (Check API Key).")
         project.rag_status = "error"
         db.commit()
         return
@@ -149,7 +149,8 @@ def _ingest_logic(project_id: str, db: Session):
             texts = [engine.clean_tags(b['text']) for b in batch]
             
             try:
-                embeddings = engine._bi_encoder.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+                # Use "document" for storage
+                embeddings = engine.embed_batch(texts, input_type="document")
             except Exception as e:
                 log(f"Embedding error: {e}")
                 continue
@@ -160,7 +161,7 @@ def _ingest_logic(project_id: str, db: Session):
                     file_id=b['file_id'], # Use stored file_id
                     content=b['text'],
                     rich_content=b['rich'],
-                    embedding=vec.tolist(),
+                    embedding=vec, # Already list[float]
                     chunk_index=b['index']
                 ))
             
@@ -184,10 +185,10 @@ def _ingest_logic(project_id: str, db: Session):
             texts = [engine.clean_tags(s.source_content) for s in batch_segs]
             
             try:
-                embeddings = engine._bi_encoder.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+                embeddings = engine.embed_batch(texts, input_type="document")
                 
                 for s, vec in zip(batch_segs, embeddings):
-                    s.embedding = vec.tolist()
+                    s.embedding = vec
                 
                 db.commit() # Save updates
                 

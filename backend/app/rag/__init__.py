@@ -1,5 +1,6 @@
 from .manager import RAGManager
 from .ingestion import ingest_project_files
+from .tasks import generate_project_drafts
 from .retrieval import RetrievalEngine
 from .types import GenerationResult
 from sqlalchemy.orm import Session

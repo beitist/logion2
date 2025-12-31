@@ -25,129 +25,119 @@ class InferenceOrchestrator:
         target_lang: str, 
         context: SegmentContext,
         model_name: str = None,
-        custom_prompt: str = ""
+        custom_prompt: str = "",
+        segment_id: str = "single_draft"
     ) -> GenerationResult:
         """
         Orchestrates the generation process.
-        Decides between 1-Pass and 2-Pass based on tag complexity.
+        Delegates to generate_structured_batch for Unified Logic.
         """
         if not model_name:
             model_name = get_default_model_id()
             
-        # Heuristic: Complex Tags?
-        # Count tags like <1>, <b>, etc.
-        tag_count = len(re.findall(r'<[^>]+>', source_text))
-        is_complex = tag_count > 3
+        # Transform Context to Batch Item format
+        # We need to construct the batch item carefully from the Context object
         
-        usage = {"input_tokens": 0, "output_tokens": 0}
+        tm_matches = [{"source": m.source_text, "target": m.content, "score": m.score} 
+                      for m in context.matches[:3] if m.type != 'glossary' and m.score < 100]
         
-        try:
-            if is_complex and "flash" not in model_name: 
-                # Use Two-Pass for complex segments (if not already using a fast model)
-                # Pass 1: Linguistic (Plain)
-                logger.info(f"Triggering Two-Pass (Tags: {tag_count})")
-                
-                # Strip tags for Pass 1
-                plain_source = re.sub(r'<[^>]+>', '', source_text).replace("  ", " ").strip()
-                
-                plain_target, u1 = await self._generate_pass_1_plain(
-                    plain_source, source_lang, target_lang, context, model_name, custom_prompt
-                )
-                usage["input_tokens"] += u1["input_tokens"]
-                usage["output_tokens"] += u1["output_tokens"]
-                
-                # Pass 2: Tag Injection (Use a cheaper model ideally, or same)
-                # For now using same model or Flash if available?
-                # Let's use the same model to be safe, or user config?
-                # User suggestion: "Nutze für Pass 2 ein günstigeres Modell (z.B. Gemini Flash)"
-                # We try to use 'gemini-1.5-flash' for pass 2 if main is pro?
-                pass2_model = "gemini-1.5-flash" if "pro" in model_name else model_name
-                
-                final_text, u2 = await self._generate_pass_2_tags(
-                    source_text, plain_target, pass2_model, custom_prompt
-                )
-                usage["input_tokens"] += u2["input_tokens"]
-                usage["output_tokens"] += u2["output_tokens"]
-                
-                return GenerationResult(
-                    target_text=final_text,
-                    usage=usage,
-                    context_used=context
-                )
-            
-            else:
-                # Standard 1-Pass
-                text, u = await self._generate_standard(
-                    source_text, source_lang, target_lang, context, model_name, custom_prompt
-                )
-                return GenerationResult(
-                    target_text=text,
-                    usage=u,
-                    context_used=context
-                )
-                
-        except Exception as e:
-            logger.error(f"Inference Error: {e}", exc_info=True)
-            return GenerationResult(
-                target_text="",
-                usage=usage,
-                context_used=context,
-                error=str(e)
-            )
+        glossary = [{"term": g.source_text, "translation": g.content} 
+                    for g in context.glossary_hits]
 
-    async def generate_batch(
+        # Extract neighbors for windowed context logic if available
+        # But generate_structured_batch expects "global" preceding/following.
+        # For single segment, we can use context.prev_chunks / next_chunks if they are strictly neighbors.
+        # In SegmentContext, prev_chunks/next_chunks are lists of strings.
+        
+        preceding = context.prev_chunks if context.prev_chunks else []
+        following = context.next_chunks if context.next_chunks else []
+        
+        batch_item = {
+            "id": segment_id,
+            "source_text": source_text,
+            "tm_matches": tm_matches,
+            "glossary_matches": glossary
+        }
+        
+        translations, usage = await self.generate_structured_batch(
+            preceding_context=preceding,
+            following_context=following,
+            batch_items=[batch_item],
+            source_lang=source_lang,
+            target_lang=target_lang,
+            model_name=model_name,
+            custom_prompt=custom_prompt
+        )
+        
+        target = translations.get(segment_id, "")
+        if not target:
+             # Fallback or Error?
+             # If structured failed, maybe we return empty or try standard?
+             # For now, return empty with error note?
+             pass
+
+        return GenerationResult(
+            target_text=target,
+            usage=usage,
+            context_used=context
+        )
+
+    async def generate_structured_batch(
         self,
-        batch_data: List[Dict], # [{id, source, context_str, glossary_str}]
+        preceding_context: List[str],
+        following_context: List[str],
+        batch_items: List[Dict], # [{id, source_text, tm_matches, glossary_matches}]
         source_lang: str,
         target_lang: str,
         model_name: str = None,
         custom_prompt: str = ""
-    ) -> Dict[str, str]:
+    ) -> (Dict[str, str], Dict):
         """
-        Translates a batch of segments using a single JSON prompt.
-        Returns Dict { segment_id: translation }
+        Translates a batch using a structured JSON prompt with Windowed Context.
         """
         if not model_name: model_name = get_default_model_id()
         
-        # Build JSON Prompt
         import json
         
-        system_instruction = f"""You are a professional translator. Translate the following list of segments from {source_lang} to {target_lang}.
+        system_instruction = f"""You are a professional translator. Translate the following content from {source_lang} to {target_lang}.
 Rules:
 1. Output valid JSON array: [{{ "id": "segment_id", "target": "translated_text" }}, ...]
-2. Preserve XML-like tags (e.g. <1>, <b>) in the translation.
-3. Use the provided context/glossary for each segment if available.
+2. Preserve XML-like tags (e.g. <1>, <b>) exactly as they appear in source.
+3. Use the provided glossary and TM matches if relevant.
+4. Maintain style consistency across the batch.
 """
+
         if custom_prompt:
             system_instruction += f"\nStyle Guide:\n{custom_prompt}\n"
             
-        user_content = {
+        # Construct JSON Input
+        # "context_window": { "preceding": [...], "following": [...] }
+        # "batch": [ ... ]
+        
+        input_data = {
             "task": "Translate batch",
-            "segments": []
+            "context_window": {
+                "preceding_segments": preceding_context,
+                "following_segments": following_context
+            },
+            "segments_to_translate": []
         }
         
-        for item in batch_data:
+        for item in batch_items:
             seg_obj = {
                 "id": item['id'],
-                "source": item['source']
+                "source": item['source_text'],
+                "glossary": item['glossary_matches'],
+                "tm_suggestions": item['tm_matches']
             }
-            if item.get('context'):
-                seg_obj['context'] = item['context']
-            if item.get('glossary'):
-                seg_obj['glossary'] = item['glossary']
-            user_content['segments'].append(seg_obj)
+            input_data['segments_to_translate'].append(seg_obj)
             
-        prompt = f"{system_instruction}\n\nInput Data:\n{json.dumps(user_content, indent=2)}\n\nOutput JSON:"
+        prompt = f"{system_instruction}\n\nInput Data:\n{json.dumps(input_data, indent=2)}\n\nOutput JSON:"
         
         try:
-            # Force JSON mode not strictly available in all models via config yet, 
-            # but usually fine with prompt engineering.
-            # Using same _call_gemini wrapper.
             response_text, usage = await self._call_gemini(prompt, model_name, temperature=0.2)
             
-            # Clean Markdown Wrapper ```json ... ```
             clean_json = response_text.replace("```json", "").replace("```", "").strip()
-            
             data = json.loads(clean_json)
             
             results = {}
@@ -159,7 +149,6 @@ Rules:
             
         except Exception as e:
             logger.error(f"Batch Inference Failed: {e}")
-            logger.error(f"Raw Response: {response_text if 'response_text' in locals() else 'None'}")
             return {}, {"input_tokens": 0, "output_tokens": 0}
 
     async def _generate_pass_1_plain(self, source: str, s_lang: str, t_lang: str, ctx: SegmentContext, model: str, prompt: str):

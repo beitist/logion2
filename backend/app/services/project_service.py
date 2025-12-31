@@ -244,8 +244,7 @@ class ProjectService:
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
             
-        from ..rag import reingest_project
-        background_tasks.add_task(reingest_project, project_id)
+        background_tasks.add_task(ingest_project_files, project_id)
 
     def trigger_draft_generation(self, project_id: str, background_tasks: BackgroundTasks):
         project = self.get_project(project_id)
