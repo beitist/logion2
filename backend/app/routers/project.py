@@ -1,6 +1,5 @@
-
 from typing import List, Optional
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -95,7 +94,8 @@ def get_project_segments(project_id: str, service: SegmentService = Depends(get_
 
 @router.post("/{project_id}/reinitialize", response_model=ProjectResponse)
 async def reinitialize_project(
-    project_id: str, 
+    project_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(None),
     service: SegmentService = Depends(get_segment_service)
 ):
@@ -103,7 +103,7 @@ async def reinitialize_project(
     Re-parses the source file but preserves existing translations.
     Optionally accepts a new source file to replace the existing one.
     """
-    return service.reinitialize_project(project_id, file)
+    return service.reinitialize_project(project_id, background_tasks, file)
 
 @router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
 async def generate_draft_endpoint(

@@ -4,7 +4,7 @@ import os
 import datetime
 from collections import defaultdict, deque
 from typing import List, Optional, Dict, Any
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
@@ -25,10 +25,11 @@ class SegmentService:
     def __init__(self, db: Session):
         self.db = db
 
-    def reinitialize_project(self, project_id: str, new_file_upload: Optional[Any] = None) -> Project:
+    def reinitialize_project(self, project_id: str, background_tasks: BackgroundTasks, new_file_upload: Optional[Any] = None) -> Project:
         """
         Re-parses the source file but preserves existing translations by matching Source Text.
         Optionally replaces the source file if new_file_upload is provided.
+        Triggers background vector regeneration for segments.
         """
         project = self.db.query(Project).filter(Project.id == project_id).first()
         if not project:
@@ -105,8 +106,19 @@ class SegmentService:
             
             # Insert new
             self.db.add_all(final_db_segments)
+            
+            # Set Status for Progress Tracking
+            project.rag_status = "ingesting" 
+            project.rag_progress = 0
+            # Initialize log for user feedback
+            project.ingestion_logs = ["Reinitialization successful. Starting vector regeneration..."]
+            
             self.db.commit()
             self.db.refresh(project)
+            
+            # Trigger Background Vector Generation
+            from ..rag.ingestion import embed_project_segments
+            background_tasks.add_task(embed_project_segments, project_id)
             
             return project
             

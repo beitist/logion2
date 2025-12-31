@@ -202,3 +202,71 @@ def _ingest_logic(project_id: str, db: Session):
     project.rag_status = "ready"
     project.rag_progress = 100
     log(f"Ingestion complete. {total_work} vectors stored.")
+
+def embed_project_segments(project_id: str):
+    """
+    Background Task: Re-generates vectors ONLY for segments (Source Content).
+    Used after Reinitialize.
+    """
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project: return
+
+        logger.info(f"Starting Segment Embedding for {project_id}")
+        
+        # helper
+        def log(msg):
+            # We append to existing logs? Or clear? Reinit usually keeps logs?
+            # Let's append.
+            timestamp = datetime.utcnow().strftime('%H:%M:%S')
+            if not project.ingestion_logs: project.ingestion_logs = []
+            project.ingestion_logs = project.ingestion_logs + [f"[{timestamp}] {msg}"]
+            db.commit()
+
+        def update_progress(p):
+            project.rag_progress = int(p)
+            db.commit()
+
+        # Logic matches Phase 3 of _ingest_logic
+        engine = RetrievalEngine()
+        if not engine._client:
+             log("Error: Voyage AI not loaded.")
+             return
+
+        segments = db.query(Segment).filter(Segment.project_id == project_id).all()
+        total = len(segments)
+        BATCH_SIZE = 32
+        processed = 0
+        
+        log(f"Generating vectors for {total} segments...")
+        
+        for i in range(0, total, BATCH_SIZE):
+            batch_segs = segments[i : i+BATCH_SIZE]
+            texts = [engine.clean_tags(s.source_content) for s in batch_segs]
+            
+            try:
+                # Use "document" for storage
+                embeddings = engine.embed_batch(texts, input_type="document")
+                
+                # Update DB objects
+                for s, vec in zip(batch_segs, embeddings):
+                    s.embedding = vec
+                
+                db.commit() 
+                
+                processed += len(batch_segs)
+                progress = int((processed / total) * 100)
+                update_progress(progress)
+                
+            except Exception as e:
+                log(f"Embedding error: {e}")
+                
+        project.rag_status = "ready"
+        update_progress(100)
+        log("Segment vectors updated.")
+        
+    except Exception as e:
+        logger.error(f"Segment Embedding Error: {e}")
+    finally:
+        db.close()
