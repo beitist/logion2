@@ -1,4 +1,7 @@
+import React, { useState } from 'react';
+import { RefreshCw, Search, Calculator, Database, Copy } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
+import { generateDraft, copySourceToTarget } from '../../api/client';
 
 export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onFullReinit }) {
     const [copyLoading, setCopyLoading] = useState(false);

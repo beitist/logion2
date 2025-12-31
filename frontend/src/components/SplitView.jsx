@@ -301,6 +301,7 @@ export function SplitView({ projectId, onBack }) {
                                             onBatchProcess={handleBatchProcess} // Allow Blocking Workflows
                                             onReingest={handleReingest}
                                             onRefresh={refreshProject}
+                                            onFullReinit={handleFullReinit}
                                         />
                                     )}
                                     {activeSettingsTab === 'stats' && (
