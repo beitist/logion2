@@ -27,152 +27,18 @@ class SegmentService:
 
     def reinitialize_project(self, project_id: str, background_tasks: BackgroundTasks, new_file_upload: Optional[Any] = None) -> Project:
         """
-        Re-parses the source file but preserves existing translations by matching Source Text.
-        Optionally replaces the source file if new_file_upload is provided.
-        Triggers background vector regeneration for segments.
+        Delegates to ReinitializeWorkflow.
         """
-        project = self.db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        # 1. Find Source File
-        source_record = self.db.query(ProjectFile).filter(
-            ProjectFile.project_id == project.id,
-            ProjectFile.category == ProjectFileCategory.source.value,
-            ProjectFile.filename.endswith(".docx")
-        ).first()
+        from ..workflows.reinitialize import ReinitializeWorkflow, run_background_vector_regen
         
-        if not source_record:
-            # If no source record exists (rare), we can't reinit unless we have a new file.
-            # But normally we require source record.
-            if not new_file_upload:
-                raise HTTPException(status_code=400, detail="No source DOCX file found to reinitialize.")
-            
-        # 1.5. Replace File if provided
-        if new_file_upload:
-            if not source_record:
-                # Handle edge case or create new record? 
-                # For reinit, we assume project structure exists.
-                pass 
-                
-            # Overwrite the actual file on disk
-            try:
-                content = new_file_upload.file.read()
-                with open(source_record.file_path, "wb") as f:
-                    f.write(content)
-                
-                # Update DB record metadata
-                source_record.filename = new_file_upload.filename
-                source_record.uploaded_at = datetime.datetime.utcnow()
-                # file_path remains same (or we could rename it, but keeping it simple is safer)
-                
-                self.db.add(source_record)
-                self.db.commit() # Commit file change before parsing
-                logger.info(f"Replaced source file for project {project_id} with {new_file_upload.filename}")
-                
-            except Exception as e:
-                 logger.error(f"Failed to save new source file: {e}")
-                 raise HTTPException(status_code=500, detail=f"Failed to save new source file: {e}")
-
-        # 2. Download and Parse Fresh
-        temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_reinit_{project_id}.docx")
-        new_segments_internal = []
-        try:
-            if os.path.exists(temp_parse_path):
-                 os.remove(temp_parse_path)
-                 
-            download_file(source_record.file_path, temp_parse_path)
-            new_segments_internal = parse_docx(temp_parse_path, source_lang=project.source_lang)
-            
-        except Exception as e:
-            logger.error(f"Reinitialization failed during parse: {e}")
-            raise HTTPException(status_code=500, detail=f"Reinitialization parsing failed: {e}")
-        finally:
-             if os.path.exists(temp_parse_path):
-                 os.remove(temp_parse_path)
-
-        # 3. Fetch Old and Merge
-        final_db_segments = self.merge_old_with_new(project_id, new_segments_internal)
-
-        # 4. Atomic Replace
-        try:
-            # Unlink AI Usage Logs first
-            self.db.query(AiUsageLog).filter(
-                AiUsageLog.project_id == project_id
-            ).update({AiUsageLog.segment_id: None}, synchronize_session=False)
-
-            # Delete old
-            self.db.query(Segment).filter(Segment.project_id == project_id).delete()
-            
-            # Insert new
-            self.db.add_all(final_db_segments)
-            
-            # Set Status for Progress Tracking
-            project.rag_status = "ingesting" 
-            project.rag_progress = 0
-            # Initialize log for user feedback
-            project.ingestion_logs = ["Reinitialization successful. Starting vector regeneration..."]
-            
-            self.db.commit()
-            self.db.refresh(project)
-            
-            # Trigger Background Vector Generation
-            from ..rag.ingestion import embed_project_segments
-            background_tasks.add_task(embed_project_segments, project_id)
-            
-            return project
-            
-        except Exception as e:
-            self.db.rollback()
-            logger.error(f"DB Error during reinitialization: {e}")
-            raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
-
-    def merge_old_with_new(self, project_id: str, new_segments_internal: List[SegmentInternal]) -> List[Segment]:
-        """
-        Merges existing segments (DB) with new parsed segments (List[SegmentInternal]).
-        Matches by source_content using FIFO for duplicates.
-        """
-        old_segments = self.db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
+        # Run Sync Logic
+        wf = ReinitializeWorkflow(self.db, project_id)
+        project = wf.run(new_file_upload)
         
-        # Map Source Text -> Queue of Old Segments (FIFO)
-        old_map = defaultdict(deque)
-        for seg in old_segments:
-            old_map[seg.source_content].append(seg)
-            
-        logger.info(f"Reinitializing Project {project_id}: Parsed {len(new_segments_internal)} new segments vs {len(old_segments)} old.")
-
-        final_db_segments = []
-        new_count = 0
-        preserved_count = 0
+        # Trigger Background Logic
+        background_tasks.add_task(run_background_vector_regen, project_id)
         
-        for i, new_seg_int in enumerate(new_segments_internal):
-            target_content = None
-            status = "draft"
-            
-            # Check for match
-            if old_map[new_seg_int.source_text]:
-                match = old_map[new_seg_int.source_text].popleft()
-                target_content = match.target_content
-                status = match.status
-                preserved_count += 1
-            else:
-                new_count += 1
-            
-            seg_dump = new_seg_int.model_dump()
-            
-            new_db_seg = Segment(
-                id=new_seg_int.segment_id,
-                project_id=project_id,
-                index=i,
-                source_content=new_seg_int.source_text,
-                target_content=target_content,
-                status=status,
-                metadata_json=seg_dump
-            )
-            final_db_segments.append(new_db_seg)
-            
-        logger.info(f"Reinit Success: Preserved {preserved_count}, Added {new_count}. Total {len(final_db_segments)}.")
-        return final_db_segments
+        return project
 
 
 
@@ -332,123 +198,24 @@ class SegmentService:
     def bulk_copy_source_to_target(self, project_id: str):
         """
         Copies source content to target content for all segments in a project.
+        Uses CopySourceWorkflow (Synchronous).
+        """
+        from ..workflows.copy_source import CopySourceWorkflow
+        wf = CopySourceWorkflow(self.db, project_id)
+        # wf.run() # Sync
+        # We can just call run.
+        wf.run()
+
+    def process_batch_translation(self, project_id: str, background_tasks: BackgroundTasks, segment_ids: List[str], mode: str = "draft"):
+        """
+        Batched Translation Workflow (Background).
+        Delegates to BatchTranslateWorkflow.
         """
         project = self.db.query(Project).filter(Project.id == project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        try:
-            self.db.query(Segment).filter(Segment.project_id == project_id).update(
-                {
-                    Segment.target_content: Segment.source_content,
-                    Segment.status: "translated",
-                },
-                synchronize_session=False
-            )
-            self.db.commit()
-        except Exception as e:
-            self.db.rollback()
-            logger.error(f"Bulk copy failed: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-    async def process_batch_translation(self, project_id: str, segment_ids: List[str], mode: str = "draft"):
-        """
-        Batched Translation Workflow.
-        mode="draft": Update ai_draft only, status=draft.
-        mode="translate": Update target_content and ai_draft, status=translated.
-        """
-        project = self.db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        config = project.config or {}
-        ai_settings = config.get("ai_settings", {})
-        model_name = ai_settings.get("workflow_model") or get_default_model_id() # Use Faster Model!
-        custom_prompt = ai_settings.get("custom_prompt", "")
-
-        from ..rag import RAGManager
-        manager = RAGManager(project_id, self.db)
+        from ..workflows.batch_translate import run_background_batch_translate
+        background_tasks.add_task(run_background_batch_translate, project_id, segment_ids)
         
-        try:
-            # Call Batch Draft Generation
-            results = await manager.generate_batch_draft(
-                segment_ids=segment_ids,
-                source_lang=project.source_lang,
-                target_lang=project.target_lang,
-                model_name=model_name,
-                custom_prompt=custom_prompt
-            )
-            
-            # Bulk Update DB
-            total_input_tokens = 0
-            total_output_tokens = 0
-            
-            # We fetch segments again to update them in session? Or just iterate results
-            # Results dict keyed by ID.
-            
-            segments = self.db.query(Segment).filter(Segment.id.in_(results.keys())).all()
-            
-            for seg in segments:
-                res = results.get(seg.id)
-                if not res: continue
-                
-                # FIX: Convert Pydantic models to Dicts for JSON serialization
-                context_matches = [m.model_dump() for m in res.context_used.matches] if res.context_used else []
-                
-                current_meta = dict(seg.metadata_json or {})
-                
-                # Nested Metadata
-                inner_meta = current_meta.get("metadata", {})
-                if not isinstance(inner_meta, dict): inner_meta = {}
-
-                current_meta['context_matches'] = context_matches
-                inner_meta['ai_model'] = model_name
-                
-                target_text = res.target_text
-                
-                if mode == "translate":
-                   seg.target_content = target_text
-                   inner_meta['ai_draft'] = target_text
-                   if not res.is_exact: # If exact match, maybe status is approved? or translated?
-                       seg.status = "translated" 
-                elif mode == "draft":
-                   inner_meta['ai_draft'] = target_text
-                   
-                current_meta['metadata'] = inner_meta 
-                seg.metadata_json = current_meta
-                flag_modified(seg, "metadata_json")
-                
-                # Accumulate Usage
-                if res.usage:
-                    total_input_tokens += res.usage.get("input_tokens", 0)
-                    total_output_tokens += res.usage.get("output_tokens", 0)
-                    
-            # Log Aggregate Usage
-            if total_input_tokens > 0 or total_output_tokens > 0:
-                 # Log to Project Stats
-                 usage_stats = config.get("usage_stats", {})
-                 model_stats = usage_stats.get(model_name, {"input_tokens": 0, "output_tokens": 0})
-                 model_stats["input_tokens"] += total_input_tokens
-                 model_stats["output_tokens"] += total_output_tokens
-                 usage_stats[model_name] = model_stats
-                 config["usage_stats"] = usage_stats
-                 project.config = config
-                 flag_modified(project, "config")
-                 
-                 # Add a single Log entry for the batch? Or per segment?
-                 # Per segment is cleaner for detailed stats but spammy. 
-                 # Let's log a meaningful "Batch" entry?
-                 # AiUsageLog requires segment_id.
-                 # We will skip per-segment logging for batch workflow to save DB space, 
-                 # OR log one entry with segment_id=None (if nullable)? 
-                 # Model says segment_id is ForeignKey. 
-                 # We'll just skip detailed logs and rely on Project Stats for cost tracking.
-                 pass
-
-            self.db.commit()
-            return {"status": "success", "processed": len(results)}
-            
-        except Exception as e:
-            self.db.rollback()
-            logger.error(f"Batch Process Failed: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "started", "message": "Batch translation started in background"}

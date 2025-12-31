@@ -9,7 +9,7 @@ from ..models import Project, ProjectFile, ProjectFileCategory, Segment, Glossar
 from ..storage import upload_file, download_file
 from ..parser import parse_docx
 from ..logger import get_logger
-from ..rag import ingest_project_files
+from ..workflows.reingest import run_background_reingest
 
 logger = get_logger("ProjectService")
 UPLOAD_DIR = "uploads"
@@ -65,7 +65,7 @@ class ProjectService:
 
         # Trigger RAG Ingestion (Background)
         if use_ai:
-            background_tasks.add_task(ingest_project_files, new_project.id)
+            background_tasks.add_task(run_background_reingest, new_project.id)
 
         self.db.refresh(new_project)
         return new_project
@@ -244,13 +244,20 @@ class ProjectService:
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
             
-        background_tasks.add_task(ingest_project_files, project_id)
+        background_tasks.add_task(run_background_reingest, project_id)
 
     def trigger_draft_generation(self, project_id: str, background_tasks: BackgroundTasks):
         project = self.get_project(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
             
-        from ..rag import generate_project_drafts
-        background_tasks.add_task(generate_project_drafts, project_id)
+        from ..workflows.batch_draft import run_background_batch_draft
+        background_tasks.add_task(run_background_batch_draft, project_id)
 
+    def trigger_preload_matches(self, project_id: str, background_tasks: BackgroundTasks):
+        project = self.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        from ..workflows.preload_matches import run_background_preload_matches
+        background_tasks.add_task(run_background_preload_matches, project_id)

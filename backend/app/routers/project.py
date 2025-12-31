@@ -147,7 +147,17 @@ async def generate_drafts_endpoint(
     """
     service.trigger_draft_generation(project_id, background_tasks)
     return {"message": "Batch draft generation started. This may take a while."}
-
+@router.post("/{project_id}/preload-matches")
+async def preload_matches_endpoint(
+    project_id: str, 
+    background_tasks: BackgroundTasks, 
+    service: ProjectService = Depends(get_project_service)
+):
+    """
+    Triggers background preloading of TM/Glossary matches for all segments.
+    """
+    service.trigger_preload_matches(project_id, background_tasks)
+    return {"message": "Preload matches started."}
 @router.post("/{project_id}/workflow/copy-source")
 async def copy_source_workflow(project_id: str, service: SegmentService = Depends(get_segment_service)):
     """
@@ -160,13 +170,14 @@ async def copy_source_workflow(project_id: str, service: SegmentService = Depend
 @router.post("/{project_id}/batch-translate")
 async def batch_translate(
     project_id: str, 
+    background_tasks: BackgroundTasks,
     payload: BatchTranslateRequest,
     service: SegmentService = Depends(get_segment_service)
 ):
     """
-    Translates a batch of segments (Synchronous).
+    Translates a batch of segments (Asynchronous Background Task).
     """
-    return await service.process_batch_translation(project_id, payload.segment_ids, payload.mode)
+    return service.process_batch_translation(project_id, background_tasks, payload.segment_ids, payload.mode)
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(
