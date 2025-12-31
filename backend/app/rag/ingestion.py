@@ -6,7 +6,7 @@ from typing import List
 
 from ..models import Project, ProjectFile, ContextChunk, ProjectFileCategory, TranslationUnit, TranslationOrigin, Segment
 from ..storage import download_file
-from ..parser import parse_docx
+from ..document.parser import parse_docx
 from ..tmx import parse_tmx_units, compute_hash, ingest_tmx_direct
 from .retrieval import RetrievalEngine
 from ..database import SessionLocal

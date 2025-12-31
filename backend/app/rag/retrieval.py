@@ -299,7 +299,7 @@ class RetrievalEngine:
                 content=chunk.rich_content or chunk.content,
                 source_text=chunk.content,
                 filename=file.filename,
-                type="context", 
+                type=TranslationOrigin.mandatory if file.category == ProjectFileCategory.legal else TranslationOrigin.optional,
                 category=file.category,
                 score=0, # Calculated in _rerank_and_score
                 chunk_index=chunk.chunk_index,
