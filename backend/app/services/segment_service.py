@@ -119,6 +119,11 @@ class SegmentService:
             target_text = result_dict.get("target_text", "")
             context_used = result_dict.get("context_used", {})
             context_matches = context_used.get("matches", [])
+            
+            # Merge Glossary Hits so they appear in UI
+            glossary_hits = context_used.get("glossary_hits", [])
+            if glossary_hits:
+                context_matches.extend(glossary_hits)
             usage = result_dict.get("usage", {})
             error = result_dict.get("error")
             

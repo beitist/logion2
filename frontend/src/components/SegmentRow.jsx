@@ -136,7 +136,7 @@ export const SegmentRow = memo(({
                                 const tOptional = aiConfig.threshold_optional !== undefined ? aiConfig.threshold_optional : 40;
                                 const score = match.score || 0;
 
-                                if (isGlossary) { /* Always show */ }
+                                if (isGlossary) return null; // Show in Target Column instead!
                                 else if (isMandatory) { if (score < tMandatory) return null; }
                                 else if (!isMT) { if (score < tOptional) return null; }
 
@@ -277,6 +277,42 @@ export const SegmentRow = memo(({
                         onEditorReady={(ed) => registerEditor(segment.id, ed)}
                     />
                 </div>
+
+                {/* Glossary Matches (Right Column) */}
+                {sortedMatches.filter(m => m.type === 'glossary').length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-100">
+                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                            <span className="w-1 h-1 bg-teal-400 rounded-full"></span> Glossary terms
+                        </div>
+                        <div className="space-y-2">
+                            {sortedMatches.filter(m => m.type === 'glossary').map((match, idx) => (
+                                <div key={idx} className="p-2.5 rounded border border-teal-100 bg-teal-50/50 hover:bg-teal-50 transition-colors">
+                                    <div className="flex justify-between items-start mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-bold uppercase tracking-wider text-teal-700">
+                                                📚 Glossary
+                                            </span>
+                                            {match.source_term && (
+                                                <span className="text-[10px] text-teal-600 font-medium bg-white/50 px-1 rounded border border-teal-100">
+                                                    {match.source_term}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div
+                                        className="text-gray-800 text-sm leading-snug font-source selection:bg-teal-100"
+                                        dangerouslySetInnerHTML={{ __html: formatSourceContent(match.content, null, false) }}
+                                    />
+                                    {match.note && (
+                                        <div className="mt-1 text-[10px] text-gray-500 italic border-t border-teal-100/50 pt-1">
+                                            {match.note}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* DEBUG: Show raw target content sent to backend */}
                 {showDebug && (

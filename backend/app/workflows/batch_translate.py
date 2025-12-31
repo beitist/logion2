@@ -67,6 +67,14 @@ class BatchTranslateWorkflow(BaseWorkflow):
                     # Also save as draft in metadata just in case
                     meta = seg.metadata_json or {}
                     meta['ai_draft'] = result.target_text
+
+                    # Save Context Matches & Glossary
+                    if result.context_used:
+                        matches = result.context_used.matches or []
+                        gloss = result.context_used.glossary_hits or []
+                        serialized_ctx = [m.dict() for m in matches] + [m.dict() for m in gloss]
+                        meta['context_matches'] = serialized_ctx
+
                     seg.metadata_json = dict(meta)
                     flag_modified(seg, "metadata_json")
                     
