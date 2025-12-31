@@ -103,19 +103,24 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         }));
     };
 
-    const handleFullReinit = async () => {
-        if (!confirm("Re-initialize Project? Translations preserved.")) return;
+    const handleFullReinit = async (file = null) => {
+        // Confirmation is handled by Modal now if file is involved, 
+        // but if called directly we might want confirmation?
+        // Let's assume Modal checks.
+        // But if file is null, we should confirm if not already confirmed?
+        // The modal confirms action.
+
         setBlockingTask({
             isOpen: true,
             type: 'reinit',
             status: 'running',
-            title: "Re-initializing Project...",
-            logs: ["Starting..."],
+            title: file ? "Replacing Source & Re-initializing..." : "Re-initializing Project...",
+            logs: ["Starting backend process..."],
             progress: -1
         });
         try {
-            await reinitializeProject(projectId);
-            setBlockingTask(prev => ({ ...prev, logs: [...prev.logs, "Backend process started..."] }));
+            await reinitializeProject(projectId, file);
+            setBlockingTask(prev => ({ ...prev, logs: [...prev.logs, "Processing source file..."] }));
         } catch (err) {
             setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...prev.logs, `Error: ${err.message}`] }));
         }

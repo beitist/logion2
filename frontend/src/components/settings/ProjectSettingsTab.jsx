@@ -43,24 +43,6 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
         }
     };
 
-    const handleReinitialize = async () => {
-        if (!confirm("This will re-parse the source file. Existing translations will be preserved, as long as source text matches. Segments not found in source will be deleted. Continue?")) return;
-
-        // Use Parent Handler if available (Displays Modal)
-        if (onReinit) {
-            onReinit();
-            return;
-        }
-
-        try {
-            await reinitializeProject(project.id);
-            alert("Project reinitialized successfully!");
-            if (onUpdate) onUpdate(project);
-        } catch (e) {
-            alert("Error: " + e.message);
-        }
-    };
-
     return (
         <div className="space-y-6 py-4 h-full flex flex-col">
             <div className="flex items-center gap-2 text-gray-800 bg-gray-50 p-3 rounded-lg border border-gray-200 mb-2">
@@ -126,26 +108,7 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
 
             </div>
 
-            {/* 4. Advanced Actions */}
-            <div className="pt-4 border-t border-gray-100">
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Advanced Actions</h3>
 
-                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
-                    <div>
-                        <label className="block text-sm font-bold text-gray-900">Reinitialize Source</label>
-                        <p className="text-xs text-gray-500 max-w-sm">
-                            Re-parse the source file to pick up external changes.
-                            Preserves existing translations where source text matches.
-                        </p>
-                    </div>
-                    <button
-                        onClick={handleReinitialize}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs rounded hover:bg-gray-50 transition-colors shadow-sm"
-                    >
-                        <RefreshCw size={14} /> Reinitialize
-                    </button>
-                </div>
-            </div>
 
             <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button

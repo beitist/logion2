@@ -25,9 +25,10 @@ class SegmentService:
     def __init__(self, db: Session):
         self.db = db
 
-    def reinitialize_project(self, project_id: str) -> Project:
+    def reinitialize_project(self, project_id: str, new_file_upload: Optional[Any] = None) -> Project:
         """
         Re-parses the source file but preserves existing translations by matching Source Text.
+        Optionally replaces the source file if new_file_upload is provided.
         """
         project = self.db.query(Project).filter(Project.id == project_id).first()
         if not project:
@@ -41,7 +42,36 @@ class SegmentService:
         ).first()
         
         if not source_record:
-            raise HTTPException(status_code=400, detail="No source DOCX file found to reinitialize.")
+            # If no source record exists (rare), we can't reinit unless we have a new file.
+            # But normally we require source record.
+            if not new_file_upload:
+                raise HTTPException(status_code=400, detail="No source DOCX file found to reinitialize.")
+            
+        # 1.5. Replace File if provided
+        if new_file_upload:
+            if not source_record:
+                # Handle edge case or create new record? 
+                # For reinit, we assume project structure exists.
+                pass 
+                
+            # Overwrite the actual file on disk
+            try:
+                content = new_file_upload.file.read()
+                with open(source_record.file_path, "wb") as f:
+                    f.write(content)
+                
+                # Update DB record metadata
+                source_record.filename = new_file_upload.filename
+                source_record.uploaded_at = datetime.datetime.utcnow()
+                # file_path remains same (or we could rename it, but keeping it simple is safer)
+                
+                self.db.add(source_record)
+                self.db.commit() # Commit file change before parsing
+                logger.info(f"Replaced source file for project {project_id} with {new_file_upload.filename}")
+                
+            except Exception as e:
+                 logger.error(f"Failed to save new source file: {e}")
+                 raise HTTPException(status_code=500, detail=f"Failed to save new source file: {e}")
 
         # 2. Download and Parse Fresh
         temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_reinit_{project_id}.docx")

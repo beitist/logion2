@@ -94,11 +94,16 @@ def get_project_segments(project_id: str, service: SegmentService = Depends(get_
     return service.get_segments(project_id)
 
 @router.post("/{project_id}/reinitialize", response_model=ProjectResponse)
-def reinitialize_project(project_id: str, service: SegmentService = Depends(get_segment_service)):
+async def reinitialize_project(
+    project_id: str, 
+    file: UploadFile = File(None),
+    service: SegmentService = Depends(get_segment_service)
+):
     """
     Re-parses the source file but preserves existing translations.
+    Optionally accepts a new source file to replace the existing one.
     """
-    return service.reinitialize_project(project_id)
+    return service.reinitialize_project(project_id, file)
 
 @router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
 async def generate_draft_endpoint(

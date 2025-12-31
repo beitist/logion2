@@ -1,19 +1,14 @@
-import React, { useState } from 'react';
-import { RefreshCw, Search, Calculator, Database, Copy } from 'lucide-react';
-import { generateDraft, copySourceToTarget } from '../../api/client';
+import { ReinitializeModal } from '../ReinitializeModal';
 
-export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess }) {
+export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onFullReinit }) {
     const [copyLoading, setCopyLoading] = useState(false);
+    const [isReinitModalOpen, setIsReinitModalOpen] = useState(false);
 
     const handleRun = (mode) => {
         if (!segments) return;
 
         // Blocking Batch Workflows (Preferred by User)
         if (onBatchProcess && (mode === 'draft' || mode === 'translate')) {
-            // onBatchProcess handles confirmation and execution internally?
-            // No, handleBatchProcess in useBlockingTask starts immediately? 
-            // Let's check. It sets isOpen=true immediately.
-            // We should confirm first.
             if (confirm(`Start Blocking Workflow: ${mode.toUpperCase()} for ${segments.length} segments?`)) {
                 onBatchProcess(mode);
             }
@@ -40,6 +35,13 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
             console.error(err);
         } finally {
             setCopyLoading(false);
+        }
+    };
+
+    const handleReinitConfirm = (file) => {
+        setIsReinitModalOpen(false);
+        if (onFullReinit) {
+            onFullReinit(file);
         }
     };
 
@@ -129,15 +131,34 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                     </button>
                 </div>
 
-                {/* 5. Reingest */}
-                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mt-6 opacity-75 hover:opacity-100 transition-opacity">
+                {/* 5. Reinitialize Source (MOVED HERE) */}
+                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mt-6 hover:border-gray-300 transition-colors">
                     <div className="flex items-center gap-3 mb-2">
                         <div className="p-2 bg-gray-200 text-gray-600 rounded-md">
                             <RefreshCw size={20} />
                         </div>
                         <div>
-                            <h3 className="text-sm font-bold text-gray-900">Re-Ingest Documents</h3>
-                            <p className="text-xs text-gray-500">Re-process source files for RAG.</p>
+                            <h3 className="text-sm font-bold text-gray-900">Reinitialize Source</h3>
+                            <p className="text-xs text-gray-500">Reload source file or replace with new version.</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setIsReinitModalOpen(true)}
+                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-50 text-xs font-medium"
+                    >
+                        <RefreshCw size={14} /> Reinitialize
+                    </button>
+                </div>
+
+                {/* 6. Reingest */}
+                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mt-4 opacity-75 hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-gray-200 text-gray-600 rounded-md">
+                            <Database size={20} />
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-bold text-gray-900">Re-Ingest Vectors</h3>
+                            <p className="text-xs text-gray-500">Re-process chunks for RAG.</p>
                         </div>
                     </div>
                     <button
@@ -147,8 +168,14 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                         Re-Ingest
                     </button>
                 </div>
-
             </div>
+
+            <ReinitializeModal
+                isOpen={isReinitModalOpen}
+                onClose={() => setIsReinitModalOpen(false)}
+                onConfirm={handleReinitConfirm}
+                projectFilename={project?.filename}
+            />
         </div>
     );
 }

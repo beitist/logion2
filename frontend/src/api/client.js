@@ -125,12 +125,29 @@ export async function reingestProject(projectId) {
     return res.json();
 }
 
-export async function reinitializeProject(projectId) {
-    const res = await fetch(`${API_BASE}/project/${projectId}/reinitialize`, {
+export async function reinitializeProject(projectId, fileData = null) {
+    const url = `${API_BASE}/project/${projectId}/reinitialize`;
+
+    let options = {
         method: "POST",
-    });
+    };
+
+    if (fileData) {
+        // If fileData is a File object, wrap in FormData
+        const formData = new FormData();
+        // Check if fileData is already FormData ? (Unlikely based on usage)
+        // Assume fileData is the File object from input
+        if (fileData instanceof File) {
+            formData.append('file', fileData);
+        }
+        options.body = formData;
+        // Do NOT set Content-Type header for FormData, browser does it with boundary
+    }
+    // If no body, empty POST is fine.
+
+    const res = await fetch(url, options);
     if (!res.ok) throw new Error("Failed to reinitialize project");
-    return res.json();
+    return await res.json();
 }
 
 export async function batchTranslate(projectId, segmentIds, mode = "draft") {
