@@ -18,6 +18,7 @@ class TranslationMatch(BaseModel):
     # Additional Context
     chunk_index: Optional[int] = None
     file_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 class SegmentContext(BaseModel):
     """
