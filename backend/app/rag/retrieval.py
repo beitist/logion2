@@ -195,11 +195,15 @@ class RetrievalEngine:
             try:
                 # Use query input_type
                 b = self.embed_batch([clean_query], input_type="query")
-                if b: query_vec = b[0]
+                if b is not None and len(b) > 0: query_vec = b[0]
             except:
                 return []
         
-        if not query_vec: return []
+        if query_vec is None: return []
+            
+        # Convert to list to avoid Numpy Ambiguity in SQLAlchemy/PGVector
+        if hasattr(query_vec, 'tolist'):
+            query_vec = query_vec.tolist()
             
         # Database Vector Search
         # Joining ProjectFile to filter by Project

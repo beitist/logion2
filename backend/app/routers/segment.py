@@ -52,4 +52,9 @@ async def update_segment(segment_id: str, update: SegmentUpdate, db: Session = D
     
     db.commit()
     db.refresh(segment)
-    return segment
+    
+    # Return Dict without embedding
+    res = segment.__dict__.copy()
+    res.pop('embedding', None)
+    res.pop('_sa_instance_state', None)
+    return res

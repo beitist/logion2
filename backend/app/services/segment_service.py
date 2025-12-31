@@ -269,6 +269,9 @@ class SegmentService:
             
             # Format Response
             resp_dict = segment.__dict__.copy()
+            resp_dict.pop('embedding', None) # Exclude large vector
+            resp_dict.pop('_sa_instance_state', None) # Cleanup SQLAlchemy state
+            
             resp_dict['context_matches'] = context_matches
             
             meta_json = segment.metadata_json or {}
