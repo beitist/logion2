@@ -165,6 +165,11 @@ export const SegmentRow = memo(({
                                     bgClass = 'bg-teal-50';
                                     textClass = 'text-teal-700';
                                     label = '📚 Glossary Term';
+                                } else if (match.type === 'user') {
+                                    borderClass = 'border-l-indigo-500';
+                                    bgClass = 'bg-indigo-50';
+                                    textClass = 'text-indigo-700';
+                                    label = '👤 User Memory';
                                 }
 
                                 return (

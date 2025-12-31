@@ -123,33 +123,126 @@ class RetrievalEngine:
     def retrieve_matches(self, db: Session, project_id: str, query: str, limit: int = 5, segment_id: str = None) -> List[TranslationMatch]:
         """
         Main retrieval pipeline:
-        1. Exact/TM Lookup
-        2. Vector Search (Hybrid)
-        3. Reranking
+        1. Exact/TM Lookup (TranslationUnit)
+        2. Vector Search (ContextChunk)
+        3. Deduplication (Source-Text based)
+        4. Reranking (Voyage AI) & Differentiation
         """
         matches = []
         
         # 1. Exact / Hash Lookup
-        exact_matches = self._lookup_tm(db, project_id, query)
-        matches.extend(exact_matches)
+        matches.extend(self._lookup_tm(db, project_id, query))
         
-        # 2. Vector Search
-        vector_matches = self._search_vector_chunks(db, project_id, query, top_k=20, segment_id=segment_id)
+        # 2. Vector Search (Hybrid Candidates)
+        # Note: TMX files are also ingested as vectors, so we get semantic similarity here.
+        matches.extend(self._search_vector_chunks(db, project_id, query, top_k=20, segment_id=segment_id))
         
-        # 3. Rerank Vector Matches
-        reranked = self._rerank(query, vector_matches)
+        # 3. Deduplication (Prioritize: Mandatory > User/TMX > Context/Optional)
+        # Group by source_text to minimize Rerank Token Usage
+        unique_map = {}
         
-        # Merge (Dedup by ID)
-        seen_ids = set([m.id for m in matches])
+        # Helper to get priority score (Higher is better)
+        def get_priority(m: TranslationMatch):
+            # 3: Mandatory / Exact
+            if m.type == TranslationOrigin.mandatory or m.category == ProjectFileCategory.legal: return 3
+            # 2: User / TMX
+            if m.type == TranslationOrigin.user: return 2 
+            # 1: Context / Background
+            return 1
+            
+        for m in matches:
+            key = m.source_text.strip()
+            
+            if key not in unique_map:
+                unique_map[key] = m
+            else:
+                existing = unique_map[key]
+                if get_priority(m) > get_priority(existing):
+                    unique_map[key] = m
+                    
+        deduped_candidates = list(unique_map.values())
         
-        for cand in reranked:
-            if cand.id not in seen_ids:
-                matches.append(cand)
-                seen_ids.add(cand.id)
+        # 4. Rerank & Score
+        scored_matches = self._rerank_voyage(query, deduped_candidates)
+        
+        return scored_matches[:limit]
+
+    def _rerank_voyage(self, query: str, candidates: List[TranslationMatch]) -> List[TranslationMatch]:
+        """
+        Uses Voyage AI Rerank API (rerank-2.5) for high-quality semantic scoring.
+        Applies penalties for differentiation.
+        """
+        if not candidates: 
+            return []
+            
+        if not self._client:
+            # Fallback if no client
+            for m in candidates: m.score = 80
+            return candidates
+
+        # Prepare Documents
+        # Voyage expects list of strings
+        docs = [c.source_text for c in candidates]
+        
+        try:
+            # Call Voyage Rerank
+            # model="rerank-2.5" used as requested
+            reranking = self._client.rerank(
+                query=query,
+                documents=docs,
+                model="rerank-2.5",
+                top_k=len(docs)
+            )
+            
+            # Create a lookup for score by index
+            # Voyage returns RerankingResult objects with index, score
+            score_map = {r.index: r.relevance_score for r in reranking.results}
+            
+        except Exception as e:
+            logger.error(f"Voyage Rerank Failed: {e}")
+            return candidates
+
+        final_list = []
+        
+        for i, match in enumerate(candidates):
+            # Get Semantic Score (0.0 - 1.0)
+            raw_score = score_map.get(i, 0.0)
+            
+            # Convert to %
+            base_score = int(raw_score * 100)
+            
+            # Penalties (User Rules)
+            # Mandatory: 0
+            # TMX (User): -1
+            # Context/Optional: -2
+            
+            penalty = 0
+            is_mandatory = (match.type == TranslationOrigin.mandatory or match.category == ProjectFileCategory.legal)
+            is_tmx = (match.type == TranslationOrigin.user)
+            
+            if is_mandatory:
+                penalty = 0
+            elif is_tmx:
+                penalty = 1
+            else: 
+                # Context / Optional / Background
+                penalty = 2
                 
-        # Sort by Score
-        matches.sort(key=lambda x: x.score, reverse=True)
-        return matches[:limit]
+            # Apply Penalty
+            final_score = base_score - penalty
+            match.score = max(0, min(100, final_score))
+            
+            # Metadata for UI
+            match.metadata = match.metadata or {}
+            match.metadata['rerank_score'] = base_score
+            
+            final_list.append(match)
+            
+        # Sort by Score (Desc)
+        final_list.sort(key=lambda x: x.score, reverse=True)
+        
+        # Filter low quality?
+        return [m for m in final_list if m.score > 40]
 
     def _lookup_tm(self, db: Session, project_id: str, text_val: str) -> List[TranslationMatch]:
         results = []
@@ -161,10 +254,10 @@ class RetrievalEngine:
         ).all()
         
         for tm in tms:
-            # Score logic: Mandatory=100, User=99, Optional=95
-            score = 95
-            if tm.origin_type == TranslationOrigin.mandatory: score = 100
-            elif tm.origin_type == TranslationOrigin.user: score = 99
+            # Base score for Exact TM is high
+            score = 100
+            if tm.origin_type == TranslationOrigin.user: score = 99
+            elif tm.origin_type == TranslationOrigin.optional: score = 98
             
             results.append(TranslationMatch(
                 id=f"tm-{tm.id}",
@@ -187,13 +280,11 @@ class RetrievalEngine:
             seg = db.query(Segment).filter(Segment.id == segment_id).first()
             if seg and seg.embedding is not None:
                 query_vec = seg.embedding
-                # logger.info(f"Using pre-calculated vector for segment {segment_id}")
 
         # Fallback to Inference
         if query_vec is None:
             clean_query = self.clean_tags(query)
             try:
-                # Use query input_type
                 b = self.embed_batch([clean_query], input_type="query")
                 if b is not None and len(b) > 0: query_vec = b[0]
             except:
@@ -201,12 +292,9 @@ class RetrievalEngine:
         
         if query_vec is None: return []
             
-        # Convert to list to avoid Numpy Ambiguity in SQLAlchemy/PGVector
         if hasattr(query_vec, 'tolist'):
             query_vec = query_vec.tolist()
             
-        # Database Vector Search
-        # Joining ProjectFile to filter by Project
         results = db.query(ContextChunk, ProjectFile)\
             .join(ProjectFile)\
             .filter(ProjectFile.project_id == project_id)\
@@ -219,36 +307,16 @@ class RetrievalEngine:
             matches.append(TranslationMatch(
                 id=chunk.id,
                 content=chunk.rich_content or chunk.content,
-                source_text=chunk.content, # The source chunk
+                source_text=chunk.content,
                 filename=file.filename,
                 type="context", 
                 category=file.category,
-                score=0, # Placeholder, updated by reranker
+                score=0, # Calculated in _rerank_and_score
                 chunk_index=chunk.chunk_index,
                 file_id=file.id
             ))
         return matches
 
     def _rerank(self, query: str, candidates: List[TranslationMatch]) -> List[TranslationMatch]:
-        if not candidates or not self._cross_encoder: 
-            return candidates
-            
-        pairs = [[query, c.source_text] for c in candidates]
-        
-        try:
-            scores = self._cross_encoder.predict(pairs)
-        except:
-            return candidates
-            
-        for i, match in enumerate(candidates):
-            logit = float(scores[i])
-            match.raw_logit = logit
-            
-            import math
-            prob = 1 / (1 + math.exp(-logit))
-            match.score = int(prob * 100)
-            
-            if match.category != ProjectFileCategory.legal:
-                match.score = max(0, match.score - 5)
-                
-        return [m for m in candidates if m.score > 40]
+        # Legacy method kept for interface compatibility if needed, but we use _rerank_and_score now internally
+        return self._rerank_and_score(query, candidates)
