@@ -25,7 +25,7 @@ class ContextAssembler:
         4. History (Short Term Memory)
         """
         # 1. Retrieval
-        matches = self.retrieval.retrieve_matches(
+        matches, usage = self.retrieval.retrieve_matches(
             db=self.db, 
             project_id=self.project_id, 
             query=segment.source_content,
@@ -89,7 +89,8 @@ class ContextAssembler:
             matches=matches,
             prev_chunks=prev_sources,
             next_chunks=next_sources,
-            glossary_hits=gloss_matches
+            glossary_hits=gloss_matches,
+            retrieval_usage=usage
         )
         # We might want to attach history to 'matches' or separate field.
         # SegmentContext definition had 'matches', 'prev_chunks' (source), 'next_chunks' (source).

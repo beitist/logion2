@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, getSegments } from "../api/client";
 
-export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef }) {
+export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
         isOpen: false,
         type: null,
@@ -30,6 +30,8 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
 
                     if (p.rag_status === 'ready') {
                         setBlockingTask(prev => ({ ...prev, status: 'done', logs: [...(p.ingestion_logs || []), "Ingestion Complete."], progress: 1 }));
+                        if (clearAIQueue) clearAIQueue();
+                        if (onRefresh) onRefresh();
                         clearInterval(interval);
                     } else if (p.rag_status === 'error') {
                         setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...(p.ingestion_logs || []), "Ingestion Failed."], progress: 1 }));
@@ -109,6 +111,8 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         // Let's assume Modal checks.
         // But if file is null, we should confirm if not already confirmed?
         // The modal confirms action.
+
+        if (clearAIQueue) clearAIQueue(); // Stop any pending lookaheads immediately
 
         setBlockingTask({
             isOpen: true,

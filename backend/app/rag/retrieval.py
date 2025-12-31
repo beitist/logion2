@@ -55,28 +55,19 @@ class RetrievalEngine:
         text = re.sub(r'\[(TAB|COMMENT|SHAPE)\]', '', text)
         return text.strip()
 
-    def embed_batch(self, texts: List[str], input_type: str = "document") -> List[List[float]]:
+    def embed_batch(self, texts: List[str], input_type: str = "document") -> tuple[List[List[float]], int]:
         """
         Wraps Voyage AI embedding call.
+        Returns: (embeddings, total_tokens)
         """
         if not self._client or not texts:
-            return []
+            return [], 0
             
         try:
-            # Voyage 3.5 is the current recommendation (2048 or 1024 dim).
-            # User requested 2048 explicitly in prompt.
-            # "upgrade our vector to 2048"
-            # model="voyage-3-large" or "voyage-3.5" (supports 2048)
-            # Default for 3.5 is 1024. Need to specify output_dimension=2048?
-            # Docs say: voyage-3.5 supports 2048.
-            
-            # Filter empty strings to avoid API error
+            # Filter empty strings
             valid_texts = [t for t in texts if t.strip()]
-            if not valid_texts: return []
+            if not valid_texts: return [], 0
             
-            # Map back indices if we filtered blanks? 
-            # Ideally we send blanks as something or just handle mismatch.
-            # Simpler: replace blank with " "
             sanitized = [t if t.strip() else " " for t in texts]
 
             result = self._client.embed(
@@ -85,11 +76,11 @@ class RetrievalEngine:
                 input_type=input_type,
                 output_dimension=2048
             )
-            return result.embeddings
+            return result.embeddings, result.total_tokens
             
         except Exception as e:
             logger.error(f"Voyage AI Embedding Error: {e}")
-            return []
+            return [], 0
 
     def get_neighbors(self, db: Session, file_id: str, chunk_index: int, window: int = 2) -> Tuple[List[str], List[str]]:
         """
@@ -129,13 +120,17 @@ class RetrievalEngine:
         4. Reranking (Voyage AI) & Differentiation
         """
         matches = []
+        total_embedding_tokens = 0
+        total_rerank_tokens = 0
         
         # 1. Exact / Hash Lookup
         matches.extend(self._lookup_tm(db, project_id, query))
         
         # 2. Vector Search (Hybrid Candidates)
         # Note: TMX files are also ingested as vectors, so we get semantic similarity here.
-        matches.extend(self._search_vector_chunks(db, project_id, query, top_k=20, segment_id=segment_id))
+        vector_matches, embedding_tokens = self._search_vector_chunks(db, project_id, query, top_k=20, segment_id=segment_id)
+        matches.extend(vector_matches)
+        total_embedding_tokens += embedding_tokens
         
         # 3. Deduplication (Prioritize: Mandatory > User/TMX > Context/Optional)
         # Group by source_text to minimize Rerank Token Usage
@@ -163,30 +158,34 @@ class RetrievalEngine:
         deduped_candidates = list(unique_map.values())
         
         # 4. Rerank & Score
-        scored_matches = self._rerank_voyage(query, deduped_candidates)
-        
-        return scored_matches[:limit]
+        scored_matches, rerank_tokens = self._rerank_voyage(query, deduped_candidates)
+        total_rerank_tokens += rerank_tokens
 
-    def _rerank_voyage(self, query: str, candidates: List[TranslationMatch]) -> List[TranslationMatch]:
+        logger.info(f"Retrieval Usage: Embedding Tokens={total_embedding_tokens}, Rerank Tokens={total_rerank_tokens}")
+        
+        usage_dict = {
+            "voyage-3-large": total_embedding_tokens,
+            "rerank-2.5": total_rerank_tokens
+        }
+        
+        return scored_matches[:limit], usage_dict
+
+    def _rerank_voyage(self, query: str, candidates: List[TranslationMatch]) -> tuple[List[TranslationMatch], int]:
         """
-        Uses Voyage AI Rerank API (rerank-2.5) for high-quality semantic scoring.
-        Applies penalties for differentiation.
+        Uses Voyage AI Rerank API (rerank-2.5).
+        Returns (matches, token_usage)
         """
         if not candidates: 
-            return []
+            return [], 0
             
         if not self._client:
-            # Fallback if no client
             for m in candidates: m.score = 80
-            return candidates
+            return candidates, 0
 
         # Prepare Documents
-        # Voyage expects list of strings
         docs = [c.source_text for c in candidates]
         
         try:
-            # Call Voyage Rerank
-            # model="rerank-2.5" used as requested
             reranking = self._client.rerank(
                 query=query,
                 documents=docs,
@@ -194,27 +193,20 @@ class RetrievalEngine:
                 top_k=len(docs)
             )
             
-            # Create a lookup for score by index
-            # Voyage returns RerankingResult objects with index, score
             score_map = {r.index: r.relevance_score for r in reranking.results}
+            tokens = reranking.total_tokens
             
         except Exception as e:
             logger.error(f"Voyage Rerank Failed: {e}")
-            return candidates
+            return candidates, 0
 
         final_list = []
         
         for i, match in enumerate(candidates):
-            # Get Semantic Score (0.0 - 1.0)
             raw_score = score_map.get(i, 0.0)
-            
-            # Convert to %
             base_score = int(raw_score * 100)
             
-            # Boosts/Penalties (User Refinement)
-            # Mandatory: +5 (Max 99)
-            # Optional/Context/TMX: +2 (Max 99)
-            
+            # Boosts/Penalties
             boost = 2
             is_mandatory = (match.type == TranslationOrigin.mandatory or match.category == ProjectFileCategory.legal)
             
@@ -222,35 +214,32 @@ class RetrievalEngine:
                 boost = 5
                 
             final_score = base_score + boost
-            
-            # Cap at 99 for now (User request "max 99")
-            # But allow 100 if it was manually exact? 
-            # Rerank usually doesn't give 100.
-            # Let's cap at 99.
             match.score = max(0, min(99, final_score))
             
-            # Metadata for UI
             match.metadata = match.metadata or {}
             match.metadata['rerank_score'] = base_score
             
             final_list.append(match)
             
-        # Sort by Score (Desc)
         final_list.sort(key=lambda x: x.score, reverse=True)
-        
-        # Filter low quality?
-        return [m for m in final_list if m.score > 40]
+        return [m for m in final_list if m.score > 40], tokens
 
     def _lookup_tm(self, db: Session, project_id: str, text_val: str) -> List[TranslationMatch]:
-        results = []
-        s_hash = compute_hash(text_val)
+        """
+        Exact Match / Hash Lookup from TranslationUnit table.
+        """
+        import hashlib
+        query_norm = text_val.strip()
+        query_hash = hashlib.sha256(query_norm.encode('utf-8')).hexdigest()
         
-        tms = db.query(TranslationUnit).filter(
+        # Exact Hash Lookup
+        units = db.query(TranslationUnit).filter(
             TranslationUnit.project_id == project_id,
-            TranslationUnit.source_hash == s_hash
+            TranslationUnit.source_hash == query_hash
         ).all()
         
-        for tm in tms:
+        results = []
+        for tm in units:
             # Base score for Exact TM is high
             score = 100
             if tm.origin_type == TranslationOrigin.user: score = 99
@@ -267,10 +256,11 @@ class RetrievalEngine:
             ))
         return results
 
-    def _search_vector_chunks(self, db: Session, project_id: str, query: str, top_k: int = 30, segment_id: str = None) -> List[TranslationMatch]:
-        if not self._client: return []
+    def _search_vector_chunks(self, db: Session, project_id: str, query: str, top_k: int = 30, segment_id: str = None) -> tuple[List[TranslationMatch], int]:
+        if not self._client: return [], 0
         
         query_vec = None
+        current_tokens = 0
         
         # Try to use pre-calculated Segment Vector
         if segment_id:
@@ -282,12 +272,15 @@ class RetrievalEngine:
         if query_vec is None:
             clean_query = self.clean_tags(query)
             try:
-                b = self.embed_batch([clean_query], input_type="query")
-                if b is not None and len(b) > 0: query_vec = b[0]
+                # Expecting (embeddings, tokens)
+                embeddings, tokens = self.embed_batch([clean_query], input_type="query")
+                if embeddings and len(embeddings) > 0: 
+                    query_vec = embeddings[0]
+                    current_tokens = tokens
             except:
-                return []
+                return [], 0
         
-        if query_vec is None: return []
+        if query_vec is None: return [], 0
             
         if hasattr(query_vec, 'tolist'):
             query_vec = query_vec.tolist()
@@ -312,7 +305,7 @@ class RetrievalEngine:
                 chunk_index=chunk.chunk_index,
                 file_id=file.id
             ))
-        return matches
+        return matches, current_tokens
 
     def _rerank(self, query: str, candidates: List[TranslationMatch]) -> List[TranslationMatch]:
         # Legacy method kept for interface compatibility if needed, but we use _rerank_and_score now internally

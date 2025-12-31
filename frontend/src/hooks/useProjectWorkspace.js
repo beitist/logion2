@@ -44,7 +44,9 @@ export function useProjectWorkspace(projectId) {
     const blocking = useBlockingTask(projectId, {
         segmentsRef: data.segmentsRef,
         projectRef: data.projectRef,
-        setSegments: data.setSegments
+        setSegments: data.setSegments,
+        onRefresh: data.refreshProject,
+        clearAIQueue: ai.clearQueue
     });
 
     // --- Glue Logic (Facade Effects) ---

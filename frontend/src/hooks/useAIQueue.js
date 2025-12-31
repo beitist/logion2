@@ -155,7 +155,14 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
 
                 try {
                     await handleAiDraft(nextId, true, mode, isWorkflow);
-                } catch (e) { console.warn("Queue item failed", nextId, e); }
+                } catch (e) {
+                    // Ignore 404 (Segment not found) - likely stale queue item
+                    if (e.message.includes('404')) {
+                        // console.debug("Queue item skipped (404)", nextId);
+                    } else {
+                        console.warn("Queue item failed", nextId, e);
+                    }
+                }
             }));
             await new Promise(r => setTimeout(r, 50));
         }
@@ -238,12 +245,22 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
         }
     };
 
+    const clearQueue = () => {
+        draftQueue.current = [];
+        lookaheadRef.current.queue = [];
+        setGeneratingSegments({});
+        generatingSegmentsRef.current = {};
+        isProcessingQueue.current = false;
+        activeRequestsRef.current = {};
+    };
+
     return {
         generatingSegments,
         handleAiDraft,
         handleSegmentFocus,
         handleNavigation,
         queueSegments,
+        clearQueue,
         activeRequestsRef
     };
 }

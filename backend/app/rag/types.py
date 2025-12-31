@@ -32,6 +32,9 @@ class SegmentContext(BaseModel):
     
     # Glossary Hits (Separate from matches if needed, but usually integrated)
     glossary_hits: List[TranslationMatch] = []
+    
+    # Usage Stats (Retrieval Cost)
+    retrieval_usage: Dict[str, int] = {}
 
 class GenerationResult(BaseModel):
     """

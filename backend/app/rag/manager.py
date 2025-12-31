@@ -58,6 +58,9 @@ class RAGManager:
             segment_id=segment.id
         )
         
+        # Inject Retrieval Usage from Context
+        result.retrieval_usage = context.retrieval_usage
+        
         return result
 
     async def generate_batch_draft(
@@ -154,7 +157,8 @@ class RAGManager:
                     results[sid] = GenerationResult(
                         target_text=translations[sid],
                         context_used=context_map.get(sid),
-                        usage={} 
+                        usage={},
+                        retrieval_usage=context_map.get(sid).retrieval_usage
                     )
                 else:
                     # Failed or Missing from response
