@@ -211,26 +211,23 @@ class RetrievalEngine:
             # Convert to %
             base_score = int(raw_score * 100)
             
-            # Penalties (User Rules)
-            # Mandatory: 0
-            # TMX (User): -1
-            # Context/Optional: -2
+            # Boosts/Penalties (User Refinement)
+            # Mandatory: +5 (Max 99)
+            # Optional/Context/TMX: +2 (Max 99)
             
-            penalty = 0
+            boost = 2
             is_mandatory = (match.type == TranslationOrigin.mandatory or match.category == ProjectFileCategory.legal)
-            is_tmx = (match.type == TranslationOrigin.user)
             
             if is_mandatory:
-                penalty = 0
-            elif is_tmx:
-                penalty = 1
-            else: 
-                # Context / Optional / Background
-                penalty = 2
+                boost = 5
                 
-            # Apply Penalty
-            final_score = base_score - penalty
-            match.score = max(0, min(100, final_score))
+            final_score = base_score + boost
+            
+            # Cap at 99 for now (User request "max 99")
+            # But allow 100 if it was manually exact? 
+            # Rerank usually doesn't give 100.
+            # Let's cap at 99.
+            match.score = max(0, min(99, final_score))
             
             # Metadata for UI
             match.metadata = match.metadata or {}
