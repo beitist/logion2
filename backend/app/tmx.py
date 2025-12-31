@@ -154,3 +154,46 @@ def _flush_buffer(buffer, db):
     
     db.execute(stmt)
     db.commit()
+
+def export_tmx(output_path: str, segments, source_lang="en", target_lang="de"):
+    """
+    Exports segments to TMX format.
+    segments: List of DB Segment objects.
+    """
+    
+    root = etree.Element("tmx", version="1.4")
+    
+    # Header
+    header = etree.SubElement(root, "header")
+    header.set("creationtool", "LogionAI")
+    header.set("creationtoolversion", "2.0")
+    header.set("segtype", "sentence")
+    header.set("o-tmf", "xml")
+    header.set("adminlang", "en-US")
+    header.set("srclang", source_lang)
+    header.set("datatype", "PlainText")
+    
+    body = etree.SubElement(root, "body")
+    
+    for seg in segments:
+        if not seg.target_content:
+            continue
+            
+        tu = etree.SubElement(body, "tu")
+        # tu.set("tuid", seg.id) # Optional ID
+        
+        # Source TUV
+        tuv_s = etree.SubElement(tu, "tuv")
+        tuv_s.set("{http://www.w3.org/XML/1998/namespace}lang", source_lang)
+        seg_s = etree.SubElement(tuv_s, "seg")
+        seg_s.text = seg.source_content
+        
+        # Target TUV
+        tuv_t = etree.SubElement(tu, "tuv")
+        tuv_t.set("{http://www.w3.org/XML/1998/namespace}lang", target_lang)
+        seg_t = etree.SubElement(tuv_t, "seg")
+        seg_t.text = seg.target_content
+        
+    tree = etree.ElementTree(root)
+    tree.write(output_path, pretty_print=True, xml_declaration=True, encoding="utf-8")
+    return output_path

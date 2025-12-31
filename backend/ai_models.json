@@ -4,6 +4,7 @@
             "id": "gemini-2.5-flash",
             "name": "Gemini 2.5 Flash (Fast)",
             "provider": "google",
+            "usage": "mt",
             "context_window": 1000000,
             "input_cost_per_m": 0.3,
             "output_cost_per_m": 2.5
@@ -12,6 +13,7 @@
             "id": "gemini-2.5-pro",
             "name": "Gemini 2.5 Pro (Stable)",
             "provider": "google",
+            "usage": "mt",
             "context_window": 1000000,
             "input_cost_per_m": 1.25,
             "output_cost_per_m": 10.00
@@ -20,6 +22,7 @@
             "id": "gemini-3-pro-preview",
             "name": "Gemini 3 Pro Preview",
             "provider": "google",
+            "usage": "mt",
             "context_window": 1000000,
             "input_cost_per_m": 2.0,
             "output_cost_per_m": 12.0
@@ -28,9 +31,28 @@
             "id": "gemini-3-flash-preview",
             "name": "Gemini 3 Flash Preview",
             "provider": "google",
+            "usage": "mt",
             "context_window": 1000000,
             "input_cost_per_m": 0.5,
             "output_cost_per_m": 3.0
+        },
+        {
+            "id": "voyage-3-large",
+            "name": "Voyage 3 Large (Embedding)",
+            "provider": "voyage",
+            "usage": "bg",
+            "context_window": 32000,
+            "input_cost_per_m": 12,
+            "output_cost_per_m": 14
+        },
+        {
+            "id": "rerank-2.5",
+            "name": "Voyage Rerank 2.5",
+            "provider": "voyage",
+            "usage": "bg",
+            "context_window": 32000,
+            "input_cost_per_m": 8,
+            "output_cost_per_m": 10
         }
     ]
 }

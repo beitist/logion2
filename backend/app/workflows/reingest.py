@@ -103,12 +103,15 @@ class ReingestWorkflow(BaseWorkflow):
             return
 
         # 1. Chunks
+        total_tokens = 0
+        
         for i in range(0, total_chunks, BATCH_SIZE):
             batch = all_chunks_to_persist[i : i+BATCH_SIZE]
             texts = [engine.clean_tags(b['text']) for b in batch]
             
             try:
-                embeddings = engine.embed_batch(texts, input_type="document")
+                embeddings, tokens = engine.embed_batch(texts, input_type="document")
+                total_tokens += tokens
             except Exception as e:
                 self.log(f"Embedding error: {e}")
                 continue
@@ -141,7 +144,8 @@ class ReingestWorkflow(BaseWorkflow):
             texts = [engine.clean_tags(s.source_content) for s in batch_segs]
             
             try:
-                embeddings = engine.embed_batch(texts, input_type="document")
+                embeddings, tokens = engine.embed_batch(texts, input_type="document")
+                total_tokens += tokens
                 
                 for s, vec in zip(batch_segs, embeddings):
                     s.embedding = vec
@@ -155,8 +159,23 @@ class ReingestWorkflow(BaseWorkflow):
             except Exception as e:
                 self.log(f"Segment embedding error: {e}")
     
+        # Update Usage Stats
+        if total_tokens > 0:
+            current_config = dict(self.project.config or {})
+            usage_stats = current_config.get("usage_stats", {})
+            m_stats = usage_stats.get("voyage-3-large", {"input_tokens": 0, "output_tokens": 0})
+            
+            m_stats["input_tokens"] += total_tokens
+            
+            usage_stats["voyage-3-large"] = m_stats
+            current_config["usage_stats"] = usage_stats
+            self.project.config = current_config
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(self.project, "config")
+            self.db.commit()
+
         self.update_progress(100, status="ready")
-        self.log(f"Ingestion complete. {total_work} vectors stored.")
+        self.log(f"Ingestion complete. {total_work} vectors stored. ({total_tokens} tokens)")
 
 
 def run_background_reingest(project_id: str):

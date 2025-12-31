@@ -196,12 +196,16 @@ class ReinitializeWorkflow(BaseWorkflow):
             BATCH_SIZE = 32
             processed = 0
             
+            total_tokens = 0
+            
             for i in range(0, total, BATCH_SIZE):
                 batch_segs = segments[i : i+BATCH_SIZE]
                 texts = [engine.clean_tags(s.source_content) for s in batch_segs]
                 
                 try:
-                    embeddings = engine.embed_batch(texts, input_type="document")
+                    embeddings, tokens = engine.embed_batch(texts, input_type="document")
+                    total_tokens += tokens
+                    
                     for s, vec in zip(batch_segs, embeddings):
                         # Ensure list type for JSON serialization if needed, or straight vec for PGVector
                         # PGVector handles list[float].
@@ -216,8 +220,24 @@ class ReinitializeWorkflow(BaseWorkflow):
                 except Exception as e:
                     self.log(f"Embedding error batch {i}: {e}")
                     
+            # Update Usage Stats
+            if total_tokens > 0:
+                current_config = dict(self.project.config or {})
+                usage_stats = current_config.get("usage_stats", {})
+                m_stats = usage_stats.get("voyage-3-large", {"input_tokens": 0, "output_tokens": 0})
+                
+                m_stats["input_tokens"] += total_tokens
+                # output is 0 for embedding
+                
+                usage_stats["voyage-3-large"] = m_stats
+                current_config["usage_stats"] = usage_stats
+                self.project.config = current_config
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(self.project, "config")
+                self.db.commit()
+
             self.update_progress(100, status="ready")
-            self.log("Segment vectors updated successfully.")
+            self.log(f"Segment vectors updated successfully. ({total_tokens} tokens)")
             
         except Exception as e:
             self.fail(e)

@@ -146,28 +146,50 @@ class SegmentService:
             elif mode == "draft":
                 inner_meta['ai_draft'] = target_text
             
-            # 5. Log Usage
+            # 5. Log Usage (LLM + Retrieval)
+            usages_to_log = []
+            
+            # A. Generation Usage
             if usage:
-                # Log to DB
-                new_log = AiUsageLog(
-                    project_id=project.id,
-                    segment_id=segment.id,
-                    model=model_name,
-                    trigger_type="generation",
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0)
-                )
-                self.db.add(new_log)
+                usages_to_log.append({
+                    "model": model_name,
+                    "input": usage.get("input_tokens", 0),
+                    "output": usage.get("output_tokens", 0),
+                    "type": "generation"
+                })
                 
-                # Update Project Stats
+            # B. Retrieval Usage
+            retrieval_usage = result_dict.get("retrieval_usage", {})
+            for r_model, r_tokens in retrieval_usage.items():
+                if r_tokens > 0:
+                    usages_to_log.append({
+                        "model": r_model,
+                        "input": r_tokens,
+                        "output": 0,
+                        "type": "retrieval"
+                    })
+
+            if usages_to_log:
                 current_config = dict(project.config or {})
                 usage_stats = current_config.get("usage_stats", {})
-                model_stats = usage_stats.get(model_name, {"input_tokens": 0, "output_tokens": 0})
                 
-                model_stats["input_tokens"] += usage.get("input_tokens", 0)
-                model_stats["output_tokens"] += usage.get("output_tokens", 0)
+                for u in usages_to_log:
+                    # Log to DB
+                    self.db.add(AiUsageLog(
+                        project_id=project.id,
+                        segment_id=segment.id,
+                        model=u['model'],
+                        trigger_type=u['type'],
+                        input_tokens=u['input'],
+                        output_tokens=u['output']
+                    ))
+                    
+                    # Update Project Stats
+                    m_stats = usage_stats.get(u['model'], {"input_tokens": 0, "output_tokens": 0})
+                    m_stats["input_tokens"] += u['input']
+                    m_stats["output_tokens"] += u['output']
+                    usage_stats[u['model']] = m_stats
                 
-                usage_stats[model_name] = model_stats
                 current_config["usage_stats"] = usage_stats
                 project.config = current_config
                 flag_modified(project, "config")

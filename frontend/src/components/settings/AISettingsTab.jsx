@@ -35,7 +35,9 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
             try {
                 const data = await getAiModels();
                 if (data.models) {
-                    setAvailableModels(data.models);
+                    // Filter out background models (like RAG/Embedding) from selection
+                    const mtModels = data.models.filter(m => m.usage !== 'bg');
+                    setAvailableModels(mtModels);
 
                     // Defaults
                     setSettings(s => {
