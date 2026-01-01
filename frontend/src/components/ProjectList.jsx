@@ -79,7 +79,7 @@ export function ProjectList({ onSelectProject, onNewProject }) {
                         <thead className="bg-gray-50">
                             <tr>
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project Name</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Language</th>
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
@@ -97,8 +97,14 @@ export function ProjectList({ onSelectProject, onNewProject }) {
                                         <div className="text-sm font-medium text-gray-900">{project.name || "Untitled"}</div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-500 flex items-center gap-2">
-                                            {project.filename}
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-24 bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                                                <div
+                                                    className="bg-indigo-600 h-2.5 rounded-full transition-all duration-500"
+                                                    style={{ width: `${project.progress || 0}%` }}
+                                                ></div>
+                                            </div>
+                                            <span className="text-xs text-gray-500">{project.progress || 0}%</span>
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">

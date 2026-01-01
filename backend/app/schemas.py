@@ -56,6 +56,7 @@ class ProjectListResponse(BaseModel):
     created_at: Optional[datetime] = None
     source_lang: Optional[str] = "en"
     target_lang: Optional[str] = "de"
+    progress: int = 0
 
     class Config:
         from_attributes = True

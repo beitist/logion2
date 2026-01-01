@@ -54,6 +54,7 @@ class ProjectFile(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="files")
+    chunks = relationship("ContextChunk", back_populates="file", cascade="all, delete-orphan")
 
 class Segment(Base):
     __tablename__ = "segments"

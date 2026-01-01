@@ -136,7 +136,18 @@ class ProjectService:
         return self.db.query(Project).filter(Project.id == project_id).first()
 
     def get_all_projects(self) -> List[Project]:
-        return self.db.query(Project).order_by(Project.created_at.desc()).all()
+        projects = self.db.query(Project).order_by(Project.created_at.desc()).all()
+        
+        # Calculate Progress (Simplistic approach: N+1, optimize if needed)
+        for p in projects:
+            total = len(p.segments)
+            if total == 0:
+                p.progress = 0
+            else:
+                completed = sum(1 for s in p.segments if s.status in ["translated", "approved", "completed"])
+                p.progress = int((completed / total) * 100)
+                
+        return projects
 
 
     def delete_project(self, project_id: str):
@@ -144,6 +155,9 @@ class ProjectService:
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        # Delete AI usage logs first (referenced by segments)
+        self.db.query(AiUsageLog).filter(AiUsageLog.project_id == project_id).delete()
+        
         # Delete segments manually
         self.db.query(Segment).filter(Segment.project_id == project_id).delete()
         # Delete glossary entries manually
