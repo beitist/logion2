@@ -2,7 +2,7 @@ import os
 import logging
 from ..models import ProjectFile, ContextChunk, ProjectFileCategory, TranslationOrigin, Segment
 from ..storage import download_file
-from ..document.parser import parse_docx
+from ..document.parser import parse_document
 from ..tmx import parse_tmx_units, ingest_tmx_direct
 from ..rag.retrieval import RetrievalEngine
 from ..database import SessionLocal
@@ -51,7 +51,7 @@ class ReingestWorkflow(BaseWorkflow):
                 
                 # DOCX Handler
                 if file.filename.endswith(".docx"):
-                        segments = parse_docx(temp_path)
+                        segments = parse_document(temp_path)
                         for idx, seg in enumerate(segments):
                             txt = seg.source_text.strip()
                             if len(txt) > 3:

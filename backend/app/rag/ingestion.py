@@ -6,7 +6,7 @@ from typing import List
 
 from ..models import Project, ProjectFile, ContextChunk, ProjectFileCategory, TranslationUnit, TranslationOrigin, Segment
 from ..storage import download_file
-from ..document.parser import parse_docx
+from ..document.parser import parse_document
 from ..tmx import parse_tmx_units, compute_hash, ingest_tmx_direct
 from .retrieval import RetrievalEngine
 from ..database import SessionLocal
@@ -91,7 +91,7 @@ def _ingest_logic(project_id: str, db: Session):
             
             # DOCX Handler
             if file.filename.endswith(".docx"):
-                    segments = parse_docx(temp_path)
+                    segments = parse_document(temp_path)
                     for idx, seg in enumerate(segments):
                         txt = seg.source_text.strip()
                         if len(txt) > 3:

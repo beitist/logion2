@@ -7,7 +7,7 @@ from fastapi import UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from ..models import Project, ProjectFile, ProjectFileCategory, Segment, GlossaryEntry, TranslationUnit, AiUsageLog
 from ..storage import upload_file, download_file
-from ..document.parser import parse_docx
+from ..document.parser import parse_document
 from ..logger import get_logger
 from ..workflows.reingest import run_background_reingest
 
@@ -96,16 +96,17 @@ class ProjectService:
     async def _parse_initial_source(self, project: Project):
         source_record = self.db.query(ProjectFile).filter(
             ProjectFile.project_id == project.id,
-            ProjectFile.category == ProjectFileCategory.source.value,
-            ProjectFile.filename.endswith(".docx")
+            ProjectFile.category == ProjectFileCategory.source.value
         ).first()
         
         if source_record:
-            temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_{project.id}.docx")
+            # Use original extension so parser dispatcher works
+            ext = os.path.splitext(source_record.filename)[1]
+            temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_{project.id}{ext}")
             try:
                 download_file(source_record.file_path, temp_parse_path)
-                
-                segments_internal = parse_docx(temp_parse_path, source_lang=project.source_lang)
+                # Parse
+                segments_internal = parse_document(temp_parse_path, source_lang=project.source_lang)
                 
                 for i, seg_int in enumerate(segments_internal):
                     seg_dump = seg_int.model_dump()

@@ -1,1 +1,1 @@
-from .main import parse_docx
+from .main import parse_document

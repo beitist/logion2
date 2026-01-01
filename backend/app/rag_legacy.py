@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer, CrossEncoder, util
 import numpy as np
 
 # Use shared parser
-from .parser import parse_docx
+from .document.parser import parse_document
 from .config import get_default_model_id
 
 load_dotenv()
@@ -306,7 +306,7 @@ def ingest_project_files(project_id: str):
                              return [text]
 
                     log_msg("Parsing DOCX with shared parser...")
-                    segments = parse_docx(temp_path, segmentation_func=custom_segmentation)
+                    segments = parse_document(temp_path, segmentation_func=custom_segmentation)
                     
                     # Extract chunks from segments
                     chunks = []

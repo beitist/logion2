@@ -57,9 +57,22 @@ class ProjectListResponse(BaseModel):
     source_lang: Optional[str] = "en"
     target_lang: Optional[str] = "de"
     progress: int = 0
+    filename: Optional[str] = None
+    status: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+class SegmentCreate(BaseModel):
+    project_id: str
+    index: int
+    source_content: str
+    metadata_json: Optional[Dict[str, Any]] = None
+
+class SegmentUpdate(BaseModel):
+    target_content: Optional[str] = None
+    status: Optional[str] = None
+    metadata_json: Optional[Dict[str, Any]] = None
 
 class SegmentResponse(BaseModel):
     id: str

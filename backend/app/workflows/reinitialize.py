@@ -8,7 +8,7 @@ from datetime import datetime
 
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
 from ..storage import download_file
-from ..document.parser import parse_docx
+from ..document.parser import parse_document
 from ..rag.retrieval import RetrievalEngine
 from .base import BaseWorkflow
 from ..database import SessionLocal
@@ -91,7 +91,7 @@ class ReinitializeWorkflow(BaseWorkflow):
             if os.path.exists(temp_parse_path): os.remove(temp_parse_path)
             
             download_file(source_record.file_path, temp_parse_path)
-            new_segments_internal = parse_docx(temp_parse_path, source_lang=self.project.source_lang)
+            new_segments_internal = parse_document(temp_parse_path, source_lang=self.project.source_lang)
             
         except Exception as e:
             self.fail(e)

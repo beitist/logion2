@@ -6,7 +6,23 @@ from app.logger import get_logger
 
 logger = get_logger("Parser")
 
-def parse_docx(file_path: str, segmentation_func=None, source_lang="en"):
+from .excel import parse_xlsx
+
+def parse_document(file_path: str, segmentation_func=None, source_lang="en"):
+    """
+    Dispatches to the appropriate parser based on file extension.
+    """
+    ext = file_path.split(".")[-1].lower()
+    if ext in ["docx", "doc"]:
+        return _parse_docx(file_path, segmentation_func, source_lang)
+    elif ext in ["xlsx", "xls"]:
+        return parse_xlsx(file_path, segmentation_func, source_lang)
+    else:
+        # Fallback or error? For now, try docx as default or raise
+        logger.warning(f"Unsupported extension {ext}, attempting DOCX parse.")
+        return _parse_docx(file_path, segmentation_func, source_lang)
+
+def _parse_docx(file_path: str, segmentation_func=None, source_lang="en"):
     """
     Parses a DOCX file and extracts segments with tags for formatting, hyperlinks, and comments.
     """

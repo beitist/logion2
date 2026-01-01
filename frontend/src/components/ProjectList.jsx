@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getProjects, deleteProject, duplicateProject } from '../api/client';
-import { Trash2, FilePlus, ExternalLink, Copy } from 'lucide-react';
+import { Trash2, FilePlus, ExternalLink, Copy, FileText, FileSpreadsheet } from 'lucide-react';
 
 export function ProjectList({ onSelectProject, onNewProject }) {
     const [projects, setProjects] = useState([]);
@@ -45,6 +45,15 @@ export function ProjectList({ onSelectProject, onNewProject }) {
         } catch (err) {
             alert(err.message);
         }
+    };
+
+    const getFileIcon = (filename) => {
+        if (!filename) return <FileText size={18} className="text-blue-500" />;
+        const ext = filename.split('.').pop().toLowerCase();
+        if (ext === 'xlsx' || ext === 'xls') {
+            return <FileSpreadsheet size={18} className="text-green-600" />;
+        }
+        return <FileText size={18} className="text-blue-600" />;
     };
 
     if (loading) return <div className="p-8 text-center text-gray-400">Loading projects...</div>;
@@ -94,7 +103,10 @@ export function ProjectList({ onSelectProject, onNewProject }) {
                                     className="hover:bg-gray-50 cursor-pointer transition-colors"
                                 >
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm font-medium text-gray-900">{project.name || "Untitled"}</div>
+                                        <div className="flex items-center gap-3">
+                                            {getFileIcon(project.filename)}
+                                            <div className="text-sm font-medium text-gray-900">{project.name || "Untitled"}</div>
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="flex items-center gap-2">

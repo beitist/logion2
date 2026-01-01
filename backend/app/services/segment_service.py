@@ -7,11 +7,9 @@ from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
-from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
-from ..storage import download_file
-from ..document.parser import parse_docx
-from ..logger import get_logger
+from ..models import Segment, Project, AiUsageLog
 from ..schemas import SegmentInternal
+from ..logger import get_logger
 from ..config import get_default_model_id
 # Import RAG capability inside method or here if no circular dep?
 # rag imports often import models/db so check circular. 
