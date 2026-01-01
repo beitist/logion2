@@ -52,12 +52,11 @@ class ReinitializeWorkflow(BaseWorkflow):
 
         source_record = self.db.query(ProjectFile).filter(
             ProjectFile.project_id == self.project_id,
-            ProjectFile.category == ProjectFileCategory.source.value,
-            ProjectFile.filename.endswith(".docx")
+            ProjectFile.category == ProjectFileCategory.source.value
         ).first()
         
         if not source_record and not new_file_upload:
-             raise HTTPException(status_code=400, detail="No source DOCX file found to reinitialize.")
+             raise HTTPException(status_code=400, detail="No source file found to reinitialize.")
             
         # 1.5. Replace File if provided
         if new_file_upload:
@@ -85,19 +84,20 @@ class ReinitializeWorkflow(BaseWorkflow):
                  raise HTTPException(status_code=500, detail=f"Failed to save new source file: {e}")
 
         # 2. Parse (Fresh)
-        temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_reinit_{self.project_id}.docx")
         new_segments_internal = []
         try:
-            if os.path.exists(temp_parse_path): os.remove(temp_parse_path)
+            from ..document.parsing_service import process_file_parsing
             
-            download_file(source_record.file_path, temp_parse_path)
-            new_segments_internal = parse_document(temp_parse_path, source_lang=self.project.source_lang)
+            new_segments_internal = process_file_parsing(
+                file_path_or_url=source_record.file_path,
+                project_id=self.project_id,
+                source_lang=self.project.source_lang,
+                original_filename=source_record.filename
+            )
             
         except Exception as e:
             self.fail(e)
             raise HTTPException(status_code=500, detail=f"Reinitialization parsing failed: {e}")
-        finally:
-             if os.path.exists(temp_parse_path): os.remove(temp_parse_path)
 
         # 3. Merge
         final_db_segments = self._merge_old_with_new(new_segments_internal)

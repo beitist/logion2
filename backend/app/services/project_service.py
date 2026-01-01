@@ -100,13 +100,16 @@ class ProjectService:
         ).first()
         
         if source_record:
-            # Use original extension so parser dispatcher works
-            ext = os.path.splitext(source_record.filename)[1]
-            temp_parse_path = os.path.join(UPLOAD_DIR, f"temp_{project.id}{ext}")
+            from ..document.parsing_service import process_file_parsing
+            
             try:
-                download_file(source_record.file_path, temp_parse_path)
-                # Parse
-                segments_internal = parse_document(temp_parse_path, source_lang=project.source_lang)
+                # Use unified helper
+                segments_internal = process_file_parsing(
+                    file_path_or_url=source_record.file_path,
+                    project_id=project.id,
+                    source_lang=project.source_lang,
+                    original_filename=source_record.filename
+                )
                 
                 for i, seg_int in enumerate(segments_internal):
                     seg_dump = seg_int.model_dump()
@@ -128,10 +131,8 @@ class ProjectService:
             except Exception as e:
                 self.db.delete(project)
                 self.db.commit()
+                # logger.error ...
                 raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
-            finally:
-                if os.path.exists(temp_parse_path):
-                    os.remove(temp_parse_path)
 
     def get_project(self, project_id: str) -> Optional[Project]:
         return self.db.query(Project).filter(Project.id == project_id).first()

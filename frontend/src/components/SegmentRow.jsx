@@ -261,9 +261,10 @@ export const SegmentRow = memo(({
                             <Bug size={14} className={isFlagged ? "fill-yellow-500" : ""} />
                         </button>
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${segment.status === 'draft' ? 'bg-yellow-50 text-yellow-600 border-yellow-100' :
-                            segment.status === 'translated' ? 'bg-green-50 text-green-600 border-green-100' : 'bg-gray-50 border-gray-100'
+                            segment.status === 'mt_draft' ? 'bg-orange-50 text-orange-600 border-orange-200' :
+                                segment.status === 'translated' ? 'bg-green-50 text-green-600 border-green-100' : 'bg-gray-50 border-gray-100'
                             }`}>
-                            {segment.status}
+                            {segment.status === 'mt_draft' ? 'MT Draft' : segment.status}
                         </span>
                     </div>
                 </div>

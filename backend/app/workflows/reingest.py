@@ -47,11 +47,24 @@ class ReingestWorkflow(BaseWorkflow):
         for file in files:
             temp_path = f"temp_rag_{file.id}_{file.filename}"
             try:
-                download_file(file.file_path, temp_path)
+                # Optimized: We assume process_file_parsing handles documents.
+                # Only download manually for TMX or fallback.
                 
-                # DOCX Handler
-                if file.filename.endswith(".docx"):
-                        segments = parse_document(temp_path)
+                is_doc = file.filename.lower().endswith((".docx", ".xlsx"))
+                
+                if not is_doc:
+                     download_file(file.file_path, temp_path)
+                
+                # Document Handler (DOCX + XLSX)
+                if file.filename.lower().endswith((".docx", ".xlsx")):
+                        from ..document.parsing_service import process_file_parsing
+                        # Logic handles download internally
+                        segments = process_file_parsing(
+                             file_path_or_url=file.file_path,
+                             project_id=self.project_id, # Reuse project ID, sequential processing is safe
+                             original_filename=file.filename
+                        )
+                        
                         for idx, seg in enumerate(segments):
                             txt = seg.source_text.strip()
                             if len(txt) > 3:

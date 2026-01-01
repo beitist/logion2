@@ -45,8 +45,8 @@ class ContextAssembler:
         # Assume 'Segment Index' is global for the project.
         # So Prev/Next source segments are just index-1, index+1.
         
-        prev_sources = self._get_source_neighbors(segment.index, -1, 3) # Prev 3
-        next_sources = self._get_source_neighbors(segment.index, 1, 3)  # Next 3
+        prev_sources = self.get_source_neighbors(segment.index, -1, 3) # Prev 3
+        next_sources = self.get_source_neighbors(segment.index, 1, 3)  # Next 3
         
         # 3. History (Target Context from CONFIRMED segments)
         history = self._get_translation_history(segment.index, limit=5)
@@ -111,7 +111,7 @@ class ContextAssembler:
             
         return context
 
-    def _get_source_neighbors(self, current_index: int, direction: int, count: int) -> List[str]:
+    def get_source_neighbors(self, current_index: int, direction: int, count: int) -> List[str]:
         """Fetch surrounding source text from DB Segments"""
         # direction: -1 for prev, 1 for next
         if direction < 0:

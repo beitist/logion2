@@ -45,3 +45,4 @@ class GenerationResult(BaseModel):
     context_used: SegmentContext
     is_exact: bool = False
     error: Optional[str] = None
+    retrieval_usage: Dict[str, int] = {}

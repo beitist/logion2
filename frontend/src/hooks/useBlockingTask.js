@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, getSegments } from "../api/client";
+import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, getSegments, updateProject } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -162,7 +162,6 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         try {
             // We use the client directly to avoid circular hook dependency if possible
             // But we need to import updateProject
-            const { updateProject } = require("../api/client");
             await updateProject(projectId, { config: newConfig });
         } catch (e) {
             console.error("Failed to update workflow state in DB", e);
@@ -241,11 +240,48 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
                     progress: processed / candidates.length
                 }));
 
-                // Call Batch API
+                // Call Batch API (triggers async background processing)
                 await batchTranslate(projectId, batchIds, mode);
 
+                // Poll for backend completion before moving to next batch
+                // The backend updates rag_progress as it processes each segment
+                let pollAttempts = 0;
+                const maxPollAttempts = 120; // 2 minutes max wait per batch
+                while (pollAttempts < maxPollAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+                    try {
+                        const projectStatus = await getProject(projectId);
+
+                        // Update logs from backend
+                        if (projectStatus.ingestion_logs?.length > 0) {
+                            setBlockingTask(prev => ({
+                                ...prev,
+                                logs: [...prev.logs.slice(-3), ...projectStatus.ingestion_logs.slice(-2)]
+                            }));
+                        }
+
+                        // Update progress from backend (0-100 int -> 0-1 float)
+                        if (projectStatus.rag_progress !== undefined) {
+                            // Calculate combined progress: batch completion + within-batch progress
+                            const batchProgress = processed / candidates.length;
+                            const withinBatchProgress = (projectStatus.rag_progress / 100) * (batch.length / candidates.length);
+                            setBlockingTask(prev => ({
+                                ...prev,
+                                progress: batchProgress + withinBatchProgress
+                            }));
+                        }
+
+                        // Check if batch processing is complete
+                        if (projectStatus.rag_status === 'ready' || projectStatus.rag_status === 'error') {
+                            break;
+                        }
+                    } catch (pollErr) {
+                        console.warn("Poll error:", pollErr);
+                    }
+                    pollAttempts++;
+                }
+
                 // Refresh Frontend State (Sync)
-                // fetch full validation
                 const updatedSegments = await getSegments(projectId);
                 setSegments(updatedSegments.segments || updatedSegments);
 

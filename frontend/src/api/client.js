@@ -132,17 +132,11 @@ export async function reinitializeProject(projectId, fileData = null) {
         method: "POST",
     };
 
-    if (fileData) {
-        // If fileData is a File object, wrap in FormData
-        const formData = new FormData();
-        // Check if fileData is already FormData ? (Unlikely based on usage)
-        // Assume fileData is the File object from input
-        if (fileData instanceof File) {
-            formData.append('file', fileData);
-        }
-        options.body = formData;
-        // Do NOT set Content-Type header for FormData, browser does it with boundary
+    const formData = new FormData();
+    if (fileData && fileData instanceof File) {
+        formData.append('file', fileData);
     }
+    options.body = formData;
     // If no body, empty POST is fine.
 
     const res = await fetch(url, options);

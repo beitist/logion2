@@ -192,13 +192,30 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
 
         const seg = segmentsRef.current.find(s => s.id === segmentId);
         if (seg) {
+            // Transition mt_draft to translated when user focuses (indicates review)
+            // This only happens for MT-filled segments, not shortcut-triggered translations
+            if (seg.status === 'mt_draft') {
+                try {
+                    // Import updateSegment dynamically to avoid circular deps
+                    const { updateSegment } = await import('../api/client');
+                    await updateSegment(segmentId, undefined, 'translated', undefined);
+
+                    // Update local state
+                    setSegments(prev => prev.map(s =>
+                        s.id === segmentId ? { ...s, status: 'translated' } : s
+                    ));
+                } catch (e) {
+                    console.error("Failed to update segment status:", e);
+                }
+            }
+
             let analyzedSeg = seg;
             if (!seg.context_matches || seg.context_matches.length === 0) {
                 const updatedFields = await analyzeSegment(seg, 'analyze');
                 analyzedSeg = { ...seg, ...updatedFields };
             }
 
-            const isTranslated = analyzedSeg.status === 'translated' || analyzedSeg.status === 'approved';
+            const isTranslated = analyzedSeg.status === 'translated' || analyzedSeg.status === 'approved' || analyzedSeg.status === 'mt_draft';
             const hasDraft = analyzedSeg.context_matches?.some(m => m.type === 'mt') || !!analyzedSeg.metadata?.ai_draft;
             const hasContent = analyzedSeg.target_content && analyzedSeg.target_content.trim().length > 0;
 

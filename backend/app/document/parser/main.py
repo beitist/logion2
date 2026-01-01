@@ -12,6 +12,7 @@ def parse_document(file_path: str, segmentation_func=None, source_lang="en"):
     """
     Dispatches to the appropriate parser based on file extension.
     """
+    logger.info(f"Dispatching parse for: {file_path}")
     ext = file_path.split(".")[-1].lower()
     if ext in ["docx", "doc"]:
         return _parse_docx(file_path, segmentation_func, source_lang)

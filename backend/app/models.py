@@ -14,6 +14,7 @@ class ProjectStatus(str, enum.Enum):
 
 class SegmentStatus(str, enum.Enum):
     draft = "draft"
+    mt_draft = "mt_draft"  # Machine Translation result - awaiting user review
     translated = "translated"
     error = "error"
 
@@ -111,11 +112,6 @@ class ContextChunk(Base):
 
 # Update relationships in ProjectFile
 ProjectFile.chunks = relationship("ContextChunk", back_populates="file", cascade="all, delete-orphan")
-
-class TranslationOrigin(str, enum.Enum):
-    mandatory = "mandatory"
-    user = "user"
-    optional = "optional"
 
 class TranslationOrigin(str, enum.Enum):
     mandatory = "mandatory"

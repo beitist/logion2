@@ -137,8 +137,29 @@ Rules:
         try:
             response_text, usage = await self._call_gemini(prompt, model_name, temperature=0.2)
             
-            clean_json = response_text.replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean_json)
+            # Robust JSON extraction
+            import re
+            json_str = response_text.strip()
+            
+            # 1. Try to find markdown block
+            match = re.search(r"```(?:json)?(.*?)```", response_text, re.DOTALL | re.IGNORECASE)
+            if match:
+                json_str = match.group(1).strip()
+            else:
+                 # 2. Fallback: try to find outer brackets
+                 s = response_text.find('[')
+                 e = response_text.rfind(']')
+                 if s != -1 and e != -1:
+                     json_str = response_text[s:e+1]
+            
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # 3. Final Fallback: Aggressive cleanup
+                # Sometimes models output "Here is the JSON: [ ... ]" without markdown
+                json_str = re.sub(r'^[^{[]*', '', json_str) # strip leading non-json
+                json_str = re.sub(r'[^}\]]*$', '', json_str) # strip trailing non-json
+                data = json.loads(json_str)
             
             results = {}
             if isinstance(data, list):

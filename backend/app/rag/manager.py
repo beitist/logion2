@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from sqlalchemy.orm import Session
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from .types import GenerationResult
 from .assembly import ContextAssembler
@@ -70,17 +70,18 @@ class RAGManager:
         target_lang: str,
         model_name: str = None,
         custom_prompt: str = ""
-    ) -> Dict[str, GenerationResult]:
+    ) -> Tuple[Dict[str, GenerationResult], Dict[str, int]]:
         """
         Batch Generation with Windowed Context.
+        Returns: (Results Dict, Usage Dict {input_tokens, output_tokens})
         """
         results = {}
+        total_usage = {"input_tokens": 0, "output_tokens": 0}
         
         # 1. Fetch Segments & Sort
-        # We assume segment_ids are from the same project
         segments = self.db.query(Segment).filter(Segment.id.in_(segment_ids)).order_by(Segment.index).all()
         if not segments:
-            return {}
+            return {}, total_usage
             
         seg_map = {s.id: s for s in segments}
         sorted_segments = segments # Already sorted by index
@@ -88,31 +89,92 @@ class RAGManager:
         first_seg = sorted_segments[0]
         last_seg = sorted_segments[-1]
         
-        # 2. Assemble Windowed Context
-        # Global Preceding: Before the FIRST segment
-        # Global Following: After the LAST segment
-        
         loop = asyncio.get_event_loop()
+
+        # 2. Assemble Windowed Context (Rich)
+        # Global Preceding: Before the FIRST segment (Include Translation)
+        # Global Following: After the LAST segment (Source Only)
         
-        preceding_ctx = await loop.run_in_executor(
-            None, 
-            lambda: self.assembler.get_source_neighbors(first_seg.index, -1, 3)
-        )
+        def get_rich_preceding(idx, limit=3):
+            segs = self.db.query(Segment).filter(
+                Segment.project_id == self.project_id,
+                Segment.index < idx
+            ).order_by(Segment.index.desc()).limit(limit).all()
+            
+            # Reorder to reading flow (asc)
+            segs.reverse()
+            
+            out = []
+            for s in segs:
+                if s.target_content:
+                    out.append(f"{s.source_content} [Trans: {s.target_content}]")
+                else:
+                    out.append(s.source_content)
+            return out
+
+        preceding_ctx = await loop.run_in_executor(None, lambda: get_rich_preceding(first_seg.index, 3))
         
         following_ctx = await loop.run_in_executor(
             None, 
             lambda: self.assembler.get_source_neighbors(last_seg.index, 1, 3)
         )
         
-        # 3. Prepare Batch Items (with specific context per item: Glossary + TM)
+        # 3. Prepare Batch Items
+        # Optimization: Reuse existing context_matches from metadata if available
+        # This saves retrieval/reranking API costs and maintains consistency with UI
         batch_items = []
-        context_map = {} # Store context objects to return later
+        context_map = {} 
         
         for seg in sorted_segments:
-            # We still need full context for TM matches and Glossary
-            ctx = await loop.run_in_executor(None, lambda: self.assembler.assemble_context(seg))
+            # Check if segment already has context_matches in metadata
+            # These are pre-computed during "Analyze" or "Pre-Translate" workflows
+            existing_matches = None
+            existing_glossary = []
             
-            # Check Exact Match Early
+            if seg.metadata_json and seg.metadata_json.get("context_matches"):
+                # Reuse existing hits - reconstruct SegmentContext from stored data
+                # Filter out the MT hit (type='mt') as that's the previous translation
+                stored_hits = seg.metadata_json.get("context_matches", [])
+                
+                # Reconstruct TranslationMatch objects from stored dicts
+                reused_matches = []
+                for hit in stored_hits:
+                    if hit.get("type") == "mt":
+                        continue  # Skip previous MT results
+                    try:
+                        reused_matches.append(TranslationMatch(
+                            id=hit.get("id", ""),
+                            content=hit.get("content", ""),
+                            source_text=hit.get("source_text"),
+                            filename=hit.get("filename", "Unknown"),
+                            type=hit.get("type", "optional"),
+                            category=hit.get("category", "background"),
+                            score=hit.get("score", 0),
+                            note=hit.get("note")
+                        ))
+                    except Exception:
+                        pass  # Skip malformed hits
+                
+                if reused_matches:
+                    existing_matches = reused_matches
+                    # Separate glossary hits from regular matches
+                    existing_glossary = [m for m in existing_matches if m.type == "glossary"]
+                    existing_matches = [m for m in existing_matches if m.type != "glossary"]
+                    logger.info(f"Segment {seg.id}: Reusing {len(existing_matches)} existing matches + {len(existing_glossary)} glossary hits")
+            
+            # If we have existing matches, use them; otherwise do fresh retrieval
+            if existing_matches is not None:
+                # Build context from existing matches (no API calls)
+                ctx = SegmentContext(
+                    matches=existing_matches,
+                    glossary_hits=existing_glossary,
+                    retrieval_usage={}  # No retrieval cost - reused!
+                )
+            else:
+                # Fresh retrieval (expensive - involves embedding + reranking)
+                ctx = await loop.run_in_executor(None, lambda seg=seg: self.assembler.assemble_context(seg))
+            
+            # Check Exact Match Early (100% TM match)
             exact = next((m for m in ctx.matches if m.score >= 100 and m.type != "glossary"), None)
             if exact:
                  results[seg.id] = GenerationResult(
@@ -124,9 +186,10 @@ class RAGManager:
             
             context_map[seg.id] = ctx
             
-            # Format Matches
+            # Format Matches for LLM prompt - Exclude 'history' as it is covered by Global Preceding Context
             tm_matches = [{"source": m.source_text, "target": m.content, "score": m.score} 
-                          for m in ctx.matches[:3] if m.type != 'glossary' and m.score < 100]
+                          for m in ctx.matches[:3] 
+                          if m.type not in ['glossary', 'history'] and m.score < 100]
                           
             glossary = [{"term": g.source_text, "translation": g.content} 
                         for g in ctx.glossary_hits]
@@ -140,7 +203,7 @@ class RAGManager:
             
         # 4. Inference
         if batch_items:
-            translations, usage = await self.orchestrator.generate_structured_batch(
+            translations, batch_usage = await self.orchestrator.generate_structured_batch(
                 preceding_context=preceding_ctx,
                 following_context=following_ctx,
                 batch_items=batch_items,
@@ -150,6 +213,9 @@ class RAGManager:
                 custom_prompt=custom_prompt
             )
             
+            total_usage["input_tokens"] += batch_usage.get("input_tokens", 0)
+            total_usage["output_tokens"] += batch_usage.get("output_tokens", 0)
+            
             # Merge Results
             for item in batch_items:
                 sid = item['id']
@@ -157,15 +223,14 @@ class RAGManager:
                     results[sid] = GenerationResult(
                         target_text=translations[sid],
                         context_used=context_map.get(sid),
-                        usage={},
-                        retrieval_usage=context_map.get(sid).retrieval_usage
+                        usage={}, # Usage tracked globally for batch
+                        retrieval_usage=context_map.get(sid).retrieval_usage if context_map.get(sid) else {}
                     )
                 else:
-                    # Failed or Missing from response
                     results[sid] = GenerationResult(
                         target_text="",
                         context_used=context_map.get(sid),
                         error="Missing from AI response"
                     )
                     
-        return results
+        return results, total_usage
