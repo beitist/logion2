@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory
 from ..schemas import SegmentInternal, TagModel
 from ..storage import download_file
-from ..reassembly import reassemble_docx
+from ..document.assembler import reassemble_docx
 from ..logger import get_logger
 
 logger = get_logger("ExportService")
