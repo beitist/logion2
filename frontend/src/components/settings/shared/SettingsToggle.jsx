@@ -1,62 +1,51 @@
 import React from 'react';
 
 /**
- * Modern animated toggle switch component (iOS-style).
- * Replaces boring checkboxes with a sleek sliding toggle.
- * 
- * @param {boolean} checked - Current toggle state
- * @param {function} onChange - Callback when toggled: (newValue) => void
- * @param {boolean} disabled - If true, toggle is non-interactive
- * @param {string} size - Toggle size: 'sm' | 'md' | 'lg' (default: 'md')
- * @param {string} accentColor - Tailwind color class for active state (default: 'bg-indigo-500')
+ * A compact, professional toggle switch.
+ * Less "bouncy", more "functional".
  */
-export function SettingsToggle({
-    checked,
-    onChange,
-    disabled = false,
-    size = 'md',
-    accentColor = 'bg-indigo-500'
-}) {
-    // Size variants for the toggle track and knob
+export const SettingsToggle = ({ enabled, onChange, label, description, size = "md", accentColor = "bg-indigo-600" }) => {
+
+    // Size variants
     const sizes = {
-        sm: { track: 'w-8 h-4', knob: 'w-3 h-3', translate: 'translate-x-4' },
-        md: { track: 'w-11 h-6', knob: 'w-5 h-5', translate: 'translate-x-5' },
-        lg: { track: 'w-14 h-7', knob: 'w-6 h-6', translate: 'translate-x-7' }
+        sm: { w: "w-7", h: "h-4", ball: "w-3 h-3", trans: "translate-x-3" },
+        md: { w: "w-9", h: "h-5", ball: "w-3.5 h-3.5", trans: "translate-x-4" }
     };
-
-    const sizeConfig = sizes[size] || sizes.md;
-
-    const handleClick = () => {
-        if (!disabled) {
-            onChange(!checked);
-        }
-    };
+    const s = sizes[size] || sizes.md;
 
     return (
-        <button
-            type="button"
-            role="switch"
-            aria-checked={checked}
-            disabled={disabled}
-            onClick={handleClick}
-            className={`
-                relative inline-flex items-center rounded-full 
-                transition-colors duration-200 ease-in-out
-                focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
-                ${sizeConfig.track}
-                ${checked ? accentColor : 'bg-gray-200'}
-                ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-            `}
+        <div
+            className="flex items-center justify-between gap-4 w-full cursor-pointer group"
+            onClick={() => onChange(!enabled)}
         >
-            {/* Sliding knob */}
-            <span
+            <div className="flex-1">
+                <div className="text-sm font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
+                    {label}
+                </div>
+                {description && (
+                    <div className="text-xs text-gray-500 mt-0.5">
+                        {description}
+                    </div>
+                )}
+            </div>
+
+            {/* Toggle Track */}
+            <div
                 className={`
-                    inline-block rounded-full bg-white shadow-md
-                    transform transition-transform duration-200 ease-in-out
-                    ${sizeConfig.knob}
-                    ${checked ? sizeConfig.translate : 'translate-x-0.5'}
+                    relative rounded-full transition-colors duration-200 ease-in-out flex-shrink-0
+                    ${s.w} ${s.h}
+                    ${enabled ? accentColor : 'bg-gray-200'}
                 `}
-            />
-        </button>
+            >
+                {/* Toggle Ball */}
+                <div
+                    className={`
+                        absolute top-0.5 left-0.5 bg-white rounded-full shadow-sm transition-transform duration-200 ease-in-out
+                        ${s.ball}
+                        ${enabled ? s.trans : 'translate-x-0'}
+                    `}
+                />
+            </div>
+        </div>
     );
-}
+};

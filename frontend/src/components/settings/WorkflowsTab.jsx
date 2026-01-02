@@ -61,9 +61,9 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
 
     // Workflow card component for consistent styling
     const WorkflowCard = ({ icon: Icon, iconBg, title, description, buttonText, buttonStyle, onClick, disabled }) => (
-        <div className="p-4 bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all">
+        <div className="p-4 bg-white rounded-lg border border-gray-200">
             <div className="flex items-start gap-3 mb-3">
-                <div className={`p-2.5 rounded-xl ${iconBg}`}>
+                <div className={`p-2 rounded-lg bg-gray-50 text-gray-500`}>
                     <Icon size={18} />
                 </div>
                 <div className="flex-1">
@@ -74,8 +74,8 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
             <button
                 onClick={onClick}
                 disabled={disabled}
-                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 
-                           rounded-xl text-xs font-medium transition-all
+                className={`w-full flex items-center justify-center gap-2 px-3 py-2 
+                           rounded-lg text-xs font-medium transition-all
                            disabled:opacity-50 disabled:cursor-not-allowed ${buttonStyle}`}
             >
                 {buttonText}
@@ -85,13 +85,13 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
 
     return (
         <div className="space-y-6 py-2 h-full flex flex-col">
-            {/* Header Banner */}
-            <div className="flex items-center gap-3 bg-gradient-to-r from-cyan-500/10 via-teal-500/10 to-emerald-500/10 p-4 rounded-xl border border-teal-200/50">
-                <div className="p-2 bg-white rounded-lg shadow-sm">
-                    <RefreshCw size={20} className="text-teal-600" />
+            {/* Header Banner - Sleek */}
+            <div className="flex items-center gap-3 px-1 pb-2 border-b border-gray-100">
+                <div className="p-2 bg-gray-50 rounded-lg border border-gray-100 text-gray-400">
+                    <RefreshCw size={18} />
                 </div>
                 <div>
-                    <h2 className="font-semibold text-gray-800">Workflows & Automation</h2>
+                    <h2 className="font-semibold text-gray-800 text-sm">Workflows & Automation</h2>
                     <p className="text-xs text-gray-500">Batch operations for the entire project</p>
                 </div>
             </div>

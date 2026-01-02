@@ -3,7 +3,6 @@ import { Copy, Search } from 'lucide-react';
 import { TiptapEditor } from '../TiptapEditor';
 import { formatSourceContent, getSegmentComments, highlightGlossaryTerms } from '../../utils/editorTransforms';
 import { MatchCard } from './MatchCard';
-import { GlossaryCard } from './GlossaryCard';
 
 /**
  * Source column of the SegmentRow - displays source text and TM matches.
@@ -125,19 +124,7 @@ export function SourceColumn({
             </div>
 
             {/* Glossary Cards - Directly under source text for visibility */}
-            {glossaryMatches.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                    <div className="text-[10px] font-bold text-teal-600 uppercase tracking-widest mb-2 flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 bg-teal-400 rounded-full"></span>
-                        Glossary Terms ({glossaryMatches.length})
-                    </div>
-                    <div className="space-y-1.5">
-                        {glossaryMatches.map((match, idx) => (
-                            <GlossaryCard key={idx} match={match} />
-                        ))}
-                    </div>
-                </div>
-            )}
+            {/* MOVED to TargetColumn per user request */}
 
             {/* Comments Section (from Word document comments) */}
             {comments.length > 0 && (

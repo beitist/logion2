@@ -94,14 +94,14 @@ export function GlossarySettingsTab({ project }) {
 
     return (
         <div className="h-full flex flex-col gap-5">
-            {/* Header Banner */}
-            <div className="flex items-center justify-between bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-yellow-500/10 p-4 rounded-xl border border-amber-200/50">
+            {/* Header Banner - Sleek */}
+            <div className="flex items-center justify-between px-1 pb-2 border-b border-gray-100">
                 <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white rounded-lg shadow-sm">
-                        <BookOpen size={20} className="text-amber-600" />
+                    <div className="p-2 bg-gray-50 rounded-lg border border-gray-100 text-gray-400">
+                        <BookOpen size={18} />
                     </div>
                     <div>
-                        <h2 className="font-semibold text-gray-800">Glossary & Terminology</h2>
+                        <h2 className="font-semibold text-gray-800 text-sm">Glossary & Terminology</h2>
                         <p className="text-xs text-gray-500">
                             {terms.length} term{terms.length !== 1 ? 's' : ''} defined
                         </p>
@@ -111,7 +111,7 @@ export function GlossarySettingsTab({ project }) {
                     onClick={handleDownload}
                     disabled={terms.length === 0}
                     className="flex items-center gap-2 px-3 py-1.5 text-xs border border-gray-200 
-                               rounded-lg hover:bg-white/80 text-gray-600 transition-colors
+                               rounded-lg hover:bg-gray-50 text-gray-600 transition-colors
                                disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <Download size={14} />
@@ -162,8 +162,8 @@ export function GlossarySettingsTab({ project }) {
                         <button
                             type="submit"
                             disabled={isSaving}
-                            className="px-5 py-2.5 bg-emerald-500 text-white rounded-xl text-sm font-medium 
-                                       hover:bg-emerald-600 transition-colors shadow-sm
+                            className="px-4 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-medium 
+                                       hover:bg-black transition-colors shadow-sm
                                        disabled:opacity-50 disabled:cursor-not-allowed
                                        flex items-center gap-2"
                         >
@@ -228,7 +228,7 @@ export function GlossarySettingsTab({ project }) {
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                         {filteredTerms.map(t => (
-                            <tr key={t.id} className="hover:bg-amber-50/30 transition-colors">
+                            <tr key={t.id} className="hover:bg-gray-50 transition-colors">
                                 <td className="px-4 py-3">
                                     <div className="font-medium text-gray-800">{t.source}</div>
                                     <div className="text-xs text-gray-400 font-mono">{t.lemma}</div>

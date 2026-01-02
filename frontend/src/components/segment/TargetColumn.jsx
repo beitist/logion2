@@ -2,6 +2,7 @@ import React from 'react';
 import { TiptapEditor } from '../TiptapEditor';
 import { hydrateContent } from '../../utils/editorTransforms';
 import { SegmentBadges, SegmentTypeBadges, SpacingWarning } from './SegmentBadges';
+import { GlossaryCard } from './GlossaryCard';
 
 /**
  * Target column of the SegmentRow - editable translation with glossary.
@@ -88,6 +89,21 @@ export function TargetColumn({
                     onNavigate={(dir) => onNavigate(segment.id, dir)}
                     onEditorReady={(ed) => registerEditor(segment.id, ed)}
                 />
+
+                {/* Glossary Matches - Directly under editor for visibility */}
+                {glossaryMatches.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gray-100/50">
+                        <div className="text-[9px] font-bold text-teal-600/80 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                            <span className="w-1 h-1 bg-teal-400 rounded-full"></span>
+                            Glossary Suggestions
+                        </div>
+                        <div className="space-y-1">
+                            {glossaryMatches.map((match, idx) => (
+                                <GlossaryCard key={idx} match={match} />
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Note: Glossary matches moved to SourceColumn for better visibility */}

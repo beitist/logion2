@@ -219,24 +219,25 @@ export function SplitView({ projectId, onBack }) {
 
             {/* Settings Modal - Consider extracting to separate component "SettingsModal" */}
             {showSettings && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200 p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-                        <div className="p-6 border-b flex justify-between items-center bg-gray-50/50">
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-200">
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white">
                             <div>
-                                <h2 className="text-xl font-bold text-gray-800">Project Settings</h2>
-                                <p className="text-sm text-gray-500 mt-1">Configure AI, Glossary, and Files</p>
+                                <h2 className="font-bold text-gray-800 text-sm">Project Settings</h2>
+                                <p className="text-xs text-gray-500">Configure AI, Glossary, and Files</p>
                             </div>
                             <button
                                 onClick={() => setShowSettings(false)}
-                                className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+                                className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition-colors"
                             >
-                                <svg className="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                <Trash2 size={16} className="rotate-45" /> {/* Use X icon ideally, recycling Trash for close for now if X not imported */}
                             </button>
                         </div>
 
                         <div className="flex flex-1 overflow-hidden">
-                            {/* Sidebar */}
-                            <div className="w-64 bg-gray-50 border-r p-4 flex flex-col gap-2">
+                            {/* Sidebar - Sleek Pro Style */}
+                            <div className="w-56 bg-gray-50/50 border-r border-gray-200 flex flex-col py-2">
                                 {[
                                     { id: 'files', label: 'Project Settings', icon: FileText },
                                     { id: 'ai', label: 'AI Configuration', icon: Zap },
@@ -248,16 +249,18 @@ export function SplitView({ projectId, onBack }) {
                                     <button
                                         key={tab.id}
                                         onClick={() => setActiveSettingsTab(tab.id)}
-                                        className={`w-full text-left px-4 py-3 rounded-xl text-sm font-medium transition-all flex items-center gap-3 ${activeSettingsTab === tab.id
-                                            ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5'
-                                            : 'text-gray-600 hover:bg-gray-100/80 hover:text-gray-900'
-                                            }`}
+                                        className={`
+                                                w-full text-left px-4 py-2 text-xs font-semibold transition-colors flex items-center gap-3 border-l-2
+                                                ${activeSettingsTab === tab.id
+                                                ? 'bg-white border-indigo-500 text-indigo-700 shadow-sm'
+                                                : 'border-transparent text-gray-600 hover:bg-gray-100/80 hover:text-gray-900'
+                                            }
+                                            `}
                                     >
-                                        <tab.icon size={16} className={activeSettingsTab === tab.id ? 'text-indigo-500' : 'text-gray-400'} />
+                                        <tab.icon size={14} className={activeSettingsTab === tab.id ? 'text-indigo-600' : 'text-gray-400'} />
                                         {tab.label}
                                     </button>
                                 ))}
-
                                 <div className="mt-auto border-t pt-4">
                                     <button
                                         onClick={handleDeleteProject}

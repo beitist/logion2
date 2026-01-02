@@ -92,12 +92,12 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
 
     // Stat card component
     const StatCard = ({ value, label, highlight = false }) => (
-        <div className={`p-4 rounded-xl border flex flex-col items-center justify-center
+        <div className={`p-4 rounded-lg border flex flex-col items-center justify-center
                         ${highlight
-                ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200'
-                : 'bg-white border-gray-100'}`}
+                ? 'bg-gray-50 border-gray-200'
+                : 'bg-white border-gray-200'}`}
         >
-            <span className={`text-2xl font-bold ${highlight ? 'text-blue-700' : 'text-gray-800'}`}>
+            <span className={`text-2xl font-bold ${highlight ? 'text-gray-900' : 'text-gray-800'}`}>
                 {value}
             </span>
             <span className={`text-[10px] uppercase tracking-widest mt-1 ${highlight ? 'text-blue-600' : 'text-gray-500'}`}>
@@ -108,13 +108,13 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
 
     return (
         <div className="space-y-6 py-2 h-full flex flex-col">
-            {/* Header Banner */}
-            <div className="flex items-center gap-3 bg-gradient-to-r from-rose-500/10 via-pink-500/10 to-fuchsia-500/10 p-4 rounded-xl border border-rose-200/50">
-                <div className="p-2 bg-white rounded-lg shadow-sm">
-                    <BarChart3 size={20} className="text-rose-600" />
+            {/* Header Banner - Sleek */}
+            <div className="flex items-center gap-3 px-1 pb-2 border-b border-gray-100">
+                <div className="p-2 bg-gray-50 rounded-lg border border-gray-100 text-gray-400">
+                    <BarChart3 size={18} />
                 </div>
                 <div>
-                    <h2 className="font-semibold text-gray-800">Project Statistics</h2>
+                    <h2 className="font-semibold text-gray-800 text-sm">Project Statistics</h2>
                     <p className="text-xs text-gray-500">Usage tracking and analytics</p>
                 </div>
             </div>
@@ -148,7 +148,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
                 </SettingsCard>
 
                 {/* AI Usage Stats */}
-                <SettingsCard highlight>
+                <SettingsCard>
                     <SettingsSection
                         icon={Zap}
                         title="AI Usage"

@@ -53,13 +53,13 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
 
     return (
         <div className="space-y-6 py-2 h-full flex flex-col">
-            {/* Header Banner */}
-            <div className="flex items-center gap-3 bg-gradient-to-r from-gray-500/10 via-slate-500/10 to-zinc-500/10 p-4 rounded-xl border border-gray-200/50">
-                <div className="p-2 bg-white rounded-lg shadow-sm">
-                    <Settings size={20} className="text-gray-600" />
+            {/* Header Banner - Sleek */}
+            <div className="flex items-center gap-3 px-1 pb-2 border-b border-gray-100">
+                <div className="p-2 bg-gray-50 rounded-lg border border-gray-100 text-gray-400">
+                    <Settings size={18} />
                 </div>
                 <div>
-                    <h2 className="font-semibold text-gray-800">Project Settings</h2>
+                    <h2 className="font-semibold text-gray-800 text-sm">Project Settings</h2>
                     <p className="text-xs text-gray-500">Languages and core configuration</p>
                 </div>
             </div>
@@ -95,12 +95,11 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                 </SettingsCard>
 
                 {/* Language Settings */}
-                <SettingsCard highlight>
+                <SettingsCard>
                     <SettingsSection
                         icon={Globe}
                         title="Language Pair"
                         description="Source and target languages for translation"
-                        accentColor="text-blue-500"
                     >
                         <div className="grid grid-cols-2 gap-4">
                             {/* Source Language */}
@@ -184,14 +183,13 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="flex items-center gap-2 px-6 py-2.5 
-                               bg-gradient-to-r from-gray-800 to-gray-900 
-                               text-white rounded-xl 
-                               hover:from-gray-900 hover:to-black 
-                               transition-all shadow-sm font-medium
+                    className="flex items-center gap-2 px-4 py-2 
+                               bg-gray-900 hover:bg-black 
+                               text-white text-xs font-semibold rounded-lg
+                               transition-colors shadow-sm
                                disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    <Save size={16} />
+                    <Save size={14} />
                     {saving ? 'Saving...' : 'Save Changes'}
                 </button>
             </div>
