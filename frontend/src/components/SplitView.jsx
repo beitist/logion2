@@ -15,7 +15,7 @@ import { ShortcutsPanel } from './ShortcutsPanel';
 import { BlockingModal } from './BlockingModal';
 
 import { useProjectWorkspace } from '../hooks/useProjectWorkspace';
-import { SegmentRow } from './SegmentRow';
+import { SegmentRow } from './segment';
 
 export function SplitView({ projectId, onBack }) {
     const {
