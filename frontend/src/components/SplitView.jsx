@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown } from 'lucide-react';
+import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw } from 'lucide-react';
 import './TiptapStyles.css';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
@@ -238,12 +238,12 @@ export function SplitView({ projectId, onBack }) {
                             {/* Sidebar */}
                             <div className="w-64 bg-gray-50 border-r p-4 flex flex-col gap-2">
                                 {[
-                                    { id: 'files', label: 'Files & Re-ingest', icon: FileText },
-                                    { id: 'ai', label: 'AI Configuration', icon: Terminal },
-                                    { id: 'rag', label: 'RAG / Context', icon: Check },
-                                    { id: 'glossary', label: 'Glossary Manager', icon: Check },
-                                    { id: 'workflows', label: 'Workflows', icon: MoreVertical },
-                                    { id: 'stats', label: 'Statistics', icon: Check }, // Check icon placeholder?
+                                    { id: 'files', label: 'Project Settings', icon: FileText },
+                                    { id: 'ai', label: 'AI Configuration', icon: Zap },
+                                    { id: 'rag', label: 'RAG / Context', icon: Database },
+                                    { id: 'glossary', label: 'Glossary Manager', icon: BookOpen },
+                                    { id: 'workflows', label: 'Workflows', icon: RefreshCw },
+                                    { id: 'stats', label: 'Statistics', icon: BarChart3 },
                                 ].map(tab => (
                                     <button
                                         key={tab.id}

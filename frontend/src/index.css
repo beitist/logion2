@@ -1,11 +1,61 @@
 @import "tailwindcss";
 
 @keyframes flash-purple {
-  0% { background-color: #faf5ff; } 
-  25% { background-color: #d8b4fe; } 
-  100% { background-color: #faf5ff; }
+  0% {
+    background-color: #faf5ff;
+  }
+
+  25% {
+    background-color: #d8b4fe;
+  }
+
+  100% {
+    background-color: #faf5ff;
+  }
 }
 
 .animate-flash-purple {
   animation: flash-purple 1.5s ease-out;
+}
+
+/* Orange flash for MT results */
+@keyframes flash-orange {
+  0% {
+    background-color: #fff7ed;
+  }
+
+  25% {
+    background-color: #fdba74;
+  }
+
+  100% {
+    background-color: #fff7ed;
+  }
+}
+
+.animate-flash-orange {
+  animation: flash-orange 1.5s ease-out;
+}
+
+/* Glossary term highlights in source text */
+.glossary-highlight {
+  background-color: #fef3c7;
+  /* yellow-100 */
+  border-bottom: 2px solid #f59e0b;
+  /* amber-500 */
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: help;
+  transition: background-color 150ms ease;
+}
+
+.glossary-highlight:hover {
+  background-color: #fde68a;
+  /* yellow-200 */
+}
+
+/* Source content container for highlighted text */
+.source-content-highlighted {
+  font-size: 0.875rem;
+  line-height: 1.625;
 }

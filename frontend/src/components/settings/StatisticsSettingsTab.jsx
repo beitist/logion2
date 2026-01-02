@@ -1,6 +1,15 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { updateProject, getAiModels } from '../../api/client';
+import { BarChart3, FileText, Zap, DollarSign, RotateCcw } from 'lucide-react';
+import { SettingsCard, SettingsSection } from './shared';
 
+/**
+ * Statistics Settings Tab
+ * 
+ * Displays project statistics:
+ * - File stats (characters, words, estimated tokens)
+ * - AI usage tracking with cost estimation
+ */
 export function StatisticsSettingsTab({ project, onProjectUpdate }) {
     const [isResetting, setIsResetting] = useState(false);
     const [modelPricing, setModelPricing] = useState([]);
@@ -20,7 +29,6 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
         let totalChars = 0;
         let totalWords = 0;
 
-        // Calculate basic file stats
         const segments = project.segments || [];
         segments.forEach(seg => {
             const txt = seg.source_content || "";
@@ -28,45 +36,33 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
             totalWords += txt.split(/\s+/).filter(w => w.length > 0).length;
         });
 
-        // Backend AI Usage Stats
         const usageStats = project.config?.usage_stats || {};
-
-        // Heuristic fallback for file size
         const estimatedTokens = Math.ceil(totalChars / 4);
 
         return { chars: totalChars, words: totalWords, tokens: estimatedTokens, usage: usageStats };
     }, [project]);
 
-    // Calculate Costs
+    // Calculate costs table
     const usageTable = useMemo(() => {
         const rows = [];
         let totalCost = 0;
 
         Object.entries(stats.usage).forEach(([modelId, data]) => {
-            const modelInfo = modelPricing.find(m => m.id === modelId) || { name: modelId, cost_input_1k: 0, cost_output_1k: 0 };
-
-            // Handle pricing format differences:
-            // ai_models.json uses "input_cost_per_m" (per million)
-            // Legacy/Fallback might use "cost_input_1k"
+            const modelInfo = modelPricing.find(m => m.id === modelId) || { name: modelId };
 
             let inputCost = 0;
             let outputCost = 0;
 
             if (modelInfo.input_cost_per_m !== undefined) {
-                // Per Million logic
                 inputCost = (data.input_tokens / 1000000) * modelInfo.input_cost_per_m;
                 outputCost = (data.output_tokens / 1000000) * modelInfo.output_cost_per_m;
-            } else {
-                // Legacy per 1k logic (just in case)
-                inputCost = (data.input_tokens / 1000) * (modelInfo.cost_input_1k || 0);
-                outputCost = (data.output_tokens / 1000) * (modelInfo.cost_output_1k || 0);
             }
 
             const cost = inputCost + outputCost;
             totalCost += cost;
 
             rows.push({
-                name: modelInfo.name,
+                name: modelInfo.name || modelId,
                 input: data.input_tokens,
                 output: data.output_tokens,
                 cost: cost
@@ -77,7 +73,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
     }, [stats.usage, modelPricing]);
 
     const handleReset = async () => {
-        if (!confirm("Are you sure you want to reset the AI Token Usage counter? This cannot be undone.")) return;
+        if (!confirm("Reset the AI Token Usage counter? This cannot be undone.")) return;
         setIsResetting(true);
         try {
             await updateProject(project.id, {
@@ -86,11 +82,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
                     usage_stats: {}
                 }
             });
-            // Ideally trigger refresh, but updateProject returns updated project usually
             if (onProjectUpdate) onProjectUpdate();
-            // Since we modified nested config, optimistic UI update might be hard, 
-            // but SplitView should reload or we assume parent handles it.
-            // Usually onProjectUpdate implies a fetch/refresh.
         } catch (e) {
             alert("Failed to reset stats: " + e.message);
         } finally {
@@ -98,87 +90,136 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
         }
     };
 
+    // Stat card component
+    const StatCard = ({ value, label, highlight = false }) => (
+        <div className={`p-4 rounded-xl border flex flex-col items-center justify-center
+                        ${highlight
+                ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200'
+                : 'bg-white border-gray-100'}`}
+        >
+            <span className={`text-2xl font-bold ${highlight ? 'text-blue-700' : 'text-gray-800'}`}>
+                {value}
+            </span>
+            <span className={`text-[10px] uppercase tracking-widest mt-1 ${highlight ? 'text-blue-600' : 'text-gray-500'}`}>
+                {label}
+            </span>
+        </div>
+    );
+
     return (
-        <div className="space-y-8">
-            {/* File Stats */}
-            <div>
-                <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-2">Project Size</h3>
-                <div className="grid grid-cols-3 gap-4">
-                    <div className="p-4 bg-gray-50 rounded border border-gray-100 flex flex-col items-center">
-                        <span className="text-2xl font-bold text-gray-800">{stats.chars.toLocaleString()}</span>
-                        <span className="text-xs text-gray-500 uppercase tracking-widest mt-1">Characters</span>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded border border-gray-100 flex flex-col items-center">
-                        <span className="text-2xl font-bold text-gray-800">{stats.words.toLocaleString()}</span>
-                        <span className="text-xs text-gray-500 uppercase tracking-widest mt-1">Words</span>
-                    </div>
-                    <div className="p-4 bg-blue-50 rounded border border-blue-100 flex flex-col items-center">
-                        <span className="text-2xl font-bold text-blue-800">~{stats.tokens.toLocaleString()}</span>
-                        <span className="text-xs text-blue-600 uppercase tracking-widest mt-1">Est. Size (Tokens)</span>
-                    </div>
+        <div className="space-y-6 py-2 h-full flex flex-col">
+            {/* Header Banner */}
+            <div className="flex items-center gap-3 bg-gradient-to-r from-rose-500/10 via-pink-500/10 to-fuchsia-500/10 p-4 rounded-xl border border-rose-200/50">
+                <div className="p-2 bg-white rounded-lg shadow-sm">
+                    <BarChart3 size={20} className="text-rose-600" />
+                </div>
+                <div>
+                    <h2 className="font-semibold text-gray-800">Project Statistics</h2>
+                    <p className="text-xs text-gray-500">Usage tracking and analytics</p>
                 </div>
             </div>
 
-            {/* AI Usage Stats */}
-            <div>
-                <div className="flex justify-between items-end mb-2">
-                    <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider">AI Usage (Since Reset)</h3>
-                    {usageTable.rows.length > 0 && (
-                        <button
-                            onClick={handleReset}
-                            disabled={isResetting}
-                            className="text-xs text-red-500 hover:text-red-700 underline"
-                        >
-                            {isResetting ? "Resetting..." : "Reset Counter"}
-                        </button>
-                    )}
-                </div>
+            {/* Content */}
+            <div className="space-y-5 flex-1 overflow-y-auto pr-1">
 
-                {usageTable.rows.length === 0 ? (
-                    <div className="p-6 bg-gray-50 rounded border border-gray-100 text-center text-gray-400 text-sm italic">
-                        No AI usage recorded yet.
-                    </div>
-                ) : (
-                    <div className="border border-gray-200 rounded overflow-hidden">
-                        <table className="w-full text-sm">
-                            <thead className="bg-gray-100 text-gray-600 font-medium border-b border-gray-200">
-                                <tr>
-                                    <th className="p-3 text-left">Model</th>
-                                    <th className="p-3 text-right">Input Tokens</th>
-                                    <th className="p-3 text-right">Output Tokens</th>
-                                    <th className="p-3 text-right">Est. Cost</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {usageTable.rows.map(row => (
-                                    <tr key={row.name} className="bg-white">
-                                        <td className="p-3 text-gray-800 font-medium">{row.name}</td>
-                                        <td className="p-3 text-right text-gray-600">{row.input.toLocaleString()}</td>
-                                        <td className="p-3 text-right text-gray-600">{row.output.toLocaleString()}</td>
-                                        <td className="p-3 text-right text-green-700 font-bold">
-                                            ${row.cost.toFixed(4)}
-                                        </td>
-                                    </tr>
-                                ))}
-                                <tr className="bg-gray-50 font-bold">
-                                    <td className="p-3 text-gray-800">Total</td>
-                                    <td className="p-3 text-right">
-                                        {usageTable.rows.reduce((acc, r) => acc + r.input, 0).toLocaleString()}
-                                    </td>
-                                    <td className="p-3 text-right">
-                                        {usageTable.rows.reduce((acc, r) => acc + r.output, 0).toLocaleString()}
-                                    </td>
-                                    <td className="p-3 text-right text-green-800">
-                                        ${usageTable.totalCost.toFixed(4)}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-                <div className="text-[10px] text-gray-400 italic mt-2">
-                    * Costs are estimated based on configured rates. Actual API billing may vary.
-                </div>
+                {/* Project Size Stats */}
+                <SettingsCard>
+                    <SettingsSection
+                        icon={FileText}
+                        title="Project Size"
+                        accentColor="text-gray-500"
+                    >
+                        <div className="grid grid-cols-3 gap-3">
+                            <StatCard
+                                value={stats.chars.toLocaleString()}
+                                label="Characters"
+                            />
+                            <StatCard
+                                value={stats.words.toLocaleString()}
+                                label="Words"
+                            />
+                            <StatCard
+                                value={`~${stats.tokens.toLocaleString()}`}
+                                label="Est. Tokens"
+                                highlight
+                            />
+                        </div>
+                    </SettingsSection>
+                </SettingsCard>
+
+                {/* AI Usage Stats */}
+                <SettingsCard highlight>
+                    <SettingsSection
+                        icon={Zap}
+                        title="AI Usage"
+                        description="Token consumption since last reset"
+                        accentColor="text-purple-500"
+                    >
+                        {usageTable.rows.length === 0 ? (
+                            <div className="p-8 bg-gray-50 rounded-xl text-center text-gray-400 text-sm italic">
+                                No AI usage recorded yet.
+                            </div>
+                        ) : (
+                            <>
+                                <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-gray-50 text-gray-600 font-medium">
+                                            <tr>
+                                                <th className="px-4 py-2.5 text-left text-xs">Model</th>
+                                                <th className="px-4 py-2.5 text-right text-xs">Input</th>
+                                                <th className="px-4 py-2.5 text-right text-xs">Output</th>
+                                                <th className="px-4 py-2.5 text-right text-xs">Est. Cost</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-50">
+                                            {usageTable.rows.map(row => (
+                                                <tr key={row.name} className="hover:bg-gray-50/50">
+                                                    <td className="px-4 py-2.5 text-gray-800 font-medium">{row.name}</td>
+                                                    <td className="px-4 py-2.5 text-right text-gray-600 font-mono text-xs">
+                                                        {row.input.toLocaleString()}
+                                                    </td>
+                                                    <td className="px-4 py-2.5 text-right text-gray-600 font-mono text-xs">
+                                                        {row.output.toLocaleString()}
+                                                    </td>
+                                                    <td className="px-4 py-2.5 text-right text-emerald-600 font-bold">
+                                                        ${row.cost.toFixed(4)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            <tr className="bg-gray-50 font-bold">
+                                                <td className="px-4 py-2.5 text-gray-800">Total</td>
+                                                <td className="px-4 py-2.5 text-right font-mono text-xs">
+                                                    {usageTable.rows.reduce((acc, r) => acc + r.input, 0).toLocaleString()}
+                                                </td>
+                                                <td className="px-4 py-2.5 text-right font-mono text-xs">
+                                                    {usageTable.rows.reduce((acc, r) => acc + r.output, 0).toLocaleString()}
+                                                </td>
+                                                <td className="px-4 py-2.5 text-right text-emerald-700">
+                                                    ${usageTable.totalCost.toFixed(4)}
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="flex justify-between items-center mt-4">
+                                    <p className="text-[10px] text-gray-400 italic">
+                                        * Costs estimated based on configured rates
+                                    </p>
+                                    <button
+                                        onClick={handleReset}
+                                        disabled={isResetting}
+                                        className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 
+                                                   transition-colors disabled:opacity-50"
+                                    >
+                                        <RotateCcw size={12} />
+                                        {isResetting ? "Resetting..." : "Reset Counter"}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </SettingsSection>
+                </SettingsCard>
             </div>
         </div>
     );

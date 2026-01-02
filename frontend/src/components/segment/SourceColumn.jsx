@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Copy, Search } from 'lucide-react';
 import { TiptapEditor } from '../TiptapEditor';
-import { formatSourceContent, getSegmentComments } from '../../utils/editorTransforms';
+import { formatSourceContent, getSegmentComments, highlightGlossaryTerms } from '../../utils/editorTransforms';
 import { MatchCard } from './MatchCard';
+import { GlossaryCard } from './GlossaryCard';
 
 /**
  * Source column of the SegmentRow - displays source text and TM matches.
@@ -41,6 +42,23 @@ export function SourceColumn({
     // Threshold values for filtering matches
     const tMandatory = aiSettings.threshold_mandatory ?? 60;
     const tOptional = aiSettings.threshold_optional ?? 40;
+
+    // Extract glossary matches for inline highlighting
+    const glossaryMatches = useMemo(() => {
+        return sortedMatches
+            .filter(m => m.type === 'glossary')
+            .map(m => ({ source: m.source_text || m.source, target: m.content || m.target, note: m.note }));
+    }, [sortedMatches]);
+
+    // Format source content with glossary term highlighting
+    const formattedSourceContent = useMemo(() => {
+        const baseContent = formatSourceContent(segment.source_content, segment.tags, true);
+        // Apply glossary highlighting if matches exist
+        if (glossaryMatches.length > 0) {
+            return highlightGlossaryTerms(baseContent, glossaryMatches);
+        }
+        return baseContent;
+    }, [segment.source_content, segment.tags, glossaryMatches]);
 
     /**
      * Determines keyboard shortcut label for a match.
@@ -84,16 +102,42 @@ export function SourceColumn({
                 </span>
             </div>
 
-            {/* Source Text (read-only Tiptap with invisible character display) */}
+            {/* Source Text with inline glossary highlights */}
+            {/* If glossary matches exist, use raw HTML to render highlights correctly */}
+            {/* TipTap sanitizes unknown HTML elements, so we bypass it for highlighted content */}
             <div className="flex-grow">
-                <TiptapEditor
-                    content={formatSourceContent(segment.source_content, segment.tags, true)}
-                    isReadOnly={true}
-                    chromeless={true}
-                    availableTags={segment.tags}
-                    segmentId={`source-${segment.id}`}
-                />
+                {glossaryMatches.length > 0 ? (
+                    // Raw HTML with glossary highlights (TipTap would escape the <mark> tags)
+                    <div
+                        className="prose max-w-none text-sm leading-relaxed source-content-highlighted"
+                        dangerouslySetInnerHTML={{ __html: formattedSourceContent }}
+                    />
+                ) : (
+                    // Standard TipTap for source without highlights
+                    <TiptapEditor
+                        content={formatSourceContent(segment.source_content, segment.tags, true)}
+                        isReadOnly={true}
+                        chromeless={true}
+                        availableTags={segment.tags}
+                        segmentId={`source-${segment.id}`}
+                    />
+                )}
             </div>
+
+            {/* Glossary Cards - Directly under source text for visibility */}
+            {glossaryMatches.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-200">
+                    <div className="text-[10px] font-bold text-teal-600 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 bg-teal-400 rounded-full"></span>
+                        Glossary Terms ({glossaryMatches.length})
+                    </div>
+                    <div className="space-y-1.5">
+                        {glossaryMatches.map((match, idx) => (
+                            <GlossaryCard key={idx} match={match} />
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Comments Section (from Word document comments) */}
             {comments.length > 0 && (

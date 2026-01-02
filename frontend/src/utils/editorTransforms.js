@@ -216,3 +216,70 @@ export const getSegmentComments = (tags) => {
 
     return Array.from(uniqueComments.values());
 };
+
+/**
+ * Highlights glossary terms in HTML content by wrapping them with <mark> elements.
+ * 
+ * @param {string} htmlContent - The HTML content to process
+ * @param {Array} glossaryMatches - Array of glossary matches [{source, target, note}]
+ * @returns {string} HTML with glossary terms wrapped in highlighted marks
+ * 
+ * Example:
+ *   Input: "Submit the Final Report by deadline."
+ *   Glossary: [{source: "Final Report", target: "Verwendungsnachweis"}]
+ *   Output: "Submit the <mark class="glossary-highlight" ...>Final Report</mark> by deadline."
+ */
+export const highlightGlossaryTerms = (htmlContent, glossaryMatches) => {
+    if (!htmlContent || !glossaryMatches || glossaryMatches.length === 0) {
+        return htmlContent;
+    }
+
+    let result = htmlContent;
+
+    // Sort glossary terms by length (longest first) to avoid partial replacements
+    // e.g., "Final Report" should be matched before "Report"
+    const sortedMatches = [...glossaryMatches].sort(
+        (a, b) => (b.source?.length || 0) - (a.source?.length || 0)
+    );
+
+    // Track which regions are already marked to avoid double-highlighting
+    const markedRegions = [];
+
+    for (const match of sortedMatches) {
+        if (!match.source) continue;
+
+        // Escape special regex characters in the source term
+        const escapedSource = match.source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        // Case-insensitive word boundary match
+        // Using word boundaries to avoid partial word matches
+        const regex = new RegExp(`\\b(${escapedSource})\\b`, 'gi');
+
+        result = result.replace(regex, (fullMatch, capturedTerm, offset) => {
+            // Check if this region overlaps with an already marked region
+            for (const region of markedRegions) {
+                if (offset >= region.start && offset < region.end) {
+                    return fullMatch; // Skip - already highlighted
+                }
+            }
+
+            // Mark this region as highlighted
+            markedRegions.push({ start: offset, end: offset + fullMatch.length });
+
+            // Create tooltip content
+            const targetText = match.target || '';
+            const noteText = match.note ? ` (${match.note})` : '';
+            const tooltipContent = `→ ${targetText}${noteText}`;
+
+            // Return the highlighted term with tooltip
+            // Using data attributes for potential JS-based tooltip enhancement
+            return `<mark class="glossary-highlight bg-yellow-100 border-b border-yellow-400 cursor-help rounded-sm px-0.5" 
+                         title="${tooltipContent.replace(/"/g, '&quot;')}"
+                         data-glossary-source="${match.source.replace(/"/g, '&quot;')}"
+                         data-glossary-target="${targetText.replace(/"/g, '&quot;')}">${capturedTerm}</mark>`;
+        });
+    }
+
+    return result;
+};
+

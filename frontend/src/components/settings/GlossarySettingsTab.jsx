@@ -1,12 +1,23 @@
-
 import React, { useEffect, useState } from 'react';
 import { getGlossaryTerms, addGlossaryTerm, uploadGlossary } from '../../api/client';
+import { BookOpen, Plus, Upload, Download, Search } from 'lucide-react';
+import { SettingsCard, SettingsSection } from './shared';
 
+/**
+ * Glossary Settings Tab
+ * 
+ * Manages terminology entries that enforce consistent translations.
+ * Features:
+ * - Add individual terms with source, target, and context note
+ * - Bulk CSV upload/download
+ * - Searchable term list
+ */
 export function GlossarySettingsTab({ project }) {
     const [terms, setTerms] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
-    // Form State
+    // Form State for adding new terms
     const [source, setSource] = useState("");
     const [target, setTarget] = useState("");
     const [note, setNote] = useState("");
@@ -53,14 +64,13 @@ export function GlossarySettingsTab({ project }) {
             await uploadGlossary(project.id, uploadFile);
             setUploadFile(null);
             loadTerms();
-            alert("Uploaded successfully!");
         } catch (e) {
             alert("Upload failed");
             console.error(e);
         }
     };
 
-    // CSV Download
+    // CSV Download handler
     const handleDownload = () => {
         if (!terms.length) return;
         const header = "source,target,note\n";
@@ -73,102 +83,166 @@ export function GlossarySettingsTab({ project }) {
         document.body.appendChild(a);
         a.click();
         a.remove();
-    }
+    };
+
+    // Filter terms by search query
+    const filteredTerms = terms.filter(t =>
+        t.source?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.target?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.note?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
 
     return (
-        <div className="h-full flex flex-col gap-6">
-            <div className="flex justify-between items-start">
-                <div>
-                    <h3 className="text-lg font-bold text-gray-800">Glossary & Terminology</h3>
-                    <p className="text-sm text-gray-500">Manage terms that must be strictly translated.</p>
+        <div className="h-full flex flex-col gap-5">
+            {/* Header Banner */}
+            <div className="flex items-center justify-between bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-yellow-500/10 p-4 rounded-xl border border-amber-200/50">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white rounded-lg shadow-sm">
+                        <BookOpen size={20} className="text-amber-600" />
+                    </div>
+                    <div>
+                        <h2 className="font-semibold text-gray-800">Glossary & Terminology</h2>
+                        <p className="text-xs text-gray-500">
+                            {terms.length} term{terms.length !== 1 ? 's' : ''} defined
+                        </p>
+                    </div>
                 </div>
-                <div className="flex gap-2">
-                    <button
-                        onClick={handleDownload}
-                        className="px-3 py-1 text-xs border rounded hover:bg-gray-50 text-gray-600"
-                    >
-                        Download CSV
-                    </button>
-                </div>
+                <button
+                    onClick={handleDownload}
+                    disabled={terms.length === 0}
+                    className="flex items-center gap-2 px-3 py-1.5 text-xs border border-gray-200 
+                               rounded-lg hover:bg-white/80 text-gray-600 transition-colors
+                               disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    <Download size={14} />
+                    Export CSV
+                </button>
             </div>
 
             {/* Add Term Form */}
-            <form onSubmit={handleAdd} className="bg-gray-50 p-4 rounded-lg border border-gray-200 flex flex-col sm:flex-row gap-3 items-end">
-                <div className="flex-1 w-full">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Source Term</label>
-                    <input
-                        className="w-full text-sm p-2 border rounded focus:ring-2 focus:ring-blue-100 outline-none"
-                        placeholder="e.g. Final Report"
-                        value={source}
-                        onChange={e => setSource(e.target.value)}
-                        required
-                    />
-                </div>
-                <div className="flex-1 w-full">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Target Term</label>
-                    <input
-                        className="w-full text-sm p-2 border rounded focus:ring-2 focus:ring-blue-100 outline-none"
-                        placeholder="e.g. Verwendungsnachweis"
-                        value={target}
-                        onChange={e => setTarget(e.target.value)}
-                        required
-                    />
-                </div>
-                <div className="flex-1 w-full">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Context Note</label>
-                    <input
-                        className="w-full text-sm p-2 border rounded focus:ring-2 focus:ring-blue-100 outline-none"
-                        placeholder="e.g. Official Term"
-                        value={note}
-                        onChange={e => setNote(e.target.value)}
-                    />
-                </div>
-                <button
-                    type="submit"
-                    disabled={isSaving}
-                    className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50"
+            <SettingsCard>
+                <SettingsSection
+                    icon={Plus}
+                    title="Add New Term"
+                    accentColor="text-emerald-500"
                 >
-                    {isSaving ? "Adding..." : "Add"}
-                </button>
-            </form>
+                    <form onSubmit={handleAdd} className="flex flex-col sm:flex-row gap-3">
+                        <div className="flex-1">
+                            <input
+                                className="w-full text-sm px-3 py-2.5 border border-gray-200 rounded-xl 
+                                           focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400
+                                           shadow-sm transition-all placeholder:text-gray-400"
+                                placeholder="Source term (e.g., Final Report)"
+                                value={source}
+                                onChange={e => setSource(e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div className="flex-1">
+                            <input
+                                className="w-full text-sm px-3 py-2.5 border border-gray-200 rounded-xl 
+                                           focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400
+                                           shadow-sm transition-all placeholder:text-gray-400"
+                                placeholder="Target term (e.g., Verwendungsnachweis)"
+                                value={target}
+                                onChange={e => setTarget(e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div className="flex-1">
+                            <input
+                                className="w-full text-sm px-3 py-2.5 border border-gray-200 rounded-xl 
+                                           focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400
+                                           shadow-sm transition-all placeholder:text-gray-400"
+                                placeholder="Context note (optional)"
+                                value={note}
+                                onChange={e => setNote(e.target.value)}
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={isSaving}
+                            className="px-5 py-2.5 bg-emerald-500 text-white rounded-xl text-sm font-medium 
+                                       hover:bg-emerald-600 transition-colors shadow-sm
+                                       disabled:opacity-50 disabled:cursor-not-allowed
+                                       flex items-center gap-2"
+                        >
+                            <Plus size={16} />
+                            {isSaving ? "Adding..." : "Add"}
+                        </button>
+                    </form>
+                </SettingsSection>
+            </SettingsCard>
 
-            {/* Upload Area */}
-            <div className="flex items-center gap-4 text-sm bg-white p-3 border rounded border-dashed border-gray-300">
-                <span className="font-semibold text-gray-500">Bulk Upload (CSV):</span>
-                <input type="file" accept=".csv" onChange={e => setUploadFile(e.target.files[0])} />
+            {/* Bulk Upload */}
+            <div className="flex items-center gap-4 p-4 bg-white/50 border-2 border-dashed border-gray-200 rounded-xl">
+                <Upload size={20} className="text-gray-400" />
+                <div className="flex-1">
+                    <input
+                        type="file"
+                        accept=".csv"
+                        onChange={e => setUploadFile(e.target.files[0])}
+                        className="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 
+                                   file:rounded-lg file:border-0 file:text-sm file:font-medium
+                                   file:bg-gray-100 file:text-gray-700 file:cursor-pointer
+                                   hover:file:bg-gray-200"
+                    />
+                </div>
                 <button
                     onClick={handleUpload}
                     disabled={!uploadFile}
-                    className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50"
+                    className="px-4 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium
+                               hover:bg-gray-200 transition-colors
+                               disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    Upload
+                    Upload CSV
                 </button>
-                <div className="text-xs text-gray-400">CSV Headers: source, target, note</div>
+                <div className="text-xs text-gray-400">
+                    Headers: source, target, note
+                </div>
             </div>
 
-            {/* List */}
-            <div className="flex-1 overflow-auto border rounded-lg">
+            {/* Search */}
+            <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                    type="text"
+                    placeholder="Search terms..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl
+                               focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400
+                               text-sm transition-all"
+                />
+            </div>
+
+            {/* Terms Table */}
+            <div className="flex-1 overflow-auto border border-gray-200 rounded-xl bg-white">
                 <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-100 text-gray-600 font-semibold sticky top-0">
+                    <thead className="bg-gray-50 text-gray-600 font-medium sticky top-0">
                         <tr>
-                            <th className="p-3">Source Term (Lemma)</th>
-                            <th className="p-3">Target Term</th>
-                            <th className="p-3">Note</th>
+                            <th className="px-4 py-3 border-b border-gray-100">Source Term</th>
+                            <th className="px-4 py-3 border-b border-gray-100">Target Term</th>
+                            <th className="px-4 py-3 border-b border-gray-100">Note</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
-                        {terms.map(t => (
-                            <tr key={t.id} className="hover:bg-gray-50 group">
-                                <td className="p-3">
+                    <tbody className="divide-y divide-gray-50">
+                        {filteredTerms.map(t => (
+                            <tr key={t.id} className="hover:bg-amber-50/30 transition-colors">
+                                <td className="px-4 py-3">
                                     <div className="font-medium text-gray-800">{t.source}</div>
                                     <div className="text-xs text-gray-400 font-mono">{t.lemma}</div>
                                 </td>
-                                <td className="p-3 text-gray-700">{t.target}</td>
-                                <td className="p-3 text-gray-500 italic">{t.note}</td>
+                                <td className="px-4 py-3 text-gray-700">{t.target}</td>
+                                <td className="px-4 py-3 text-gray-500 italic text-xs">{t.note}</td>
                             </tr>
                         ))}
-                        {!loading && terms.length === 0 && (
-                            <tr><td colSpan="3" className="p-8 text-center text-gray-400 italic">No terms yet.</td></tr>
+                        {!loading && filteredTerms.length === 0 && (
+                            <tr>
+                                <td colSpan="3" className="px-4 py-12 text-center text-gray-400 italic">
+                                    {searchQuery ? 'No matching terms found' : 'No terms yet. Add your first term above.'}
+                                </td>
+                            </tr>
                         )}
                     </tbody>
                 </table>

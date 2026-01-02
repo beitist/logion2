@@ -1,8 +1,20 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Calculator, Database, Copy } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
-import { generateDraft, copySourceToTarget } from '../../api/client';
+import { copySourceToTarget } from '../../api/client';
+import { SettingsCard, SettingsSection } from './shared';
 
+/**
+ * Workflows Tab
+ * 
+ * Provides batch operations and automation tools:
+ * - Pre-analysis (context retrieval only)
+ * - Pre-translate (generate AI drafts)
+ * - Machine translation (fill targets)
+ * - Copy source to target
+ * - Reinitialize source file
+ * - Re-ingest vectors
+ */
 export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onFullReinit }) {
     const [copyLoading, setCopyLoading] = useState(false);
     const [isReinitModalOpen, setIsReinitModalOpen] = useState(false);
@@ -10,7 +22,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
     const handleRun = (mode) => {
         if (!segments) return;
 
-        // Blocking Batch Workflows (Preferred by User)
+        // Blocking Batch Workflows
         if (onBatchProcess && (mode === 'draft' || mode === 'translate')) {
             if (confirm(`Start Blocking Workflow: ${mode.toUpperCase()} for ${segments.length} segments?`)) {
                 onBatchProcess(mode);
@@ -18,7 +30,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
             return;
         }
 
-        // Fallback or Context Analysis (Background Queue)
+        // Background Queue for analyze
         const ids = segments.map(s => s.id);
         if (confirm(`Queue ${ids.length} segments for ${mode} (Background)?`)) {
             onQueueAll(ids, mode, true);
@@ -35,7 +47,6 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
             if (onRefresh) onRefresh();
         } catch (err) {
             alert("Failed to copy source: " + err.message);
-            console.error(err);
         } finally {
             setCopyLoading(false);
         }
@@ -48,129 +59,121 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
         }
     };
 
+    // Workflow card component for consistent styling
+    const WorkflowCard = ({ icon: Icon, iconBg, title, description, buttonText, buttonStyle, onClick, disabled }) => (
+        <div className="p-4 bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all">
+            <div className="flex items-start gap-3 mb-3">
+                <div className={`p-2.5 rounded-xl ${iconBg}`}>
+                    <Icon size={18} />
+                </div>
+                <div className="flex-1">
+                    <h3 className="text-sm font-semibold text-gray-800">{title}</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">{description}</p>
+                </div>
+            </div>
+            <button
+                onClick={onClick}
+                disabled={disabled}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 
+                           rounded-xl text-xs font-medium transition-all
+                           disabled:opacity-50 disabled:cursor-not-allowed ${buttonStyle}`}
+            >
+                {buttonText}
+            </button>
+        </div>
+    );
+
     return (
-        <div className="space-y-6 py-4 h-full flex flex-col">
-            <div className="flex items-center gap-2 text-indigo-800 bg-indigo-50 p-3 rounded-lg border border-indigo-100 mb-2">
-                <RefreshCw size={18} />
-                <span className="font-semibold text-sm">Workflows & Automation</span>
+        <div className="space-y-6 py-2 h-full flex flex-col">
+            {/* Header Banner */}
+            <div className="flex items-center gap-3 bg-gradient-to-r from-cyan-500/10 via-teal-500/10 to-emerald-500/10 p-4 rounded-xl border border-teal-200/50">
+                <div className="p-2 bg-white rounded-lg shadow-sm">
+                    <RefreshCw size={20} className="text-teal-600" />
+                </div>
+                <div>
+                    <h2 className="font-semibold text-gray-800">Workflows & Automation</h2>
+                    <p className="text-xs text-gray-500">Batch operations for the entire project</p>
+                </div>
             </div>
 
-            <div className="space-y-4 flex-1 overflow-y-auto pr-2">
+            {/* Scrollable Content */}
+            <div className="space-y-4 flex-1 overflow-y-auto pr-1">
 
-                {/* 1. Pre-Analysis */}
-                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:border-gray-300 transition-all">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-blue-50 text-blue-600 rounded-md">
-                            <Search size={20} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-bold text-gray-900">Pre-Analysis (Context Only)</h3>
-                            <p className="text-xs text-gray-500">Retrieve TM/Glossary matches. Does NOT generate AI Drafts.</p>
-                        </div>
-                    </div>
-                    <button
+                {/* Main Workflows Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <WorkflowCard
+                        icon={Search}
+                        iconBg="bg-blue-50 text-blue-600"
+                        title="Pre-Analysis"
+                        description="Retrieve TM/Glossary matches without AI drafting"
+                        buttonText="Analyze Context"
+                        buttonStyle="bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100"
                         onClick={() => handleRun("analyze")}
-                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-50 text-xs font-medium"
-                    >
-                        Analyze Context
-                    </button>
-                </div>
+                    />
 
-                {/* 2. Draft Suggestions */}
-                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:border-gray-300 transition-all">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-purple-50 text-purple-600 rounded-md">
-                            <Calculator size={20} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-bold text-gray-900">Pre-Translate (Suggestions)</h3>
-                            <p className="text-xs text-gray-500">Generates AI drafts in background for instant availability. Does NOT overwrite target.</p>
-                        </div>
-                    </div>
-                    <button
+                    <WorkflowCard
+                        icon={Sparkles}
+                        iconBg="bg-purple-50 text-purple-600"
+                        title="Pre-Translate (Suggestions)"
+                        description="Generate AI drafts for instant availability"
+                        buttonText="Generate Suggestions"
+                        buttonStyle="bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100"
                         onClick={() => handleRun("draft")}
-                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-purple-50 border border-purple-200 text-purple-700 rounded hover:bg-purple-100 text-xs font-medium"
-                    >
-                        Generate Suggestions
-                    </button>
-                </div>
+                    />
 
-                {/* 3. Machine Translation */}
-                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:border-gray-300 transition-all">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-green-50 text-green-600 rounded-md">
-                            <Database size={20} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-bold text-gray-900">Machine Translation</h3>
-                            <p className="text-xs text-gray-500">Translate and fill all empty target segments immediately.</p>
-                        </div>
-                    </div>
-                    <button
+                    <WorkflowCard
+                        icon={Database}
+                        iconBg="bg-emerald-50 text-emerald-600"
+                        title="Machine Translation"
+                        description="Translate and fill all empty segments"
+                        buttonText="Translate All Empty"
+                        buttonStyle="bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm"
                         onClick={() => handleRun("translate")}
-                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 shadow-sm text-xs font-medium"
-                    >
-                        Translate All Empty
-                    </button>
-                </div>
+                    />
 
-                {/* 4. Copy Source (Verification) */}
-                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:border-gray-300 transition-all">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-orange-50 text-orange-600 rounded-md">
-                            <Copy size={20} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-bold text-gray-900">Copy Source to Target</h3>
-                            <p className="text-xs text-gray-500">Verification Tool: Copies source text to target for all segments.</p>
-                        </div>
-                    </div>
-                    <button
+                    <WorkflowCard
+                        icon={Copy}
+                        iconBg="bg-orange-50 text-orange-600"
+                        title="Copy Source to Target"
+                        description="Verification: Copy source text to all targets"
+                        buttonText={copyLoading ? "Copying..." : "Copy All Sources"}
+                        buttonStyle="bg-orange-50 border border-orange-200 text-orange-700 hover:bg-orange-100"
                         onClick={handleCopySource}
                         disabled={copyLoading}
-                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-orange-50 border border-orange-200 text-orange-700 rounded hover:bg-orange-100 text-xs font-medium disabled:opacity-50"
-                    >
-                        {copyLoading ? "Copying..." : "Copy All Sources"}
-                    </button>
+                    />
                 </div>
 
-                {/* 5. Reinitialize Source (MOVED HERE) */}
-                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mt-6 hover:border-gray-300 transition-colors">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-gray-200 text-gray-600 rounded-md">
-                            <RefreshCw size={20} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-bold text-gray-900">Reinitialize Source</h3>
-                            <p className="text-xs text-gray-500">Reload source file or replace with new version.</p>
-                        </div>
-                    </div>
-                    <button
-                        onClick={() => setIsReinitModalOpen(true)}
-                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-50 text-xs font-medium"
+                {/* Maintenance Section */}
+                <SettingsCard>
+                    <SettingsSection
+                        icon={RotateCcw}
+                        title="Maintenance"
+                        description="Reset and reprocessing options"
+                        accentColor="text-gray-500"
                     >
-                        <RefreshCw size={14} /> Reinitialize
-                    </button>
-                </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <button
+                                onClick={() => setIsReinitModalOpen(true)}
+                                className="flex items-center justify-center gap-2 px-4 py-2.5 
+                                           bg-gray-50 border border-gray-200 text-gray-700 
+                                           rounded-xl text-xs font-medium hover:bg-gray-100 transition-colors"
+                            >
+                                <RefreshCw size={14} />
+                                Reinitialize Source
+                            </button>
 
-                {/* 6. Reingest */}
-                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 mt-4 opacity-75 hover:opacity-100 transition-opacity">
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-gray-200 text-gray-600 rounded-md">
-                            <Database size={20} />
+                            <button
+                                onClick={onReingest}
+                                className="flex items-center justify-center gap-2 px-4 py-2.5 
+                                           bg-gray-50 border border-gray-200 text-gray-700 
+                                           rounded-xl text-xs font-medium hover:bg-gray-100 transition-colors"
+                            >
+                                <Database size={14} />
+                                Re-Ingest Vectors
+                            </button>
                         </div>
-                        <div>
-                            <h3 className="text-sm font-bold text-gray-900">Re-Ingest Vectors</h3>
-                            <p className="text-xs text-gray-500">Re-process chunks for RAG.</p>
-                        </div>
-                    </div>
-                    <button
-                        onClick={onReingest}
-                        className="w-full mt-2 flex items-center justify-center gap-2 px-3 py-2 bg-gray-200 border border-gray-300 text-gray-700 rounded hover:bg-gray-300 text-xs font-medium"
-                    >
-                        Re-Ingest
-                    </button>
-                </div>
+                    </SettingsSection>
+                </SettingsCard>
             </div>
 
             <ReinitializeModal

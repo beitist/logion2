@@ -1,14 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { updateProject, reingestProject } from '../../api/client';
-import { Database, Sliders, Save, RefreshCw } from 'lucide-react';
+import { Database, Sliders, Save, AlertTriangle } from 'lucide-react';
+import { SettingsCard, SettingsSection } from './shared';
 
+/**
+ * RAG Settings Tab
+ * 
+ * Manages context match thresholds for different match types.
+ * Controls minimum confidence scores for displaying matches.
+ */
 export function RAGSettingsTab({ project, onUpdate }) {
     const [settings, setSettings] = useState({
         threshold_mandatory: 60,
         threshold_optional: 40,
         threshold_tm: 60
     });
-    const [isReingesting, setIsReingesting] = useState(false);
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
         if (project && project.config) {
@@ -22,6 +29,7 @@ export function RAGSettingsTab({ project, onUpdate }) {
     }, [project]);
 
     const handleSave = async () => {
+        setSaving(true);
         try {
             const currentConfig = project.config || {};
             const updatedProject = await updateProject(project.id, {
@@ -34,95 +42,133 @@ export function RAGSettingsTab({ project, onUpdate }) {
                 }
             });
             onUpdate(updatedProject);
-            alert("RAG Settings saved!");
         } catch (e) {
             alert("Error saving settings: " + e.message);
-        }
-    };
-
-    const handleReingest = async () => {
-        if (!confirm("This will clear all existing context vectors and re-process all files. Continue?")) return;
-
-        setIsReingesting(true);
-        try {
-            await reingestProject(project.id);
-            alert("Re-ingestion started in background. Check logs or wait a few minutes.");
-        } catch (e) {
-            alert("Failed to trigger re-ingest: " + e.message);
         } finally {
-            setIsReingesting(false);
+            setSaving(false);
         }
     };
 
-    const Slider = ({ label, value, field, color = "indigo" }) => (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <div className="flex justify-between items-end mb-2">
-                <label className="text-sm font-medium text-gray-700">{label}</label>
-                <div className={`text-xs font-bold px-2 py-1 rounded bg-${color}-100 text-${color}-700 min-w-[3rem] text-center`}>
-                    {value}%
+    // Reusable slider component
+    const ThresholdSlider = ({ label, emoji, value, field, color }) => {
+        const colorClasses = {
+            red: { bg: 'bg-red-500', light: 'bg-red-100', text: 'text-red-700', accent: 'accent-red-500' },
+            blue: { bg: 'bg-blue-500', light: 'bg-blue-100', text: 'text-blue-700', accent: 'accent-blue-500' },
+            green: { bg: 'bg-green-500', light: 'bg-green-100', text: 'text-green-700', accent: 'accent-green-500' }
+        };
+        const c = colorClasses[color] || colorClasses.blue;
+
+        return (
+            <div className="p-4 bg-white rounded-xl border border-gray-100">
+                <div className="flex justify-between items-center mb-3">
+                    <div className="flex items-center gap-2">
+                        <span>{emoji}</span>
+                        <span className="text-sm font-medium text-gray-700">{label}</span>
+                    </div>
+                    <div className={`text-xs font-bold px-2.5 py-1 rounded-lg ${c.light} ${c.text}`}>
+                        {value}%
+                    </div>
+                </div>
+                <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={value}
+                    onChange={(e) => setSettings({ ...settings, [field]: parseInt(e.target.value) })}
+                    className={`w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer ${c.accent}`}
+                />
+                <div className="flex justify-between text-[9px] text-gray-400 mt-1.5 uppercase tracking-wider font-mono">
+                    <span>Show All</span>
+                    <span>Strict</span>
                 </div>
             </div>
-            <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={value}
-                onChange={(e) => setSettings({ ...settings, [field]: parseInt(e.target.value) })}
-                className={`w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-${color}-600`}
-            />
-            <div className="flex justify-between text-[10px] text-gray-400 mt-1 uppercase tracking-wide font-mono">
-                <span>0% (Show All)</span>
-                <span>100% (Strict)</span>
-            </div>
-        </div>
-    );
+        );
+    };
 
     return (
-        <div className="space-y-6 py-4 h-full flex flex-col">
-            <div className="flex items-center gap-2 text-indigo-800 bg-indigo-50 p-3 rounded-lg border border-indigo-100 mb-2">
-                <Database size={18} />
-                <span className="font-semibold text-sm">Context Match Thresholds</span>
-            </div>
-
-            <p className="text-sm text-gray-600 px-1">
-                Configure the minimum confidence score required to display context matches in the sidebar.
-            </p>
-
-            <div className="space-y-4 flex-1">
-                <Slider
-                    label="⚖️ Mandatory / Legal Matches"
-                    value={settings.threshold_mandatory}
-                    field="threshold_mandatory"
-                    color="red"
-                />
-
-                <Slider
-                    label="💡 Optional / Archive Matches"
-                    value={settings.threshold_optional}
-                    field="threshold_optional"
-                    color="blue"
-                />
-
-                <div className="opacity-50 grayscale pointer-events-none relative">
-                    <div className="absolute inset-0 flex items-center justify-center z-10">
-                        <span className="bg-gray-800 text-white text-xs px-2 py-1 rounded shadow">Coming Soon</span>
-                    </div>
-                    <Slider
-                        label="🧠 Translation Memory (TM)"
-                        value={settings.threshold_tm}
-                        field="threshold_tm"
-                        color="green"
-                    />
+        <div className="space-y-6 py-2 h-full flex flex-col">
+            {/* Header Banner */}
+            <div className="flex items-center gap-3 bg-gradient-to-r from-indigo-500/10 via-violet-500/10 to-purple-500/10 p-4 rounded-xl border border-indigo-200/50">
+                <div className="p-2 bg-white rounded-lg shadow-sm">
+                    <Database size={20} className="text-indigo-600" />
+                </div>
+                <div>
+                    <h2 className="font-semibold text-gray-800">Context Match Thresholds</h2>
+                    <p className="text-xs text-gray-500">Minimum scores for displaying matches</p>
                 </div>
             </div>
 
+            {/* Content */}
+            <div className="space-y-5 flex-1 overflow-y-auto pr-1">
+                <SettingsCard>
+                    <SettingsSection
+                        icon={Sliders}
+                        title="Threshold Configuration"
+                        description="Configure minimum confidence scores for different match types"
+                        accentColor="text-indigo-500"
+                    >
+                        <div className="space-y-4">
+                            <ThresholdSlider
+                                label="Mandatory / Legal Matches"
+                                emoji="⚖️"
+                                value={settings.threshold_mandatory}
+                                field="threshold_mandatory"
+                                color="red"
+                            />
+
+                            <ThresholdSlider
+                                label="Optional / Archive Matches"
+                                emoji="💡"
+                                value={settings.threshold_optional}
+                                field="threshold_optional"
+                                color="blue"
+                            />
+
+                            {/* Coming Soon Placeholder */}
+                            <div className="relative">
+                                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm rounded-xl flex items-center justify-center z-10">
+                                    <span className="bg-gray-800 text-white text-xs px-3 py-1.5 rounded-full shadow-lg font-medium">
+                                        Coming Soon
+                                    </span>
+                                </div>
+                                <div className="opacity-40 pointer-events-none">
+                                    <ThresholdSlider
+                                        label="Translation Memory (TM)"
+                                        emoji="🧠"
+                                        value={settings.threshold_tm}
+                                        field="threshold_tm"
+                                        color="green"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </SettingsSection>
+                </SettingsCard>
+
+                {/* Info Note */}
+                <div className="flex items-start gap-3 p-4 bg-amber-50/50 rounded-xl border border-amber-200/50">
+                    <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-amber-700">
+                        Higher thresholds show only high-confidence matches. Lower values display more results but may include less relevant suggestions.
+                    </p>
+                </div>
+            </div>
+
+            {/* Save Button Footer */}
             <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                     onClick={handleSave}
-                    className="flex items-center gap-2 px-6 py-2 bg-gray-900 text-white rounded hover:bg-black transition-colors shadow-sm font-medium"
+                    disabled={saving}
+                    className="flex items-center gap-2 px-6 py-2.5 
+                               bg-gradient-to-r from-gray-800 to-gray-900 
+                               text-white rounded-xl 
+                               hover:from-gray-900 hover:to-black 
+                               transition-all shadow-sm font-medium
+                               disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    <Save size={16} /> Save RAG Settings
+                    <Save size={16} />
+                    {saving ? 'Saving...' : 'Save RAG Settings'}
                 </button>
             </div>
         </div>
