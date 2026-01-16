@@ -164,7 +164,7 @@ export function SplitView({ projectId, onBack }) {
 
             {/* Shortcuts Panel - Collapsible */}
             <div className={`border-b bg-white overflow-hidden transition-all duration-300 ease-in-out ${showShortcuts ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0'}`}>
-                <ShortcutsPanel />
+                <ShortcutsPanel onClose={() => setShowShortcuts(false)} />
             </div>
 
             {/* Main Workspace */}

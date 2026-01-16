@@ -1,64 +1,65 @@
 import React from 'react';
 import { X, Keyboard } from 'lucide-react';
 
-export function ShortcutsPanel({ isOpen, onClose }) {
-    // Note: Visibility is now controlled by parent container CSS in SplitView
-    // This component just renders the content
-
+/**
+ * ShortcutsPanel
+ * 
+ * Displays keyboard shortcuts for the editor.
+ * Rendered as an embedded panel (not fixed sidebar).
+ * Visibility is controlled by parent container in SplitView.
+ */
+export function ShortcutsPanel({ onClose }) {
     const shortcuts = [
         // Navigation
-        { keys: ["Cmd/Ctrl", "Enter"], desc: "Save & Next Segment", category: "Navigation" },
-        { keys: ["Cmd/Ctrl", "Shift", "↓"], desc: "Next Segment", category: "Navigation" },
-        { keys: ["Cmd/Ctrl", "Shift", "↑"], desc: "Prev Segment", category: "Navigation" },
+        { keys: ["⌘/Ctrl", "Enter"], desc: "Save & Next Segment", category: "Navigation" },
+        { keys: ["⌘/Ctrl", "Shift", "↓"], desc: "Next Segment", category: "Navigation" },
+        { keys: ["⌘/Ctrl", "Shift", "↑"], desc: "Prev Segment", category: "Navigation" },
 
         // AI & Context
         { keys: ["Ctrl", "Space"], desc: "Generate AI Draft", category: "AI" },
-        { keys: ["Cmd/Ctrl", "Alt", "ß"], desc: "Generate AI Draft (Alt)", category: "AI" },
-        { keys: ["Cmd/Ctrl", "Alt", "0"], desc: "Insert MT/Best Match", category: "Context" },
-        { keys: ["Cmd/Ctrl", "Alt", "9"], desc: "Insert Reference 1", category: "Context" },
-        { keys: ["Cmd/Ctrl", "Alt", "8"], desc: "Insert Reference 2", category: "Context" },
-        { keys: ["Cmd/Ctrl", "Alt", "7"], desc: "Insert Reference 3", category: "Context" },
+        { keys: ["⌘/Ctrl", "Alt", "0"], desc: "Insert MT/Best Match", category: "Context" },
+        { keys: ["⌘/Ctrl", "Alt", "9"], desc: "Insert Reference 1", category: "Context" },
+        { keys: ["⌘/Ctrl", "Alt", "8"], desc: "Insert Reference 2", category: "Context" },
+        { keys: ["⌘/Ctrl", "Alt", "7"], desc: "Insert Reference 3", category: "Context" },
 
         // Formatting
         { keys: ["Tab"], desc: "Insert Tab Character", category: "Formatting" },
-        { keys: ["Cmd/Ctrl", "Ctrl", "Alt", "Space"], desc: "Insert Non-Breaking Space", category: "Formatting" },
+        { keys: ["⌘", "Ctrl", "Alt", "Space"], desc: "Insert NBSP", category: "Formatting" },
     ];
 
     return (
-        <div className="fixed inset-y-0 right-0 w-80 bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out border-l border-gray-200 flex flex-col">
-            <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                    <Keyboard size={18} /> Shortcuts
+        <div className="p-4">
+            {/* Header with Close Button */}
+            <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                    <Keyboard size={16} className="text-gray-500" />
+                    Keyboard Shortcuts
                 </h3>
-                <button
-                    onClick={onClose}
-                    className="p-1 hover:bg-gray-200 rounded-full text-gray-500 transition-colors"
-                >
-                    <X size={18} />
-                </button>
+                {onClose && (
+                    <button
+                        onClick={onClose}
+                        className="p-1 hover:bg-gray-200 rounded-full text-gray-400 hover:text-gray-600 transition-colors"
+                        title="Close Shortcuts"
+                    >
+                        <X size={16} />
+                    </button>
+                )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                {/* Group by Category is implicit or explicit? Let's generic list for now */}
-
-                <div className="space-y-4">
-                    {shortcuts.map((s, i) => (
-                        <div key={i} className="flex justify-between items-center group">
-                            <span className="text-sm text-gray-600 font-medium group-hover:text-gray-900">{s.desc}</span>
-                            <div className="flex gap-1">
-                                {s.keys.map((k, j) => (
-                                    <span key={j} className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-500 font-bold shadow-sm">
-                                        {k}
-                                    </span>
-                                ))}
-                            </div>
+            {/* Grid of Shortcuts */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-2">
+                {shortcuts.map((s, i) => (
+                    <div key={i} className="flex justify-between items-center gap-2 py-1">
+                        <span className="text-xs text-gray-600 truncate">{s.desc}</span>
+                        <div className="flex gap-0.5 flex-shrink-0">
+                            {s.keys.map((k, j) => (
+                                <span key={j} className="px-1.5 py-0.5 bg-gray-100 border border-gray-200 rounded text-[10px] font-mono text-gray-500 font-semibold">
+                                    {k}
+                                </span>
+                            ))}
                         </div>
-                    ))}
-                </div>
-
-                <div className="mt-8 p-4 bg-blue-50 rounded-lg text-xs text-blue-700 leading-relaxed border border-blue-100">
-                    <strong>Tip:</strong> You can hover over the context matches in the editor to see their specific insertion shortcuts.
-                </div>
+                    </div>
+                ))}
             </div>
         </div>
     );
