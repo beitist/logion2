@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2 } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
-import { copySourceToTarget } from '../../api/client';
+import { copySourceToTarget, clearDraftTargets } from '../../api/client';
 import { SettingsCard, SettingsSection } from './shared';
 
 /**
@@ -49,6 +49,23 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
             alert("Failed to copy source: " + err.message);
         } finally {
             setCopyLoading(false);
+        }
+    };
+
+    const [clearLoading, setClearLoading] = useState(false);
+
+    const handleClearDrafts = async () => {
+        if (!project) return;
+        if (!confirm("This will DELETE all unconfirmed translations and AI drafts. Only segments marked 'Translated' will be preserved. Continue?")) return;
+
+        try {
+            setClearLoading(true);
+            await clearDraftTargets(project.id);
+            if (onRefresh) onRefresh();
+        } catch (err) {
+            alert("Failed to clear drafts: " + err.message);
+        } finally {
+            setClearLoading(false);
         }
     };
 
@@ -151,7 +168,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                         description="Reset and reprocessing options"
                         accentColor="text-gray-500"
                     >
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                             <button
                                 onClick={() => setIsReinitModalOpen(true)}
                                 className="flex items-center justify-center gap-2 px-4 py-2.5 
@@ -170,6 +187,18 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                             >
                                 <Database size={14} />
                                 Re-Ingest Vectors
+                            </button>
+
+                            <button
+                                onClick={handleClearDrafts}
+                                disabled={clearLoading}
+                                className="flex items-center justify-center gap-2 px-4 py-2.5 
+                                           bg-red-50 border border-red-200 text-red-700 
+                                           rounded-xl text-xs font-medium hover:bg-red-100 transition-colors
+                                           disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <Trash2 size={14} />
+                                {clearLoading ? "Clearing..." : "Clear Draft Targets"}
                             </button>
                         </div>
                     </SettingsSection>

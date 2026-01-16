@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Terminal, Bug, Keyboard, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw } from 'lucide-react';
+import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw } from 'lucide-react';
 import './TiptapStyles.css';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
@@ -231,7 +231,7 @@ export function SplitView({ projectId, onBack }) {
                                 onClick={() => setShowSettings(false)}
                                 className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition-colors"
                             >
-                                <Trash2 size={16} className="rotate-45" /> {/* Use X icon ideally, recycling Trash for close for now if X not imported */}
+                                <X size={16} />
                             </button>
                         </div>
 

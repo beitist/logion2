@@ -109,6 +109,14 @@ export async function copySourceToTarget(projectId) {
     return res.json();
 }
 
+export async function clearDraftTargets(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/workflow/clear-drafts`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to clear drafts");
+    return res.json();
+}
+
 export async function generateProjectDrafts(projectId) {
     const res = await fetch(`${API_BASE}/project/${projectId}/generate-drafts`, {
         method: "POST",

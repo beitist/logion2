@@ -166,6 +166,17 @@ async def copy_source_workflow(project_id: str, service: SegmentService = Depend
     service.bulk_copy_source_to_target(project_id)
     return {"message": "Copy source completed successfully", "project_id": project_id}
 
+@router.post("/{project_id}/workflow/clear-drafts")
+async def clear_drafts_workflow(project_id: str, db: Session = Depends(get_db)):
+    """
+    Workflow: Clear all draft targets and AI metadata for unconfirmed segments.
+    Use when drafts were generated with wrong MT model.
+    """
+    from ..workflows.clear_drafts import ClearDraftsWorkflow
+    wf = ClearDraftsWorkflow(db, project_id)
+    wf.run()
+    return {"message": "Draft targets cleared successfully", "project_id": project_id}
+
 
 @router.post("/{project_id}/batch-translate")
 async def batch_translate(

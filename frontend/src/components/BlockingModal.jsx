@@ -37,15 +37,28 @@ export function BlockingModal({ task, onStop, onComplete, onReload }) {
                 )}
 
                 {/* Logs Console */}
-                <div className="bg-gray-900 rounded-lg p-4 font-mono text-xs text-green-400 h-64 overflow-y-auto border border-gray-800 shadow-inner flex flex-col-reverse">
-                    {task.logs.length > 0 ? task.logs.slice().reverse().map((log, i) => (
-                        <div key={i} className="mb-1 border-l-2 border-transparent hover:border-green-600 pl-2 opacity-90 hover:opacity-100">
-                            <span className="text-gray-500 mr-2">[{new Date().toLocaleTimeString()}]</span>
-                            {log}
+                <div className="bg-gray-900 rounded-lg p-4 font-mono text-xs text-green-400 h-64 overflow-y-auto border border-gray-800 shadow-inner">
+                    {task.logs.length > 0 ? (
+                        <div className="flex flex-col">
+                            {task.logs.map((log, i) => {
+                                // Extract timestamp if log already contains one (format: [HH:MM:SS])
+                                // Otherwise show log index
+                                const hasTimestamp = log.match(/^\[[\d:]+\]/);
+                                return (
+                                    <div key={i} className="mb-1.5 border-l-2 border-transparent hover:border-green-600 pl-2 opacity-90 hover:opacity-100">
+                                        {!hasTimestamp && (
+                                            <span className="text-gray-500 mr-2">[{String(i + 1).padStart(2, '0')}]</span>
+                                        )}
+                                        {log}
+                                    </div>
+                                );
+                            })}
+                            {task.status === 'running' && (
+                                <div className="animate-pulse mt-2 text-green-600">_</div>
+                            )}
                         </div>
-                    )) : <div className="text-gray-500 italic">Waiting...</div>}
-                    {task.status === 'running' && (
-                        <div className="animate-pulse mt-2 text-green-600">_</div>
+                    ) : (
+                        <div className="text-gray-500 italic">Waiting...</div>
                     )}
                 </div>
 

@@ -2,19 +2,26 @@ import React from 'react';
 import { X, Keyboard } from 'lucide-react';
 
 export function ShortcutsPanel({ isOpen, onClose }) {
-    if (!isOpen) return null;
+    // Note: Visibility is now controlled by parent container CSS in SplitView
+    // This component just renders the content
 
     const shortcuts = [
-        { keys: ["Cmd", "Enter"], desc: "Save & Next Segment", category: "Editor" },
-        { keys: ["Cmd", "Shift", "↓"], desc: "Next Segment", category: "Navigation" },
-        { keys: ["Ctrl", "Cmd", "Alt", "↓"], desc: "Next Segment (Alt)", category: "Navigation" },
-        { keys: ["Cmd", "Shift", "↑"], desc: "Prev Segment", category: "Navigation" },
-        { keys: ["Ctrl", "Space"], desc: "AI Draft / Auto-Complete", category: "AI" },
-        { keys: ["Cmd", "Alt", "0"], desc: "Insert Best Match (MT)", category: "Context" },
-        { keys: ["Cmd", "Alt", "9"], desc: "Insert Ref Match 1", category: "Context" },
-        { keys: ["Cmd", "Alt", "8"], desc: "Insert Ref Match 2", category: "Context" },
-        { keys: ["Tab"], desc: "Insert [TAB]", category: "Formatting" },
-        { keys: ["Ctrl", "Cmd", "Alt", "Space"], desc: "Insert NBSP", category: "Formatting" },
+        // Navigation
+        { keys: ["Cmd/Ctrl", "Enter"], desc: "Save & Next Segment", category: "Navigation" },
+        { keys: ["Cmd/Ctrl", "Shift", "↓"], desc: "Next Segment", category: "Navigation" },
+        { keys: ["Cmd/Ctrl", "Shift", "↑"], desc: "Prev Segment", category: "Navigation" },
+
+        // AI & Context
+        { keys: ["Ctrl", "Space"], desc: "Generate AI Draft", category: "AI" },
+        { keys: ["Cmd/Ctrl", "Alt", "ß"], desc: "Generate AI Draft (Alt)", category: "AI" },
+        { keys: ["Cmd/Ctrl", "Alt", "0"], desc: "Insert MT/Best Match", category: "Context" },
+        { keys: ["Cmd/Ctrl", "Alt", "9"], desc: "Insert Reference 1", category: "Context" },
+        { keys: ["Cmd/Ctrl", "Alt", "8"], desc: "Insert Reference 2", category: "Context" },
+        { keys: ["Cmd/Ctrl", "Alt", "7"], desc: "Insert Reference 3", category: "Context" },
+
+        // Formatting
+        { keys: ["Tab"], desc: "Insert Tab Character", category: "Formatting" },
+        { keys: ["Cmd/Ctrl", "Ctrl", "Alt", "Space"], desc: "Insert Non-Breaking Space", category: "Formatting" },
     ];
 
     return (

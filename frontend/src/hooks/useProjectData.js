@@ -43,18 +43,26 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
                     }
                 }
 
-                // Initial Focus
+                // Initial Focus: Scroll to first unconfirmed segment
+                // Priority: 1) First empty target, 2) First draft/mt_draft status
                 if (s.length > 0) {
-                    const firstDraft = s.find(seg => seg.status === 'draft');
-                    if (firstDraft) {
-                        setTimeout(() => {
-                            const el = document.getElementById(`editor-${firstDraft.id}`);
-                            if (el) {
-                                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                if (setActiveSegmentId) setActiveSegmentId(firstDraft.id);
-                            }
-                        }, 500);
-                    }
+                    // Find first segment that needs work
+                    const firstUnconfirmed = s.find(seg =>
+                        // Empty target content
+                        (!seg.target_content || seg.target_content.trim() === '') ||
+                        // Or has draft/mt_draft status (not yet confirmed by user)
+                        ['draft', 'mt_draft', 'error'].includes(seg.status)
+                    );
+
+                    const targetSegment = firstUnconfirmed || s[0]; // Fallback to first segment
+
+                    setTimeout(() => {
+                        const el = document.getElementById(`editor-${targetSegment.id}`);
+                        if (el) {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            if (setActiveSegmentId) setActiveSegmentId(targetSegment.id);
+                        }
+                    }, 500);
                 }
             }
         } catch (err) {
