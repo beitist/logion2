@@ -49,7 +49,7 @@ def inject_tagged_text(paragraph: Paragraph, text: str, tags_map: dict, shape_ma
     # Tokenize
     tokens = re.split(r'(<[^>]+>)', text)
     
-    active_style = {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': False, 'superscript': False, 'subscript': False}
+    active_style = {'bold': 0, 'italic': 0, 'underline': 0, 'highlight': False, 'superscript': False, 'subscript': False, 'strike': False, 'smallCaps': False, 'caps': False}
     
     # Helper to process shape elements recursively
     def process_shape_element(element, sid):

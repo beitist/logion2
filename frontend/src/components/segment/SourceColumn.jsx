@@ -23,6 +23,7 @@ import { MatchCard } from './MatchCard';
  * @param {Object} flashingSegments - Map of segment IDs with flash animation
  * @param {boolean} showDebug - Whether to show debug info
  * @param {Function} onAiDraft - Callback for AI draft generation
+ * @param {Function} onContextMenu - Callback for right-click context menu (glossary add)
  */
 export function SourceColumn({
     segment,
@@ -33,7 +34,8 @@ export function SourceColumn({
     generatingSegments,
     flashingSegments,
     showDebug,
-    onAiDraft
+    onAiDraft,
+    onContextMenu
 }) {
     const comments = getSegmentComments(segment.tags);
     const aiSettings = project?.config?.ai_settings || {};
@@ -107,19 +109,24 @@ export function SourceColumn({
             <div className="flex-grow">
                 {glossaryMatches.length > 0 ? (
                     // Raw HTML with glossary highlights (TipTap would escape the <mark> tags)
+                    // Bind onContextMenu for right-click glossary add functionality
                     <div
                         className="prose max-w-none text-sm leading-relaxed source-content-highlighted"
                         dangerouslySetInnerHTML={{ __html: formattedSourceContent }}
+                        onContextMenu={onContextMenu}
                     />
                 ) : (
                     // Standard TipTap for source without highlights
-                    <TiptapEditor
-                        content={formatSourceContent(segment.source_content, segment.tags, true)}
-                        isReadOnly={true}
-                        chromeless={true}
-                        availableTags={segment.tags}
-                        segmentId={`source-${segment.id}`}
-                    />
+                    // Wrap in div for onContextMenu binding
+                    <div onContextMenu={onContextMenu}>
+                        <TiptapEditor
+                            content={formatSourceContent(segment.source_content, segment.tags, true)}
+                            isReadOnly={true}
+                            chromeless={true}
+                            availableTags={segment.tags}
+                            segmentId={`source-${segment.id}`}
+                        />
+                    </div>
                 )}
             </div>
 

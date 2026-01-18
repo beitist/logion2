@@ -11,7 +11,7 @@ import { X, Keyboard } from 'lucide-react';
 export function ShortcutsPanel({ onClose }) {
     const shortcuts = [
         // Navigation
-        { keys: ["⌘/Ctrl", "Enter"], desc: "Save & Next Segment", category: "Navigation" },
+        { keys: ["⌘/Ctrl", "Alt", "Enter"], desc: "Save & Next Segment", category: "Navigation" },
         { keys: ["⌘/Ctrl", "Shift", "↓"], desc: "Next Segment", category: "Navigation" },
         { keys: ["⌘/Ctrl", "Shift", "↑"], desc: "Prev Segment", category: "Navigation" },
 

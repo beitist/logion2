@@ -20,6 +20,7 @@ import { TargetColumn } from './TargetColumn';
  * @param {Function} onSave - Callback when target content is saved
  * @param {Function} onFocus - Callback when editor receives focus
  * @param {Function} onNavigate - Callback for keyboard navigation between segments
+ * @param {Function} onContextMenu - Callback for right-click context menu (glossary add)
  * @param {Function} registerEditor - Callback to register editor instance for external control
  */
 export const SegmentRow = memo(({
@@ -33,6 +34,7 @@ export const SegmentRow = memo(({
     onSave,
     onFocus,
     onNavigate,
+    onContextMenu,
     registerEditor
 }) => {
     // Use custom hook to process and sort matches
@@ -58,6 +60,7 @@ export const SegmentRow = memo(({
                 flashingSegments={flashingSegments}
                 showDebug={showDebug}
                 onAiDraft={onAiDraft}
+                onContextMenu={onContextMenu}
             />
 
             {/* Target Column (Right) */}

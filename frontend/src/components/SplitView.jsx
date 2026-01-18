@@ -186,6 +186,7 @@ export function SplitView({ projectId, onBack }) {
                             onSave={handleSave}
                             onFocus={handleSegmentFocus}
                             onNavigate={handleNavigation}
+                            onContextMenu={handleContextMenu}
                             registerEditor={(id, ed) => editorRefs.current[id] = ed}
                         />
                     ))}

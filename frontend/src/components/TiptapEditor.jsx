@@ -359,7 +359,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             }
                             return false;
                         },
-                        'Mod-Enter': () => {
+                        'Mod-Alt-Enter': () => {
                             if (onSave && segmentId) {
                                 // Block onBlur from firing a second save immediately
                                 isSavingRef.current = true;

@@ -62,6 +62,8 @@ def inject_into_container(container, base_metadata, source_segments, shape_map=N
         t_coords = None
         if m.get("child_type") == "table_cell" or m.get("sub_type") == "table" or stype == "table":
              t_coords = (m.get("table_index"), m.get("row_index"), m.get("cell_index"))
+             # Override stype to 'table' for consistent key matching with injection loop
+             stype = "table"
              
         p_idx = m.get("p_index") if m.get("p_index") is not None else m.get("index")
             
