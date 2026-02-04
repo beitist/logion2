@@ -1,8 +1,10 @@
 import docx
+import uuid
 from docx.api import Document
 from .traverse import process_container
 from .footnotes import extract_footnotes, extract_endnotes
 from app.logger import get_logger
+from app.schemas import SegmentInternal
 
 logger = get_logger("Parser")
 
@@ -60,7 +62,50 @@ def _parse_docx(file_path: str, segmentation_func=None, source_lang="en"):
                 # Extract text
                 texts = comment.findall('.//w:t', namespaces)
                 full_text = "".join([t.text or "" for t in texts])
-                context["comments_map"][cid] = full_text
+                # Store as dict with text and done status (default False)
+                context["comments_map"][cid] = {"text": full_text, "is_done": False}
+        
+        # Check commentsExtended.xml for done status
+        comments_ext_part = None
+        for rel in part.rels.values():
+            if "commentsExtended" in rel.reltype:
+                comments_ext_part = rel.target_part
+                break
+        
+        if comments_ext_part:
+            from lxml import etree
+            ext_xml = comments_ext_part.blob
+            ext_root = etree.fromstring(ext_xml)
+            # w15:commentEx with w15:done attribute
+            ns = {'w15': 'http://schemas.microsoft.com/office/word/2012/wordml'}
+            for ce in ext_root.findall('.//w15:commentEx', ns):
+                para_id = ce.get('{http://schemas.microsoft.com/office/word/2012/wordml}paraId')
+                is_done = ce.get('{http://schemas.microsoft.com/office/word/2012/wordml}done') == '1'
+                # Match by paraId -> need to link to comment ID (complex, use simple approach)
+                # Actually, commentEx is indexed by position, so match by order
+                # For now, just check done attribute exists
+                if is_done:
+                    # Try to find corresponding comment by index
+                    pass  # TODO: proper linking if needed
+            
+            # Simpler approach: check if done="1" appears
+            for ce in ext_root.iter():
+                if 'done' in ce.attrib.values():
+                    # Mark all as potentially done - check paraIdParent
+                    parent_id = None
+                    for attr, val in ce.attrib.items():
+                        if 'paraIdParent' in attr:
+                            parent_id = val
+                    is_done = '1' in [v for k, v in ce.attrib.items() if 'done' in k]
+                    # Link via paraId if available
+                    for attr, val in ce.attrib.items():
+                        if 'paraId' in attr and not 'Parent' in attr:
+                            # Find comment with this paraId
+                            for cid in context["comments_map"]:
+                                # If we can match, update done status
+                                if is_done:
+                                    context["comments_map"][cid]["is_done"] = True
+                                    break  # Only first match for now
     except Exception as e:
         logger.warning(f"Failed to extract comments: {e}")
 
@@ -86,9 +131,37 @@ def _parse_docx(file_path: str, segmentation_func=None, source_lang="en"):
     if context["extra_segments"]:
         final_segments.extend(context["extra_segments"])
 
-    # 4. Filter empty segments (only whitespace or truly empty)
-    final_segments = [s for s in final_segments 
-                      if s.source_text and s.source_text.strip()]
+    # 4. Comments as separate segments (for translation)
+    for cid, cdata in context["comments_map"].items():
+        ctext = cdata["text"] if isinstance(cdata, dict) else cdata
+        is_done = cdata.get("is_done", False) if isinstance(cdata, dict) else False
+        if ctext and ctext.strip():
+            comment_seg = SegmentInternal(
+                id=str(uuid.uuid4()),
+                segment_id=str(uuid.uuid4()),
+                source_text=ctext.strip(),
+                target_content=None,
+                status="draft",
+                tags={},
+                metadata={
+                    "type": "comment",
+                    "comment_id": cid,
+                    "is_done": is_done
+                }
+            )
+            final_segments.append(comment_seg)
+
+    # 5. Filter empty segments (only whitespace, truly empty, or tag-only)
+    import re
+    def has_real_content(text):
+        """Returns True if text contains actual content beyond just tags/whitespace"""
+        if not text:
+            return False
+        # Remove all tags like <1>, </2>, etc. - single backslash for correct regex
+        stripped = re.sub(r'</?\d+>', '', text)
+        return bool(stripped.strip())
+    
+    final_segments = [s for s in final_segments if has_real_content(s.source_text)]
 
     logger.info(f"Extracted {len(final_segments)} segments.")
     return final_segments

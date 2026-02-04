@@ -157,34 +157,35 @@ def is_pure_text_run(run_element) -> bool:
 # For now, let's keep handle_shape_element generic or passing context that has the function.
 
 def handle_shape_element(shape_element, add_tag_func, context, process_para_func) -> str:
-    # Need to pass `_process_paragraph` as callback (`process_para_func`)
-    found_textbox = False
-    shape_id = None
-    
+    """
+    Handles drawing/shape elements. For textboxes, extracts text as segments.
+    For pure images (no textbox), returns empty string to preserve original element.
+    """
     ns = NAMESPACES
     txbx_contents = shape_element.findall('.//w:txbxContent', ns)
     
-    if txbx_contents:
-        shape_id = str(uuid.uuid4())
-        found_textbox = True
-        
-        for txbx in txbx_contents:
-            for i, para in enumerate(txbx.findall('.//w:p', ns)):
-                loc = {
-                    "type": "shape",
-                    "shape_id": shape_id,
-                    "p_index": i
-                }
-                
-                sub_segments = process_para_func(para, loc, context)
-                if sub_segments:
-                    context["extra_segments"].extend(sub_segments)
+    # If no textbox content, this is a pure image - don't create placeholder
+    # This preserves the original image in the document during reassembly
+    if not txbx_contents:
+        return ""  # Empty string = no placeholder, image preserved
+    
+    # Has textbox - extract text content
+    shape_id = str(uuid.uuid4())
+    
+    for txbx in txbx_contents:
+        for i, para in enumerate(txbx.findall('.//w:p', ns)):
+            loc = {
+                "type": "shape",
+                "shape_id": shape_id,
+                "p_index": i
+            }
+            
+            sub_segments = process_para_func(para, loc, context)
+            if sub_segments:
+                context["extra_segments"].extend(sub_segments)
 
-    if found_textbox:
-        shape_tag = TagModel(type="shape", content="[SHAPE]", xml_attributes={"id": shape_id})
-    else:
-        shape_tag = TagModel(type="shape", content="[SHAPE]")
-        
+    # Create tag for textbox (not pure image)
+    shape_tag = TagModel(type="shape", content="[TEXTBOX]", xml_attributes={"id": shape_id})
     tid = add_tag_func(shape_tag)
     return f"<{tid}></{tid}>"
 

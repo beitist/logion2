@@ -14,6 +14,9 @@ export function useUIState(projectId) {
     // Multi-File Filter: null = all files, otherwise file_id
     const [activeFileId, setActiveFileId] = useState(null);
 
+    // Comment Filter: 'all' = show all, 'none' = hide comments
+    const [commentFilter, setCommentFilter] = useState('all');
+
     // Feature UI
     const [showGlossaryModal, setShowGlossaryModal] = useState(false);
     const [glossarySelection, setGlossarySelection] = useState("");
@@ -62,6 +65,7 @@ export function useUIState(projectId) {
         showConsole, setShowConsole,
         showDebug, setShowDebug,
         activeFileId, setActiveFileId,  // Multi-File Filter
+        commentFilter, setCommentFilter,  // Comment Filter
         showGlossaryModal, setShowGlossaryModal,
         glossarySelection, setGlossarySelection,
         glossaryTerms, setGlossaryTerms,

@@ -43,41 +43,124 @@ def repair_tags(segments: list[str]) -> list[str]:
 
 def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict]:
     """
-    Iteratively removes tags that wrap the entire text content.
-    E.g. '<1><2>text</2></1>' -> 'text' (tags 1 and 2 removed from dict)
+    Cleans up tag patterns in segment text:
+    1. Removes outer wrapping tags: '<1><2>text</2></1>' -> 'text'
+    2. Removes empty tag pairs: '<N></N>' -> ''
+    3. Removes whitespace-only tag pairs: '<N>\\n</N>' or '<N> </N>' -> '' (or keeps whitespace)
     
-    Uses iterative loop to handle nested wrappers like <1><2>...<2></1>
+    Iterates until no more changes occur.
+    """
+    if not source_text:
+        return source_text, tags or {}
+    
+    new_tags = dict(tags) if tags else {}
+    text = source_text
+    
+    changed = True
+    while changed:
+        changed = False
+        text_before = text
+        
+        # 1. Remove empty tag pairs: <N></N> (including groups like <1><2></2></1>)
+        # Pattern matches <N></N> with nothing in between
+        text = re.sub(r'<(\d+)></\1>', '', text)
+        
+        # 2. Remove whitespace-only tag pairs: <N>whitespace</N>
+        # This removes tags that only contain spaces, newlines, nbsp, etc.
+        text = re.sub(r'<(\d+)>[\s\xa0]*</\1>', '', text)
+        
+        # 3. Peel off outer wrapping tags if they encompass entire content
+        text = text.strip()
+        match = re.match(r'^<(\d+)>(.*)</\1>$', text, re.DOTALL)
+        if match:
+            tag_id = match.group(1)
+            inner = match.group(2).strip()
+            text = inner
+            if tag_id in new_tags:
+                del new_tags[tag_id]
+            changed = True
+        
+        # Check if anything changed in this iteration
+        if text != text_before:
+            changed = True
+    
+    # Final cleanup: strip and filter tags dict to only keep tags that still appear
+    text = text.strip()
+    tag_ids_in_text = set(re.findall(r'<(\d+)>', text))
+    new_tags = {k: v for k, v in new_tags.items() if k in tag_ids_in_text}
+    
+    return text, new_tags
+
+def get_tag_signature(tag_data) -> tuple:
+    """
+    Creates a hashable signature for a tag to compare identity.
+    Two tags with the same signature have identical formatting.
+    Handles both dict and TagModel objects.
+    """
+    # Handle both dict and TagModel objects
+    if hasattr(tag_data, 'type'):
+        # TagModel object
+        tag_type = tag_data.type or ''
+        attrs = tag_data.xml_attributes or {}
+    else:
+        # Dictionary
+        tag_type = tag_data.get('type', '')
+        attrs = tag_data.get('xml_attributes', {})
+    
+    # Sort attributes for consistent comparison
+    sorted_attrs = tuple(sorted(attrs.items())) if attrs else ()
+    return (tag_type, sorted_attrs)
+
+def merge_adjacent_tags(source_text: str, tags: dict) -> tuple[str, dict]:
+    """
+    Merges adjacent tags that have identical formatting.
+    E.g. '<7>Please d</7><8>escribe</8>' -> '<7>Please describe</7>' 
+         (if tag 7 and 8 have same type/attrs)
+    
+    Returns cleaned text and updated tags dict.
     """
     if not source_text or not tags:
-        return source_text, tags
+        return source_text, tags or {}
     
-    # Pattern matches: <N>content</N> where content is the entire string
-    pattern = re.compile(r'^<(\d+)>(.*)$', re.DOTALL)
-    end_pattern = re.compile(r'^(.*)</?(\d+)>$', re.DOTALL)
+    # Build signature lookup for all tags
+    tag_signatures = {tid: get_tag_signature(t) for tid, t in tags.items()}
+    
+    # Pattern to find tag pairs: </N><M> where N closes and M opens
+    # We want to merge if they have the same signature
+    pattern = re.compile(r'</(\d+)><(\d+)>')
     
     new_tags = dict(tags)
-    text = source_text.strip()
+    text = source_text
     changed = True
     
     while changed:
         changed = False
-        # Check for opening tag at start
-        start_match = pattern.match(text)
-        if start_match:
-            tag_id = start_match.group(1)
-            rest = start_match.group(2)
+        match = pattern.search(text)
+        if match:
+            closing_tid = match.group(1)
+            opening_tid = match.group(2)
             
-            # Check if this tag closes at the very end
-            # Handle: <1>content</1>
-            close_tag = f'</{tag_id}>'
-            if rest.endswith(close_tag):
-                inner = rest[:-len(close_tag)]
-                # Verify tag_id doesn't appear confused in the middle
-                # Simple check: just peel it off
-                text = inner
-                if tag_id in new_tags:
-                    del new_tags[tag_id]
-                changed = True
+            # Check if both tags exist and have the same signature
+            if closing_tid in tag_signatures and opening_tid in tag_signatures:
+                sig1 = tag_signatures[closing_tid]
+                sig2 = tag_signatures[opening_tid]
+                
+                if sig1 == sig2:
+                    # Same formatting - remove the close/open pair
+                    # </7><8> gets removed, content flows together
+                    # Also need to replace </8> with </7> at the end
+                    text = text[:match.start()] + text[match.end():]
+                    
+                    # Replace closing tag of the merged one
+                    text = text.replace(f'</{opening_tid}>', f'</{closing_tid}>', 1)
+                    
+                    # Remove the now-unused tag from our dict
+                    if opening_tid in new_tags:
+                        del new_tags[opening_tid]
+                    if opening_tid in tag_signatures:
+                        del tag_signatures[opening_tid]
+                    
+                    changed = True
     
     return text, new_tags
 
@@ -250,6 +333,9 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
         # Strip wrapping tags that encompass entire segment
         clean_part, clean_tags = strip_wrapping_tags(part, tags)
         
+        # Merge adjacent tags with identical formatting
+        clean_part, clean_tags = merge_adjacent_tags(clean_part, clean_tags)
+        
         final_segments.append(SegmentInternal(
             id=str(uuid.uuid4()),
             segment_id=str(uuid.uuid4()),
@@ -264,38 +350,88 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
 
 def process_container(container, base_metadata: dict, context: dict):
     """
-    Iterates over a container's paragraphs and tables.
+    Iterates over a container's paragraphs and tables IN DOCUMENT ORDER.
+    Uses XML-level iteration for Document body, falls back to python-docx API for cells.
     """
     all_segments = []
     
-    # Paragraphs
-    for i, para in enumerate(container.paragraphs):
-        meta = base_metadata.copy()
-        meta['p_index'] = i
-        # Use _element to get lxml
-        segs = process_paragraph(para._element, meta, context)
-        all_segments.extend(segs)
+    # Namespaces for Word XML
+    w_ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+    
+    # Get the XML element
+    body_element = container._element if hasattr(container, '_element') else getattr(container, 'element', None)
+    
+    # Check if this is a document body (has w:body wrapper) or a cell/other container
+    # Document body needs special handling for correct order
+    is_document_body = hasattr(container, 'sections')  # Only Document has sections
+    
+    if is_document_body and body_element is not None:
+        # Find the actual w:body element
+        body_el = body_element.find(f'{w_ns}body')
+        if body_el is None:
+            body_el = body_element  # Fallback to element itself
         
-    # Tables
-    for t_i, table in enumerate(container.tables):
-        for r_i, row in enumerate(table.rows):
-            # Track seen cells to skip spanned cells (colspan/rowspan)
-            # python-docx returns the same cell object multiple times for spanned cells
-            seen_cells = set()
-            for c_i, cell in enumerate(row.cells):
-                cell_id = id(cell)  # Unique Python object ID
-                if cell_id in seen_cells:
-                    continue  # Skip: This is a spanned cell we already processed
-                seen_cells.add(cell_id)
+        p_index = 0
+        t_index = 0
+        
+        for child in body_el:
+            tag = child.tag
+            
+            if tag == f'{w_ns}p':
+                meta = base_metadata.copy()
+                meta['p_index'] = p_index
+                segs = process_paragraph(child, meta, context)
+                all_segments.extend(segs)
+                p_index += 1
                 
-                # Recursive call for Cell Container
-                cell_meta = base_metadata.copy()
-                cell_meta['child_type'] = 'table_cell'
-                cell_meta['table_index'] = t_i
-                cell_meta['row_index'] = r_i
-                cell_meta['cell_index'] = c_i
+            elif tag == f'{w_ns}tbl':
+                from docx.table import Table
+                table = Table(child, container)
                 
-                cell_segs = process_container(cell, cell_meta, context)
-                all_segments.extend(cell_segs)
+                for r_i, row in enumerate(table.rows):
+                    seen_cells = set()
+                    for c_i, cell in enumerate(row.cells):
+                        cell_id = id(cell)
+                        if cell_id in seen_cells:
+                            continue
+                        seen_cells.add(cell_id)
+                        
+                        cell_meta = base_metadata.copy()
+                        cell_meta['child_type'] = 'table_cell'
+                        cell_meta['table_index'] = t_index
+                        cell_meta['row_index'] = r_i
+                        cell_meta['cell_index'] = c_i
+                        
+                        cell_segs = process_container(cell, cell_meta, context)
+                        all_segments.extend(cell_segs)
                 
+                t_index += 1
+    else:
+        # For cells and other containers, use python-docx API (simpler, works reliably)
+        # Paragraphs first
+        for i, para in enumerate(container.paragraphs):
+            meta = base_metadata.copy()
+            meta['p_index'] = i
+            segs = process_paragraph(para._element, meta, context)
+            all_segments.extend(segs)
+        
+        # Then tables (cells can have nested tables)
+        for t_i, table in enumerate(container.tables):
+            for r_i, row in enumerate(table.rows):
+                seen_cells = set()
+                for c_i, cell in enumerate(row.cells):
+                    cell_id = id(cell)
+                    if cell_id in seen_cells:
+                        continue
+                    seen_cells.add(cell_id)
+                    
+                    cell_meta = base_metadata.copy()
+                    cell_meta['child_type'] = 'table_cell'
+                    cell_meta['table_index'] = t_i
+                    cell_meta['row_index'] = r_i
+                    cell_meta['cell_index'] = c_i
+                    
+                    cell_segs = process_container(cell, cell_meta, context)
+                    all_segments.extend(cell_segs)
+                    
     return all_segments

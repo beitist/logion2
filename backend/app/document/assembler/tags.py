@@ -293,3 +293,9 @@ def inject_tagged_text(paragraph: Paragraph, text: str, tags_map: dict, shape_ma
                 elif lower_tag == 'u': active_style['underline'] += -1 if is_closing else 1
         else:
             add_styled_run(token)
+
+    # 3. Append any remaining preserved shapes (images without explicit <shape> tag)
+    # This ensures images are not lost when parser returns empty string for pure images
+    for remaining_shape in preserved_shapes:
+        run = paragraph.add_run()
+        run._element.append(remaining_shape)

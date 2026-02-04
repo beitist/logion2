@@ -30,6 +30,7 @@ export function SplitView({ projectId, onBack }) {
         showConsole, setShowConsole,
         showDebug, setShowDebug,
         activeFileId, setActiveFileId,  // Multi-File Filter
+        commentFilter, setCommentFilter,  // Comment Filter
         showGlossaryModal, setShowGlossaryModal,
         glossarySelection, setGlossarySelection,
         glossaryTerms, setGlossaryTerms,
@@ -70,9 +71,25 @@ export function SplitView({ projectId, onBack }) {
     const sourceFiles = (project?.files || []).filter(f => f.category === 'source');
 
     // Filter segments by activeFileId (null = show all)
-    const filteredSegments = activeFileId
+    let filteredSegments = activeFileId
         ? segments.filter(s => s.file_id === activeFileId)
         : segments;
+
+    // Filter comments based on commentFilter ('all', 'active', or 'none')
+    if (commentFilter === 'none') {
+        // Hide all comments
+        filteredSegments = filteredSegments.filter(s => {
+            return s.metadata?.type !== 'comment';
+        });
+    } else if (commentFilter === 'active') {
+        // Hide only done/resolved comments
+        filteredSegments = filteredSegments.filter(s => {
+            if (s.metadata?.type === 'comment') {
+                return !s.metadata?.is_done;
+            }
+            return true;
+        });
+    }
 
     // Get active file name for display
     const activeFileName = activeFileId
@@ -114,6 +131,29 @@ export function SplitView({ projectId, onBack }) {
                             </select>
                             <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                         </div>
+                    )}
+
+                    {/* Comment Filter Toggle (3-way: all → active → none) */}
+                    {segments.some(s => s.metadata?.type === 'comment') && (
+                        <button
+                            onClick={() => {
+                                const cycle = { all: 'active', active: 'none', none: 'all' };
+                                setCommentFilter(cycle[commentFilter] || 'all');
+                            }}
+                            className={`text-xs px-2 py-1.5 rounded-lg border transition-colors flex items-center gap-1.5 ${commentFilter === 'all'
+                                    ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                    : commentFilter === 'active'
+                                        ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                                        : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
+                                }`}
+                            title={
+                                commentFilter === 'all' ? 'Showing all comments. Click to show only active.'
+                                    : commentFilter === 'active' ? 'Showing active comments. Click to hide all.'
+                                        : 'Comments hidden. Click to show all.'
+                            }
+                        >
+                            💬 {commentFilter === 'all' ? 'All' : commentFilter === 'active' ? 'Active' : 'Hidden'}
+                        </button>
                     )}
 
                     {/* Progress Bar */}
