@@ -125,7 +125,15 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `translated_${project.filename}`;
+
+            // Determine filename based on blob type (ZIP for multi-file, DOCX for single)
+            // Backend returns different content-types: application/zip or application/vnd.openxmlformats-officedocument.wordprocessingml.document
+            if (blob.type === 'application/zip' || blob.type === 'application/x-zip-compressed') {
+                a.download = `translated_${project.name || project.filename}_all.zip`;
+            } else {
+                a.download = `translated_${project.filename}`;
+            }
+
             document.body.appendChild(a);
             a.click();
             a.remove();

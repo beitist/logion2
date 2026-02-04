@@ -196,3 +196,73 @@ export async function getAiModels() {
     if (!res.ok) throw new Error("Failed to fetch models");
     return res.json();
 }
+
+// =========================================================================
+// File Management API (Multi-File Support)
+// =========================================================================
+
+/**
+ * Get all files for a project with their metadata and segment counts.
+ */
+export async function getProjectFiles(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/files`);
+    if (!res.ok) throw new Error("Failed to fetch project files");
+    return res.json();
+}
+
+/**
+ * Add a new file to an existing project.
+ * @param {string} projectId - Project UUID
+ * @param {string} category - 'source', 'legal', or 'background'
+ * @param {File} file - The file to upload
+ */
+export async function addProjectFile(projectId, category, file) {
+    const formData = new FormData();
+    formData.append("category", category);
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/project/${projectId}/files`, {
+        method: "POST",
+        body: formData,
+    });
+    if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to add file");
+    }
+    return res.json();
+}
+
+/**
+ * Replace an existing file with a new version.
+ * @param {string} projectId - Project UUID
+ * @param {string} fileId - File UUID to replace
+ * @param {File} file - The new file
+ */
+export async function replaceProjectFile(projectId, fileId, file) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/project/${projectId}/files/${fileId}`, {
+        method: "PUT",
+        body: formData,
+    });
+    if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to replace file");
+    }
+    return res.json();
+}
+
+/**
+ * Delete a file and all its linked segments.
+ * @param {string} projectId - Project UUID
+ * @param {string} fileId - File UUID to delete
+ */
+export async function deleteProjectFile(projectId, fileId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/files/${fileId}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete file");
+    return res.json();
+}
+

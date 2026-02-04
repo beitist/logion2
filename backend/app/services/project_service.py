@@ -94,16 +94,26 @@ class ProjectService:
             # Continue despite upload error?
 
     async def _parse_initial_source(self, project: Project):
-        source_record = self.db.query(ProjectFile).filter(
+        """
+        Parses ALL source files and creates segments with file_id linkage.
+        Each file's segments get a global index offset to maintain unique indices.
+        """
+        source_records = self.db.query(ProjectFile).filter(
             ProjectFile.project_id == project.id,
             ProjectFile.category == ProjectFileCategory.source.value
-        ).first()
+        ).order_by(ProjectFile.uploaded_at).all()
         
-        if source_record:
-            from ..document.parsing_service import process_file_parsing
+        if not source_records:
+            return
             
-            try:
-                # Use unified helper
+        from ..document.parsing_service import process_file_parsing
+        
+        global_index = 0  # Running index across all files
+        
+        try:
+            for source_record in source_records:
+                logger.info(f"Parsing source file: {source_record.filename}")
+                
                 segments_internal = process_file_parsing(
                     file_path_or_url=source_record.file_path,
                     project_id=project.id,
@@ -111,28 +121,31 @@ class ProjectService:
                     original_filename=source_record.filename
                 )
                 
-                for i, seg_int in enumerate(segments_internal):
+                for seg_int in segments_internal:
                     seg_dump = seg_int.model_dump()
                     db_segment = Segment(
                         id=seg_int.segment_id,
                         project_id=project.id,
-                        index=i,
+                        file_id=source_record.id,  # Link segment to its source file
+                        index=global_index,
                         source_content=seg_int.source_text,
                         target_content=None,
                         status="draft",
                         metadata_json=seg_dump
                     )
                     self.db.add(db_segment)
-                
-                project.status = "review"
-                self.db.add(project)
-                self.db.commit()
-                
-            except Exception as e:
-                self.db.delete(project)
-                self.db.commit()
-                # logger.error ...
-                raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
+                    global_index += 1
+            
+            project.status = "review"
+            self.db.add(project)
+            self.db.commit()
+            
+        except Exception as e:
+            self.db.rollback()
+            self.db.delete(project)
+            self.db.commit()
+            logger.error(f"Parsing failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
 
     def get_project(self, project_id: str) -> Optional[Project]:
         return self.db.query(Project).filter(Project.id == project_id).first()
@@ -277,3 +290,221 @@ class ProjectService:
             
         from ..workflows.preload_matches import run_background_preload_matches
         background_tasks.add_task(run_background_preload_matches, project_id)
+
+    # =========================================================================
+    # File Management Methods (Multi-File Support)
+    # =========================================================================
+    
+    async def add_file(
+        self, 
+        project_id: str, 
+        category: str, 
+        file: 'UploadFile',
+        background_tasks: 'BackgroundTasks'
+    ) -> ProjectFile:
+        """
+        Adds a new file to an existing project.
+        For source files: parses and creates segments with file_id linkage.
+        For legal/background: triggers reingest for RAG updates.
+        
+        Args:
+            project_id: Project UUID
+            category: 'source', 'legal', or 'background'
+            file: The uploaded file
+            background_tasks: For async reingest
+            
+        Returns:
+            The created ProjectFile record
+        """
+        project = self.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Validate category
+        try:
+            cat_enum = ProjectFileCategory(category)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
+        
+        # Upload and create file record
+        await self._process_file(file, cat_enum, project_id)
+        self.db.commit()
+        
+        # Get newly created file record
+        file_record = self.db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.filename == file.filename,
+            ProjectFile.category == category
+        ).first()
+        
+        if not file_record:
+            raise HTTPException(status_code=500, detail="File record creation failed")
+        
+        # For source files: parse and create segments
+        if cat_enum == ProjectFileCategory.source:
+            await self._parse_source_file(project, file_record)
+        
+        # For legal/background: trigger reingest for RAG
+        if cat_enum in [ProjectFileCategory.legal, ProjectFileCategory.background]:
+            from ..workflows.reingest import run_background_reingest
+            background_tasks.add_task(run_background_reingest, project_id)
+        
+        self.db.refresh(file_record)
+        return file_record
+    
+    async def _parse_source_file(self, project: Project, file_record: ProjectFile):
+        """
+        Parses a single source file and creates segments.
+        Used when adding new source files to existing projects.
+        """
+        from ..document.parsing_service import process_file_parsing
+        
+        # Find highest existing segment index in this project
+        max_index_result = self.db.query(Segment).filter(
+            Segment.project_id == project.id
+        ).order_by(Segment.index.desc()).first()
+        
+        start_index = (max_index_result.index + 1) if max_index_result else 0
+        
+        try:
+            segments_internal = process_file_parsing(
+                file_path_or_url=file_record.file_path,
+                project_id=project.id,
+                source_lang=project.source_lang,
+                original_filename=file_record.filename
+            )
+            
+            for i, seg_int in enumerate(segments_internal):
+                seg_dump = seg_int.model_dump()
+                db_segment = Segment(
+                    id=seg_int.segment_id,
+                    project_id=project.id,
+                    file_id=file_record.id,
+                    index=start_index + i,
+                    source_content=seg_int.source_text,
+                    target_content=None,
+                    status="draft",
+                    metadata_json=seg_dump
+                )
+                self.db.add(db_segment)
+            
+            self.db.commit()
+            logger.info(f"Parsed {len(segments_internal)} segments from {file_record.filename}")
+            
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to parse source file: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
+    
+    async def replace_file(
+        self, 
+        project_id: str, 
+        file_id: str, 
+        new_file: 'UploadFile',
+        background_tasks: 'BackgroundTasks'
+    ) -> ProjectFile:
+        """
+        Replaces an existing file with a new version.
+        For source files: deletes old segments and re-parses.
+        For legal/background: triggers reingest.
+        
+        Args:
+            project_id: Project UUID
+            file_id: The file to replace
+            new_file: The replacement file
+            background_tasks: For async reingest
+            
+        Returns:
+            Updated ProjectFile record
+        """
+        file_record = self.db.query(ProjectFile).filter(
+            ProjectFile.id == file_id,
+            ProjectFile.project_id == project_id
+        ).first()
+        
+        if not file_record:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        project = self.get_project(project_id)
+        category = ProjectFileCategory(file_record.category)
+        
+        # For source files: delete linked segments first
+        if category == ProjectFileCategory.source:
+            deleted_count = self.db.query(Segment).filter(
+                Segment.file_id == file_id
+            ).delete()
+            logger.info(f"Deleted {deleted_count} segments from replaced file")
+        
+        # Upload new file content
+        object_name = f"{project_id}/{file_record.category}/{new_file.filename}"
+        
+        try:
+            await new_file.seek(0)
+            uploaded_obj = upload_file(new_file.file, object_name, content_type=new_file.content_type)
+            
+            # Update file record
+            file_record.filename = new_file.filename
+            file_record.file_path = uploaded_obj
+            self.db.add(file_record)
+            self.db.commit()
+            
+        except Exception as e:
+            self.db.rollback()
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        
+        # For source files: re-parse
+        if category == ProjectFileCategory.source:
+            await self._parse_source_file(project, file_record)
+        
+        # For legal/background: trigger reingest
+        if category in [ProjectFileCategory.legal, ProjectFileCategory.background]:
+            from ..workflows.reingest import run_background_reingest
+            background_tasks.add_task(run_background_reingest, project_id)
+        
+        self.db.refresh(file_record)
+        return file_record
+    
+    def delete_file(self, project_id: str, file_id: str) -> dict:
+        """
+        Deletes a file and all its linked segments.
+        
+        Args:
+            project_id: Project UUID
+            file_id: The file to delete
+            
+        Returns:
+            Confirmation message with deletion stats
+        """
+        file_record = self.db.query(ProjectFile).filter(
+            ProjectFile.id == file_id,
+            ProjectFile.project_id == project_id
+        ).first()
+        
+        if not file_record:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Count linked segments for reporting
+        segment_count = self.db.query(Segment).filter(
+            Segment.file_id == file_id
+        ).count()
+        
+        # Delete file (cascade should handle segments via relationship)
+        filename = file_record.filename
+        self.db.delete(file_record)
+        self.db.commit()
+        
+        logger.info(f"Deleted file {filename} with {segment_count} segments")
+        
+        return {
+            "message": f"File '{filename}' deleted successfully",
+            "deleted_segments": segment_count
+        }
+    
+    def get_project_files(self, project_id: str) -> list:
+        """
+        Returns all files for a project, grouped by category.
+        """
+        return self.db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id
+        ).order_by(ProjectFile.category, ProjectFile.uploaded_at).all()
+

@@ -210,3 +210,73 @@ def export_project(project_id: str, service: ExportService = Depends(get_export_
 @router.get("/{project_id}/export/tmx")
 async def export_project_tmx(project_id: str, service: ExportService = Depends(get_export_service)):
     return service.export_project_tmx(project_id)
+
+# =========================================================================
+# File Management Endpoints (Multi-File Support)
+# =========================================================================
+
+@router.get("/{project_id}/files", response_model=List[dict])
+def get_project_files(project_id: str, service: ProjectService = Depends(get_project_service)):
+    """
+    Returns all files for a project with their metadata.
+    """
+    files = service.get_project_files(project_id)
+    return [{
+        "id": f.id,
+        "filename": f.filename,
+        "category": f.category,
+        "uploaded_at": f.uploaded_at.isoformat(),
+        "segment_count": len(f.segments) if hasattr(f, 'segments') else 0
+    } for f in files]
+
+@router.post("/{project_id}/files")
+async def add_project_file(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    category: str = Form(...),
+    file: UploadFile = File(...),
+    service: ProjectService = Depends(get_project_service)
+):
+    """
+    Adds a new file to an existing project.
+    Category must be 'source', 'legal', or 'background'.
+    Source files are parsed immediately.
+    Legal/background files trigger RAG reingest.
+    """
+    result = await service.add_file(project_id, category, file, background_tasks)
+    return {
+        "message": f"File '{result.filename}' added successfully",
+        "file_id": result.id,
+        "category": result.category
+    }
+
+@router.put("/{project_id}/files/{file_id}")
+async def replace_project_file(
+    project_id: str,
+    file_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    service: ProjectService = Depends(get_project_service)
+):
+    """
+    Replaces an existing file with a new version.
+    For source files: old segments are deleted and new ones created.
+    For legal/background: triggers RAG reingest.
+    """
+    result = await service.replace_file(project_id, file_id, file, background_tasks)
+    return {
+        "message": f"File replaced with '{result.filename}'",
+        "file_id": result.id
+    }
+
+@router.delete("/{project_id}/files/{file_id}")
+def delete_project_file(
+    project_id: str,
+    file_id: str,
+    service: ProjectService = Depends(get_project_service)
+):
+    """
+    Deletes a file and all its linked segments.
+    """
+    return service.delete_file(project_id, file_id)
+

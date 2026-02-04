@@ -41,6 +41,46 @@ def repair_tags(segments: list[str]) -> list[str]:
         
     return repaired
 
+def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict]:
+    """
+    Iteratively removes tags that wrap the entire text content.
+    E.g. '<1><2>text</2></1>' -> 'text' (tags 1 and 2 removed from dict)
+    
+    Uses iterative loop to handle nested wrappers like <1><2>...<2></1>
+    """
+    if not source_text or not tags:
+        return source_text, tags
+    
+    # Pattern matches: <N>content</N> where content is the entire string
+    pattern = re.compile(r'^<(\d+)>(.*)$', re.DOTALL)
+    end_pattern = re.compile(r'^(.*)</?(\d+)>$', re.DOTALL)
+    
+    new_tags = dict(tags)
+    text = source_text.strip()
+    changed = True
+    
+    while changed:
+        changed = False
+        # Check for opening tag at start
+        start_match = pattern.match(text)
+        if start_match:
+            tag_id = start_match.group(1)
+            rest = start_match.group(2)
+            
+            # Check if this tag closes at the very end
+            # Handle: <1>content</1>
+            close_tag = f'</{tag_id}>'
+            if rest.endswith(close_tag):
+                inner = rest[:-len(close_tag)]
+                # Verify tag_id doesn't appear confused in the middle
+                # Simple check: just peel it off
+                text = inner
+                if tag_id in new_tags:
+                    del new_tags[tag_id]
+                changed = True
+    
+    return text, new_tags
+
 def process_paragraph(para_element, location: dict, context: dict) -> list[SegmentInternal]:
     """
     Converts a docx Paragraph XML ELEMENT into a SegmentInternal list.
@@ -207,13 +247,16 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
         seg_loc = location.copy()
         seg_loc['sub_index'] = i
         
+        # Strip wrapping tags that encompass entire segment
+        clean_part, clean_tags = strip_wrapping_tags(part, tags)
+        
         final_segments.append(SegmentInternal(
             id=str(uuid.uuid4()),
             segment_id=str(uuid.uuid4()),
-            source_text=part,
+            source_text=clean_part,
             target_content=None, 
             status="draft",
-            tags=tags, 
+            tags=clean_tags, 
             metadata=seg_loc
         ))
         
@@ -236,7 +279,15 @@ def process_container(container, base_metadata: dict, context: dict):
     # Tables
     for t_i, table in enumerate(container.tables):
         for r_i, row in enumerate(table.rows):
+            # Track seen cells to skip spanned cells (colspan/rowspan)
+            # python-docx returns the same cell object multiple times for spanned cells
+            seen_cells = set()
             for c_i, cell in enumerate(row.cells):
+                cell_id = id(cell)  # Unique Python object ID
+                if cell_id in seen_cells:
+                    continue  # Skip: This is a spanned cell we already processed
+                seen_cells.add(cell_id)
+                
                 # Recursive call for Cell Container
                 cell_meta = base_metadata.copy()
                 cell_meta['child_type'] = 'table_cell'

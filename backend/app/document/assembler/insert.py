@@ -89,7 +89,15 @@ def inject_into_container(container, base_metadata, source_segments, shape_map=N
     # Tables
     for t_i, table in enumerate(container.tables):
         for r_i, row in enumerate(table.rows):
+            # Track seen cells to skip spanned cells (colspan/rowspan)
+            # python-docx returns the same cell object for spanned cells
+            seen_cells = set()
             for c_i, cell in enumerate(row.cells):
+                cell_id = id(cell)  # Unique Python object ID
+                if cell_id in seen_cells:
+                    continue  # Skip: spanned cell already processed
+                seen_cells.add(cell_id)
+                
                 for p_i, para in enumerate(cell.paragraphs):
                     target_type = stype
                     if stype == "body":

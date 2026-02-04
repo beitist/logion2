@@ -31,51 +31,103 @@ class ExportWorkflow(BaseWorkflow):
             raise ValueError(f"Unknown format: {format}")
 
     def _export_docx(self) -> str:
-        # 1. Get all segments
-        segments = self.db.query(Segment).filter(Segment.project_id == self.project_id).order_by(Segment.index).all()
+        """
+        Exports all source files as translated DOCX.
+        If multiple source files exist, creates a ZIP archive.
+        """
+        import zipfile
         
-        # 2. Reconstruct SegmentInternal objects
-        reassembly_segments = self._prepare_segments_for_reassembly(segments)
-        
-        # 3. Path to original file
-        source_file_record = self.db.query(ProjectFile).filter(
+        # 1. Get ALL source files (multi-file support)
+        source_file_records = self.db.query(ProjectFile).filter(
             ProjectFile.project_id == self.project_id, 
             ProjectFile.category == ProjectFileCategory.source.value
-        ).first()
+        ).order_by(ProjectFile.uploaded_at).all()
 
-        if not source_file_record:
-            raise HTTPException(status_code=404, detail="Original source file not found for project")
+        if not source_file_records:
+            raise HTTPException(status_code=404, detail="No source files found for project")
         
-        input_object_name = source_file_record.file_path
-        temp_input_path = os.path.join(UPLOAD_DIR, f"temp_export_in_{self.project_id}.docx")
+        # 2. Get all segments and group by file_id
+        all_segments = self.db.query(Segment).filter(
+            Segment.project_id == self.project_id
+        ).order_by(Segment.index).all()
+        
+        # Group segments by file_id for multi-file processing
+        segments_by_file = {}
+        for seg in all_segments:
+            # Use file_id if available, otherwise fallback to first file
+            file_key = seg.file_id or source_file_records[0].id
+            if file_key not in segments_by_file:
+                segments_by_file[file_key] = []
+            segments_by_file[file_key].append(seg)
+        
+        # 3. Process each source file
+        output_files = []  # List of (filename, path) tuples
+        temp_files_to_cleanup = []
         
         try:
-            try:
-                download_file(input_object_name, temp_input_path)
-            except Exception as e:
-                # Legacy fallback
-                if os.path.exists(input_object_name):
-                     shutil.copy(input_object_name, temp_input_path)
-                else:
-                     raise HTTPException(status_code=404, detail=f"Source file download failed: {e}")
-
-            output_filename = f"translated_{self.project.filename}"
-            output_path = os.path.join(UPLOAD_DIR, output_filename)
-            
-            # 4. Reassemble
-            try:
-                reassemble_docx(temp_input_path, output_path, reassembly_segments)
-            except Exception as e:
-                import traceback
-                with open("export_error.log", "w") as f:
-                    f.write(traceback.format_exc())
-                raise HTTPException(status_code=500, detail=f"Reassembly failed: {str(e)}")
+            for source_record in source_file_records:
+                # Get segments for this file
+                file_segments = segments_by_file.get(source_record.id, [])
                 
-            return output_path
+                if not file_segments:
+                    continue  # Skip files with no segments
+                
+                # Prepare segments for reassembly
+                reassembly_segments = self._prepare_segments_for_reassembly(file_segments)
+                
+                # Download source file
+                input_object_name = source_record.file_path
+                temp_input_path = os.path.join(UPLOAD_DIR, f"temp_export_in_{source_record.id}.docx")
+                temp_files_to_cleanup.append(temp_input_path)
+                
+                try:
+                    download_file(input_object_name, temp_input_path)
+                except Exception as e:
+                    # Legacy fallback
+                    if os.path.exists(input_object_name):
+                        shutil.copy(input_object_name, temp_input_path)
+                    else:
+                        raise HTTPException(status_code=404, detail=f"Source file download failed: {e}")
+                
+                # Output filename for this file
+                output_filename = f"translated_{source_record.filename}"
+                output_path = os.path.join(UPLOAD_DIR, output_filename)
+                
+                # Reassemble this file
+                try:
+                    reassemble_docx(temp_input_path, output_path, reassembly_segments)
+                    output_files.append((output_filename, output_path))
+                except Exception as e:
+                    import traceback
+                    with open("export_error.log", "w") as f:
+                        f.write(f"File: {source_record.filename}\n")
+                        f.write(traceback.format_exc())
+                    raise HTTPException(status_code=500, detail=f"Reassembly failed for {source_record.filename}: {str(e)}")
+            
+            # 4. Return single file or create ZIP for multiple files
+            if len(output_files) == 1:
+                return output_files[0][1]  # Return single file path
+            
+            # Create ZIP archive for multiple files
+            zip_filename = f"translated_{self.project.name or self.project.filename}_all.zip"
+            zip_path = os.path.join(UPLOAD_DIR, zip_filename)
+            
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for filename, filepath in output_files:
+                    zipf.write(filepath, filename)
+            
+            # Clean up individual output files (they're now in the ZIP)
+            for _, filepath in output_files:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+            
+            return zip_path
             
         finally:
-            if os.path.exists(temp_input_path):
-                os.remove(temp_input_path)
+            # Clean up temp input files
+            for temp_path in temp_files_to_cleanup:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
     def _export_tmx(self) -> str:
         segments = self.db.query(Segment).filter(Segment.project_id == self.project_id).order_by(Segment.index).all()

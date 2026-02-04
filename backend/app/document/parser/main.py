@@ -86,5 +86,9 @@ def _parse_docx(file_path: str, segmentation_func=None, source_lang="en"):
     if context["extra_segments"]:
         final_segments.extend(context["extra_segments"])
 
+    # 4. Filter empty segments (only whitespace or truly empty)
+    final_segments = [s for s in final_segments 
+                      if s.source_text and s.source_text.strip()]
+
     logger.info(f"Extracted {len(final_segments)} segments.")
     return final_segments

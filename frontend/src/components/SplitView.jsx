@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw } from 'lucide-react';
+import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings } from 'lucide-react';
 import './TiptapStyles.css';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
@@ -8,6 +8,7 @@ import { GlossarySettingsTab } from './settings/GlossarySettingsTab';
 import { StatisticsSettingsTab } from './settings/StatisticsSettingsTab';
 import { WorkflowsTab } from './settings/WorkflowsTab';
 import { ProjectSettingsTab } from './settings/ProjectSettingsTab';
+import { FilesSettingsTab } from './settings/FilesSettingsTab';  // Multi-File Management
 
 import { GlossaryAddModal } from './GlossaryAddModal';
 import { LogConsole } from './LogConsole';
@@ -28,6 +29,7 @@ export function SplitView({ projectId, onBack }) {
         showExportMenu, setShowExportMenu,
         showConsole, setShowConsole,
         showDebug, setShowDebug,
+        activeFileId, setActiveFileId,  // Multi-File Filter
         showGlossaryModal, setShowGlossaryModal,
         glossarySelection, setGlossarySelection,
         glossaryTerms, setGlossaryTerms,
@@ -64,6 +66,19 @@ export function SplitView({ projectId, onBack }) {
 
     const aiSettings = project?.config?.ai_settings || {};
 
+    // Get unique source files from project
+    const sourceFiles = (project?.files || []).filter(f => f.category === 'source');
+
+    // Filter segments by activeFileId (null = show all)
+    const filteredSegments = activeFileId
+        ? segments.filter(s => s.file_id === activeFileId)
+        : segments;
+
+    // Get active file name for display
+    const activeFileName = activeFileId
+        ? sourceFiles.find(f => f.id === activeFileId)?.filename || 'Unknown'
+        : 'All Files';
+
     return (
         <div className="h-screen flex flex-col">
             <header className="p-4 bg-gray-100 border-b flex justify-between items-center">
@@ -80,17 +95,39 @@ export function SplitView({ projectId, onBack }) {
                     </h1>
                 </div>
 
-                {/* Progress Bar */}
-                <div className="flex flex-col items-center justify-center w-1/3 max-w-xs mx-4">
-                    <div className="flex justify-between w-full text-[10px] text-gray-500 mb-1 uppercase tracking-wider font-semibold">
-                        <span>Progress</span>
-                        <span>{Math.round((segments.filter(s => s.status === 'translated' || s.status === 'approved').length / segments.length) * 100) || 0}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                        <div
-                            className="bg-indigo-500 h-full transition-all duration-500 ease-out"
-                            style={{ width: `${(segments.filter(s => s.status === 'translated' || s.status === 'approved').length / segments.length) * 100 || 0}%` }}
-                        />
+                {/* File Filter + Progress */}
+                <div className="flex items-center justify-center gap-4 w-1/3 mx-4">
+                    {/* File Dropdown - only show if multiple source files */}
+                    {sourceFiles.length > 1 && (
+                        <div className="relative">
+                            <select
+                                value={activeFileId || ''}
+                                onChange={(e) => setActiveFileId(e.target.value || null)}
+                                className="text-xs bg-white border border-gray-200 rounded-lg px-2 py-1.5 pr-6 text-gray-600 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-200 appearance-none cursor-pointer"
+                            >
+                                <option value="">All Files ({segments.length})</option>
+                                {sourceFiles.map(f => (
+                                    <option key={f.id} value={f.id}>
+                                        {f.filename} ({segments.filter(s => s.file_id === f.id).length})
+                                    </option>
+                                ))}
+                            </select>
+                            <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                        </div>
+                    )}
+
+                    {/* Progress Bar */}
+                    <div className="flex flex-col items-center justify-center flex-1 max-w-xs">
+                        <div className="flex justify-between w-full text-[10px] text-gray-500 mb-1 uppercase tracking-wider font-semibold">
+                            <span>Progress</span>
+                            <span>{Math.round((filteredSegments.filter(s => s.status === 'translated' || s.status === 'approved').length / filteredSegments.length) * 100) || 0}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                            <div
+                                className="bg-indigo-500 h-full transition-all duration-500 ease-out"
+                                style={{ width: `${(filteredSegments.filter(s => s.status === 'translated' || s.status === 'approved').length / filteredSegments.length) * 100 || 0}%` }}
+                            />
+                        </div>
                     </div>
                 </div>
 
@@ -173,25 +210,53 @@ export function SplitView({ projectId, onBack }) {
                 // Check if clicking outside inputs to potentially close modals?
             }}>
                 <div className="max-w-7xl mx-auto space-y-4 pb-24">
-                    {segments.map(seg => (
-                        <SegmentRow
-                            key={seg.id}
-                            segment={seg}
-                            project={project}
-                            generatingSegments={generatingSegments}
-                            flashingSegments={flashingSegments}
-                            showDebug={showDebug}
-                            onAiDraft={handleAiDraft}
-                            onToggleFlag={handleToggleFlag}
-                            onSave={handleSave}
-                            onFocus={handleSegmentFocus}
-                            onNavigate={handleNavigation}
-                            onContextMenu={handleContextMenu}
-                            registerEditor={(id, ed) => editorRefs.current[id] = ed}
-                        />
-                    ))}
+                    {filteredSegments.map((seg, idx) => {
+                        // Check if we need a file separator (when showing all files)
+                        const prevSeg = idx > 0 ? filteredSegments[idx - 1] : null;
+                        const showFileSeparator = !activeFileId && sourceFiles.length > 1 &&
+                            prevSeg && seg.file_id !== prevSeg.file_id;
+                        const currentFile = sourceFiles.find(f => f.id === seg.file_id);
 
-                    {segments.length === 0 && !loading && (
+                        return (
+                            <React.Fragment key={seg.id}>
+                                {/* File Separator with filename */}
+                                {showFileSeparator && (
+                                    <div className="flex items-center gap-3 py-2 my-2">
+                                        <div className="flex-1 h-px bg-gray-300" />
+                                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            {currentFile?.filename || 'Unknown File'}
+                                        </span>
+                                        <div className="flex-1 h-px bg-gray-300" />
+                                    </div>
+                                )}
+                                {/* First file header (only in all-files view) */}
+                                {!activeFileId && sourceFiles.length > 1 && idx === 0 && (
+                                    <div className="flex items-center gap-3 py-2 mb-2">
+                                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            {currentFile?.filename || 'Unknown File'}
+                                        </span>
+                                        <div className="flex-1 h-px bg-gray-300" />
+                                    </div>
+                                )}
+                                <SegmentRow
+                                    segment={seg}
+                                    project={project}
+                                    generatingSegments={generatingSegments}
+                                    flashingSegments={flashingSegments}
+                                    showDebug={showDebug}
+                                    onAiDraft={handleAiDraft}
+                                    onToggleFlag={handleToggleFlag}
+                                    onSave={handleSave}
+                                    onFocus={handleSegmentFocus}
+                                    onNavigate={handleNavigation}
+                                    onContextMenu={handleContextMenu}
+                                    registerEditor={(id, ed) => editorRefs.current[id] = ed}
+                                />
+                            </React.Fragment>
+                        );
+                    })}
+
+                    {filteredSegments.length === 0 && !loading && (
                         <div className="text-center py-20 text-gray-400">
                             No segments found.
                         </div>
@@ -240,7 +305,8 @@ export function SplitView({ projectId, onBack }) {
                             {/* Sidebar - Sleek Pro Style */}
                             <div className="w-56 bg-gray-50/50 border-r border-gray-200 flex flex-col py-2">
                                 {[
-                                    { id: 'files', label: 'Project Settings', icon: FileText },
+                                    { id: 'project', label: 'Project Settings', icon: Settings },
+                                    { id: 'files', label: 'Files Manager', icon: FolderOpen },
                                     { id: 'ai', label: 'AI Configuration', icon: Zap },
                                     { id: 'rag', label: 'RAG / Context', icon: Database },
                                     { id: 'glossary', label: 'Glossary Manager', icon: BookOpen },
@@ -276,12 +342,19 @@ export function SplitView({ projectId, onBack }) {
                             {/* Content */}
                             <div className="flex-1 overflow-y-auto p-8">
                                 <div className="max-w-2xl mx-auto">
-                                    {activeSettingsTab === 'files' && (
+                                    {activeSettingsTab === 'project' && (
                                         <ProjectSettingsTab
                                             project={project}
-                                            onUpdate={setProject} // Fix: Pass setProject as onUpdate handler
+                                            onUpdate={setProject}
                                             onReingest={handleReingest}
                                             onFullReinit={handleFullReinit}
+                                        />
+                                    )}
+                                    {activeSettingsTab === 'files' && (
+                                        <FilesSettingsTab
+                                            project={project}
+                                            files={project?.files || []}
+                                            onRefresh={refreshProject}
                                         />
                                     )}
                                     {activeSettingsTab === 'ai' && (

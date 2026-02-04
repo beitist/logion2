@@ -56,12 +56,17 @@ class ProjectFile(Base):
 
     project = relationship("Project", back_populates="files")
     chunks = relationship("ContextChunk", back_populates="file", cascade="all, delete-orphan")
+    # segments linked to this file (for source files in multi-file projects)
+    segments = relationship("Segment", back_populates="file", cascade="all, delete-orphan")
 
 class Segment(Base):
     __tablename__ = "segments"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    # file_id links the segment to its source file for multi-file projects
+    # nullable=True for backward compatibility with existing data
+    file_id = Column(String, ForeignKey("project_files.id"), nullable=True, index=True)
     index = Column(Integer, nullable=False)
     source_content = Column(Text, nullable=False) # Stores the text with XML tags <n>...</n>
     target_content = Column(Text, nullable=True)
@@ -71,6 +76,7 @@ class Segment(Base):
 
 
     project = relationship("Project", back_populates="segments")
+    file = relationship("ProjectFile", back_populates="segments")
 
     @property
     def tags(self):

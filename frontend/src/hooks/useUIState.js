@@ -5,11 +5,14 @@ export function useUIState(projectId) {
     // Toggles
     const [showSettings, setShowSettings] = useState(false);
     const [showShortcuts, setShowShortcuts] = useState(false);
-    const [activeSettingsTab, setActiveSettingsTab] = useState('files');
+    const [activeSettingsTab, setActiveSettingsTab] = useState('project');
     const [activeSegmentId, setActiveSegmentId] = useState(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showConsole, setShowConsole] = useState(false);
     const [showDebug, setShowDebug] = useState(false);
+
+    // Multi-File Filter: null = all files, otherwise file_id
+    const [activeFileId, setActiveFileId] = useState(null);
 
     // Feature UI
     const [showGlossaryModal, setShowGlossaryModal] = useState(false);
@@ -58,6 +61,7 @@ export function useUIState(projectId) {
         showExportMenu, setShowExportMenu,
         showConsole, setShowConsole,
         showDebug, setShowDebug,
+        activeFileId, setActiveFileId,  // Multi-File Filter
         showGlossaryModal, setShowGlossaryModal,
         glossarySelection, setGlossarySelection,
         glossaryTerms, setGlossaryTerms,

@@ -81,6 +81,7 @@ class SegmentResponse(BaseModel):
     target_content: Optional[str] = None
     status: str
     project_id: str
+    file_id: Optional[str] = None  # Links to source file in multi-file projects
     tags: Optional[Dict[str, TagModel]] = None
     segment_metadata: Optional[Dict[str, Any]] = Field(default=None, serialization_alias="metadata")
     context_matches: Optional[list[Any]] = None
