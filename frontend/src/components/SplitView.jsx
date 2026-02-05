@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings } from 'lucide-react';
 import './TiptapStyles.css';
 
@@ -17,6 +17,7 @@ import { BlockingModal } from './BlockingModal';
 
 import { useProjectWorkspace } from '../hooks/useProjectWorkspace';
 import { SegmentRow } from './segment';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function SplitView({ projectId, onBack }) {
     const {
@@ -63,11 +64,10 @@ export function SplitView({ projectId, onBack }) {
         setProject // Destructure setProject to allow updates
     } = useProjectWorkspace(projectId);
 
-    if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
+    // Virtualization ref for scrollable container
+    const parentRef = useRef(null);
 
-    const aiSettings = project?.config?.ai_settings || {};
-
-    // Get unique source files from project
+    // Get unique source files from project (safe for loading state)
     const sourceFiles = (project?.files || []).filter(f => f.category === 'source');
 
     // Filter segments by activeFileId (null = show all)
@@ -77,24 +77,32 @@ export function SplitView({ projectId, onBack }) {
 
     // Filter comments based on commentFilter ('all', 'active', or 'none')
     if (commentFilter === 'none') {
-        // Hide all comments
-        filteredSegments = filteredSegments.filter(s => {
-            return s.metadata?.type !== 'comment';
-        });
+        filteredSegments = filteredSegments.filter(s => s.metadata?.type !== 'comment');
     } else if (commentFilter === 'active') {
-        // Hide only done/resolved comments
         filteredSegments = filteredSegments.filter(s => {
-            if (s.metadata?.type === 'comment') {
-                return !s.metadata?.is_done;
-            }
+            if (s.metadata?.type === 'comment') return !s.metadata?.is_done;
             return true;
         });
     }
+
+    // Virtualizer MUST be called before any early returns (Rules of Hooks)
+    const rowVirtualizer = useVirtualizer({
+        count: filteredSegments.length,
+        getScrollElement: () => parentRef.current,
+        estimateSize: () => 180,
+        overscan: 5,
+    });
+
+    // Early return for loading state - AFTER all hooks
+    if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
+
+    const aiSettings = project?.config?.ai_settings || {};
 
     // Get active file name for display
     const activeFileName = activeFileId
         ? sourceFiles.find(f => f.id === activeFileId)?.filename || 'Unknown'
         : 'All Files';
+
 
     return (
         <div className="h-screen flex flex-col">
@@ -141,10 +149,10 @@ export function SplitView({ projectId, onBack }) {
                                 setCommentFilter(cycle[commentFilter] || 'all');
                             }}
                             className={`text-xs px-2 py-1.5 rounded-lg border transition-colors flex items-center gap-1.5 ${commentFilter === 'all'
-                                    ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
-                                    : commentFilter === 'active'
-                                        ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
-                                        : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
+                                ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                                : commentFilter === 'active'
+                                    ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                                    : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
                                 }`}
                             title={
                                 commentFilter === 'all' ? 'Showing all comments. Click to show only active.'
@@ -244,13 +252,23 @@ export function SplitView({ projectId, onBack }) {
                 <ShortcutsPanel onClose={() => setShowShortcuts(false)} />
             </div>
 
-            {/* Main Workspace */}
-            <main className="flex-1 overflow-auto bg-gray-50/50 p-4" onClick={(e) => {
-                // Global click handler to handle some context logic if needed, currently moved to handlers
-                // Check if clicking outside inputs to potentially close modals?
-            }}>
-                <div className="max-w-7xl mx-auto space-y-4 pb-24">
-                    {filteredSegments.map((seg, idx) => {
+            {/* Main Workspace - Virtualized */}
+            <main
+                ref={parentRef}
+                className="flex-1 overflow-auto bg-gray-50/50 p-4"
+            >
+                <div
+                    className="max-w-7xl mx-auto pb-24"
+                    style={{
+                        height: `${rowVirtualizer.getTotalSize()}px`,
+                        width: '100%',
+                        position: 'relative',
+                    }}
+                >
+                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const seg = filteredSegments[virtualRow.index];
+                        const idx = virtualRow.index;
+
                         // Check if we need a file separator (when showing all files)
                         const prevSeg = idx > 0 ? filteredSegments[idx - 1] : null;
                         const showFileSeparator = !activeFileId && sourceFiles.length > 1 &&
@@ -258,7 +276,18 @@ export function SplitView({ projectId, onBack }) {
                         const currentFile = sourceFiles.find(f => f.id === seg.file_id);
 
                         return (
-                            <React.Fragment key={seg.id}>
+                            <div
+                                key={seg.id}
+                                style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    transform: `translateY(${virtualRow.start}px)`,
+                                }}
+                                ref={rowVirtualizer.measureElement}
+                                data-index={virtualRow.index}
+                            >
                                 {/* File Separator with filename */}
                                 {showFileSeparator && (
                                     <div className="flex items-center gap-3 py-2 my-2">
@@ -292,7 +321,7 @@ export function SplitView({ projectId, onBack }) {
                                     onContextMenu={handleContextMenu}
                                     registerEditor={(id, ed) => editorRefs.current[id] = ed}
                                 />
-                            </React.Fragment>
+                            </div>
                         );
                     })}
 
