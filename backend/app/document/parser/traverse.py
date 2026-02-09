@@ -70,11 +70,12 @@ def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict]:
         text = re.sub(r'<(\d+)>[\s\xa0]*</\1>', '', text)
         
         # 3. Peel off outer wrapping tags if they encompass entire content
-        text = text.strip()
-        match = re.match(r'^<(\d+)>(.*)</\1>$', text, re.DOTALL)
+        # Use stripped version for matching, but preserve whitespace in result
+        text_stripped = text.strip()
+        match = re.match(r'^<(\d+)>(.*)</\1>$', text_stripped, re.DOTALL)
         if match:
             tag_id = match.group(1)
-            inner = match.group(2).strip()
+            inner = match.group(2)  # Don't strip inner - preserve whitespace
             text = inner
             if tag_id in new_tags:
                 del new_tags[tag_id]
@@ -84,8 +85,8 @@ def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict]:
         if text != text_before:
             changed = True
     
-    # Final cleanup: strip and filter tags dict to only keep tags that still appear
-    text = text.strip()
+    # Final cleanup: filter tags dict to only keep tags that still appear
+    # NOTE: Do NOT strip here - whitespace is handled in process_paragraph and restored in assembler
     tag_ids_in_text = set(re.findall(r'<(\d+)>', text))
     new_tags = {k: v for k, v in new_tags.items() if k in tag_ids_in_text}
     

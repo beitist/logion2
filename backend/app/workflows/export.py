@@ -11,7 +11,9 @@ from ..storage import download_file
 from ..document.assembler import reassemble_docx
 from ..tmx import export_tmx
 from .base import BaseWorkflow
+from ..logger import get_logger
 
+logger = get_logger("ExportWorkflow")
 UPLOAD_DIR = "uploads"
 
 class ExportWorkflow(BaseWorkflow):
@@ -66,10 +68,14 @@ class ExportWorkflow(BaseWorkflow):
         
         try:
             for source_record in source_file_records:
+                logger.info(f"Processing file: {source_record.filename} (id: {source_record.id})")
+                
                 # Get segments for this file
                 file_segments = segments_by_file.get(source_record.id, [])
+                logger.info(f"  - Found {len(file_segments)} segments for this file")
                 
                 if not file_segments:
+                    logger.warning(f"  - Skipping file (no segments)")
                     continue  # Skip files with no segments
                 
                 # Prepare segments for reassembly

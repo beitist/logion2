@@ -34,7 +34,13 @@ class ExportService:
         output_path = wf.run(format="docx")
         filename = os.path.basename(output_path)
         
-        return FileResponse(output_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=filename)
+        # Set correct media type based on file extension
+        if filename.endswith('.zip'):
+            media_type = "application/zip"
+        else:
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        
+        return FileResponse(output_path, media_type=media_type, filename=filename)
 
     def export_project_tmx(self, project_id: str) -> FileResponse:
         from ..workflows.export import ExportWorkflow
