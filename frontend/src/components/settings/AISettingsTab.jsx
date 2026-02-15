@@ -4,6 +4,29 @@ import { Zap, Command, Cpu, FileText, Sparkles, Eye, Save } from 'lucide-react';
 import { SettingsCard, SettingsToggle, SettingsSection } from './shared';
 
 /**
+ * Default custom prompt for translation style / system instruction.
+ * Sourced from ÜPrompt.txt – professional German translation guidance
+ * for government/development cooperation documents (BMZ style).
+ * Users can freely edit or replace this in the settings UI.
+ */
+const DEFAULT_CUSTOM_PROMPT = `Du bist ein erfahrener Fachübersetzer für Verwaltung und Projektmanagement. Deine Aufgabe: Überführe den englischen Sachverhalt in ein präzises, flüssiges Deutsch.
+
+Regeln: Löse dich von der englischen Satzstruktur. Wenn das Englische ein Ding als handelndes Subjekt nutzt (z. B. 'The amendment approved'), formuliere im Deutschen passiv oder einleitend ('Mit der Änderung wurde...'). Fachbegriffe sind in angemessener Behördensprache wiederzugeben. Das Ziel ist maximale Lesbarkeit für deutsche Entscheider beim BMZ. Beachte auch die vorhergehenden Sätze und sorge für einen flüssigen Lesefluss. Achte auf sprachliche Kohärenz. Du darfst lange Sätze auf mehrere Sätze aufteilen, wenn das sinnvoll erscheint.
+
+Bitte achte auf eine geschlechterneutrale Sprache oder benutze den Gender-* für die deutsche Übersetzung.
+
+Beispiel für den gewünschten Stil: Source: "The report highlights the need for gender-sensitive budgeting, whereas previous versions focused on pure financial metrics." Target: "Während sich frühere Fassungen auf rein finanzielle Kennzahlen konzentrierten, unterstreicht der vorliegende Bericht die Notwendigkeit einer gendersensiblen Haushaltsplanung."
+
+Beispiel 2 für den gewünschten Stil: Source: "The project implementation has been successful in most regions, whereas the reporting from the rural areas remains inconsistent." Target: "Während die Projektumsetzung in den meisten Regionen erfolgreich verlief, weist die Berichterstattung aus den ländlichen Gebieten nach wie vor Lücken auf."
+
+Prüfe den Text auf typisches 'Übersetzungsdeutsch' und formuliere ihn so um, als wäre er ursprünglich in deutscher Sprache verfasst worden (z. B.: nicht: whereas -> wobei, sondern passend umformulieren).
+
+Prüfe deine Übersetzung vor der Ausgabe: Würde dieser Satz so in einem offiziellen deutschen Regierungsdokument stehen? Falls er noch nach 'Übersetzung' klingt, strukturiere ihn radikal um.`;
+
+/** Preferred default model ID for both editor and workflow translation */
+const DEFAULT_MODEL_ID = 'gemini-3-pro-preview';
+
+/**
  * AI Configuration Settings Tab
  * 
  * Manages:
@@ -42,7 +65,8 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
             setSettings({
                 model: ai.model || '',
                 workflow_model: ai.workflow_model || '',
-                custom_prompt: ai.custom_prompt || '',
+                // Fall back to the default translation prompt if none is configured yet
+                custom_prompt: ai.custom_prompt !== undefined ? ai.custom_prompt : DEFAULT_CUSTOM_PROMPT,
                 pre_translate_count: ai.pre_translate_count || 0,
                 batch_size: ai.batch_size || 10,
                 preload_mode: ai.preload_mode || false
@@ -66,11 +90,14 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                     const mtModels = data.models.filter(m => m.usage !== 'bg');
                     setAvailableModels(mtModels);
 
-                    // Set defaults if not configured
+                    // Set defaults if not configured:
+                    // Prefer Gemini 3 Pro Preview for quality; fall back to first available model
                     setSettings(s => {
                         const newS = { ...s };
-                        if (!newS.model && data.models.length > 0) newS.model = data.models[0].id;
-                        if (!newS.workflow_model && data.models.length > 0) newS.workflow_model = data.models[0].id;
+                        const hasDefault = mtModels.some(m => m.id === DEFAULT_MODEL_ID);
+                        const fallbackId = hasDefault ? DEFAULT_MODEL_ID : (mtModels[0]?.id || '');
+                        if (!newS.model) newS.model = fallbackId;
+                        if (!newS.workflow_model) newS.workflow_model = fallbackId;
                         return newS;
                     });
                 }
