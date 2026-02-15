@@ -155,7 +155,8 @@ export function SourceColumn({
             )}
 
             {/* Context Panel (Translation Memory / AI Matches) */}
-            {hasContext && (
+            {/* Also show when generating so user sees loading feedback even with no existing matches */}
+            {(hasContext || generatingSegments[segment.id]) && (
                 <div className="mt-6 border-t border-gray-200 pt-4">
                     {/* Header with refresh buttons */}
                     <div className="flex justify-between items-center mb-3">
@@ -198,6 +199,27 @@ export function SourceColumn({
                                 project={project}
                             />
                         ))}
+
+                        {/* Skeleton loader: shown while generating and no MT match exists yet.
+                           Mimics the look of an MT MatchCard with pulsing placeholder lines. */}
+                        {generatingSegments[segment.id] && !sortedMatches.some(m => m.type === 'mt') && (
+                            <div className="p-2.5 rounded-lg border-l-4 border-l-orange-500 border border-gray-200/50 bg-orange-50 animate-pulse">
+                                <div className="flex justify-between items-center mb-2">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-orange-700 flex items-center gap-1">
+                                        🤖 Machine Translation
+                                    </span>
+                                    <span className="text-[9px] font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                                        Cmd+Opt+0
+                                    </span>
+                                </div>
+                                {/* Pulsing text lines simulating incoming content */}
+                                <div className="space-y-1.5">
+                                    <div className="h-3 bg-orange-200/60 rounded w-full"></div>
+                                    <div className="h-3 bg-orange-200/60 rounded w-4/5"></div>
+                                    <div className="h-3 bg-orange-200/60 rounded w-3/5"></div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
