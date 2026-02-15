@@ -109,7 +109,10 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
         const isTranslated = currentSeg.status === 'translated' || currentSeg.status === 'approved';
         const hasContent = currentSeg.target_content && currentSeg.target_content.trim().length > 0;
 
-        if (projectRef.current?.use_ai && !isTranslated && !hasContent) {
+        // Only auto-draft if use_ai is enabled AND preload_mode is off
+        // (preload_mode=true means "auto-fetch on focus" is DISABLED in settings)
+        const aiSettings = projectRef.current?.config?.ai_settings || {};
+        if (projectRef.current?.use_ai && !aiSettings.preload_mode && !isTranslated && !hasContent) {
             await generateDraft(currentSeg.id, 'draft');
         }
     };
@@ -219,7 +222,10 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
             const hasDraft = analyzedSeg.context_matches?.some(m => m.type === 'mt') || !!analyzedSeg.metadata?.ai_draft;
             const hasContent = analyzedSeg.target_content && analyzedSeg.target_content.trim().length > 0;
 
-            if (projectRef.current?.use_ai && !isTranslated && !hasDraft && !hasContent) {
+            // Only auto-draft if use_ai is enabled AND auto-fetch on focus is NOT disabled.
+            // preload_mode=true means "auto-fetch on focus" is disabled in AI Settings.
+            const aiSettings = projectRef.current?.config?.ai_settings || {};
+            if (projectRef.current?.use_ai && !aiSettings.preload_mode && !isTranslated && !hasDraft && !hasContent) {
                 handleAiDraft(analyzedSeg.id, true);
             }
         }

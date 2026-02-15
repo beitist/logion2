@@ -428,12 +428,25 @@ class ProjectService:
         project = self.get_project(project_id)
         category = ProjectFileCategory(file_record.category)
         
-        # For source files: delete linked segments first
+        # For source files: delete linked ai_usage_logs + segments first.
+        # ai_usage_logs has a FK to segments.id, so logs must be removed
+        # before the segments can be deleted (same pattern as delete_project).
         if category == ProjectFileCategory.source:
+            # Collect segment IDs belonging to this file
+            segment_ids = [
+                sid for (sid,) in self.db.query(Segment.id).filter(
+                    Segment.file_id == file_id
+                ).all()
+            ]
+            if segment_ids:
+                # Delete referencing ai_usage_logs first
+                self.db.query(AiUsageLog).filter(
+                    AiUsageLog.segment_id.in_(segment_ids)
+                ).delete(synchronize_session='fetch')
             deleted_count = self.db.query(Segment).filter(
                 Segment.file_id == file_id
             ).delete()
-            logger.info(f"Deleted {deleted_count} segments from replaced file")
+            logger.info(f"Deleted {deleted_count} segments (and their usage logs) from replaced file")
         
         # Upload new file content
         object_name = f"{project_id}/{file_record.category}/{new_file.filename}"
@@ -488,7 +501,19 @@ class ProjectService:
             Segment.file_id == file_id
         ).count()
         
-        # Delete file (cascade should handle segments via relationship)
+        # Delete ai_usage_logs referencing this file's segments first,
+        # otherwise the cascade delete of segments will hit an FK violation.
+        segment_ids = [
+            sid for (sid,) in self.db.query(Segment.id).filter(
+                Segment.file_id == file_id
+            ).all()
+        ]
+        if segment_ids:
+            self.db.query(AiUsageLog).filter(
+                AiUsageLog.segment_id.in_(segment_ids)
+            ).delete(synchronize_session='fetch')
+        
+        # Delete file (cascade handles segments via relationship)
         filename = file_record.filename
         self.db.delete(file_record)
         self.db.commit()

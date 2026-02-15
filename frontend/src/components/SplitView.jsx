@@ -424,6 +424,7 @@ export function SplitView({ projectId, onBack }) {
                                             project={project}
                                             files={project?.files || []}
                                             onRefresh={refreshProject}
+                                            onFullReinit={handleFullReinit}
                                         />
                                     )}
                                     {activeSettingsTab === 'ai' && (
