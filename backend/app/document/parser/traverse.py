@@ -41,20 +41,39 @@ def repair_tags(segments: list[str]) -> list[str]:
         
     return repaired
 
-def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict]:
+def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict, list]:
     """
     Cleans up tag patterns in segment text:
     1. Removes outer wrapping tags: '<1><2>text</2></1>' -> 'text'
     2. Removes empty tag pairs: '<N></N>' -> ''
     3. Removes whitespace-only tag pairs: '<N>\\n</N>' or '<N> </N>' -> '' (or keeps whitespace)
     
-    Iterates until no more changes occur.
+    Formatting tags (bold, italic, highlight, etc.) that wrap the entire content
+    are stripped from the text but their IDs are collected in wrapper_tag_ids.
+    Their TagModels are KEPT in the tags dict so the assembler can re-apply them
+    during export via the wrapper_tags metadata field.
+    
+    Returns: (cleaned_text, cleaned_tags, wrapper_tag_ids)
     """
+    # Tag types that must survive round-tripping when they wrap an entire segment.
+    # Formatting tags preserve visual appearance, comment/shape preserve structure.
+    # If one of these wraps an entire segment it is stripped from the display text
+    # but preserved so it can be re-applied at export time.
+    PRESERVE_TYPES = {
+        # Visual formatting
+        'bold', 'italic', 'underline', 'highlight', 'color',
+        'size', 'font', 'strike', 'smallCaps', 'caps',
+        'superscript', 'subscript',
+        # Structural elements that carry content/annotation
+        'comment', 'shape',
+    }
+
     if not source_text:
-        return source_text, tags or {}
+        return source_text, tags or {}, []
     
     new_tags = dict(tags) if tags else {}
     text = source_text
+    wrapper_tag_ids = []  # IDs of stripped formatting tags (outermost first)
     
     changed = True
     while changed:
@@ -76,21 +95,37 @@ def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict]:
         if match:
             tag_id = match.group(1)
             inner = match.group(2)  # Don't strip inner - preserve whitespace
-            text = inner
-            if tag_id in new_tags:
-                del new_tags[tag_id]
+            tag_data = new_tags.get(tag_id)
+            
+            # Determine tag type to decide whether to preserve for export
+            tag_type = ''
+            if tag_data:
+                tag_type = tag_data.type if hasattr(tag_data, 'type') else tag_data.get('type', '')
+            
+            if tag_type in PRESERVE_TYPES:
+                # Formatting tag: strip from text but KEEP in tags dict
+                # and record the ID so it can be re-wrapped during export
+                text = inner
+                wrapper_tag_ids.append(tag_id)
+                # Do NOT delete from new_tags — the assembler needs the TagModel
+            else:
+                # Non-formatting tag (link, shape, comment, etc.): fully remove
+                text = inner
+                if tag_id in new_tags:
+                    del new_tags[tag_id]
             changed = True
         
         # Check if anything changed in this iteration
         if text != text_before:
             changed = True
     
-    # Final cleanup: filter tags dict to only keep tags that still appear
-    # NOTE: Do NOT strip here - whitespace is handled in process_paragraph and restored in assembler
+    # Final cleanup: filter tags dict to only keep tags that still appear in text
+    # OR are referenced by wrapper_tag_ids (needed for export re-wrapping)
     tag_ids_in_text = set(re.findall(r'<(\d+)>', text))
-    new_tags = {k: v for k, v in new_tags.items() if k in tag_ids_in_text}
+    wrapper_set = set(wrapper_tag_ids)
+    new_tags = {k: v for k, v in new_tags.items() if k in tag_ids_in_text or k in wrapper_set}
     
-    return text, new_tags
+    return text, new_tags, wrapper_tag_ids
 
 def get_tag_signature(tag_data) -> tuple:
     """
@@ -331,11 +366,17 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
         seg_loc = location.copy()
         seg_loc['sub_index'] = i
         
-        # Strip wrapping tags that encompass entire segment
-        clean_part, clean_tags = strip_wrapping_tags(part, tags)
+        # Strip wrapping tags that encompass entire segment.
+        # Formatting tags (bold, highlight, etc.) are stripped from text but their
+        # IDs are saved in wrapper_tag_ids so the assembler can re-apply them on export.
+        clean_part, clean_tags, wrapper_tag_ids = strip_wrapping_tags(part, tags)
         
         # Merge adjacent tags with identical formatting
         clean_part, clean_tags = merge_adjacent_tags(clean_part, clean_tags)
+        
+        # Store wrapper tag IDs in metadata for the export assembler
+        if wrapper_tag_ids:
+            seg_loc['wrapper_tags'] = wrapper_tag_ids
         
         final_segments.append(SegmentInternal(
             id=str(uuid.uuid4()),
