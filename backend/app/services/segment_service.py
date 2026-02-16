@@ -242,6 +242,10 @@ class SegmentService:
 
         orchestrator = InferenceOrchestrator()
 
+        logger.info(f"[TC-MT] tc_source_text preview: {tc_params.tc_source_text[:80] if tc_params.tc_source_text else '(empty)'}")
+        logger.info(f"[TC-MT] segment.source_content preview: {segment.source_content[:80] if segment.source_content else '(empty)'}")
+        logger.info(f"[TC-MT] tc_base_translation: {'(has base)' if tc_params.tc_base_translation else '(empty)'}")
+
         # If base translation exists, use revision prompt + TM reference
         # so the MT revises rather than re-translates (cleaner diffs)
         base = tc_params.tc_base_translation or ""

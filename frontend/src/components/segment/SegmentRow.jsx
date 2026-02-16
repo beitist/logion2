@@ -88,20 +88,27 @@ export const SegmentRow = memo(({
         };
     }, [targetTCEnabled, currentStage.author]);
 
-    // Wrap onAiDraft to inject TC params when at a revision stage > base
+    // Wrap onAiDraft to inject TC params for any TC segment (both modes).
+    // source_content in DB = final stage text, so we must always override
+    // with the correct stage source from revision_stages.
     const wrappedOnAiDraft = useCallback((segmentId) => {
-        if (tcMode === 'step_by_step' && !isSimpleInsert && activeTCStage > baseStage) {
+        if (tcMode && !isSimpleInsert && stages.length >= 2) {
             const stageData = stages[activeTCStage] || {};
+            const isBase = activeTCStage === baseStage;
             const tcParams = {
                 tc_source_text: stageData.text || '',
-                tc_base_translation: segment.target_content || '',
+                // At base stage: fresh translation (no base to diff against)
+                // At later stages: diff against current target content
+                tc_base_translation: isBase ? '' : (segment.target_content || ''),
                 tc_author_id: (stageData.author || 'editor').toLowerCase().replace(/\s+/g, '_') + `__stage_${activeTCStage}`,
                 tc_author_name: stageData.author || 'Editor',
                 tc_date: stageData.date || '',
             };
-            onAiDraft(segmentId, false, 'translate', false, false, tcParams);
+            console.log('[TC-MT] Sending TC params:', { segmentId, activeTCStage, baseStage, isBase, tc_source_text_preview: (stageData.text || '').substring(0, 80), tcMode });
+            return onAiDraft(segmentId, false, 'translate', false, false, tcParams);
         } else {
-            onAiDraft(segmentId);
+            console.log('[TC-MT] Non-TC path:', { segmentId, tcMode, isSimpleInsert, stagesLen: stages.length });
+            return onAiDraft(segmentId);
         }
     }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, baseStage, stages, segment.target_content]);
 

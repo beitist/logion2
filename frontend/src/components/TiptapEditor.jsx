@@ -368,12 +368,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                         'Mod-Alt-Shift-ß': () => { if (onAiDraftRef.current && segmentId) { onAiDraftRef.current(segmentId); return true; } return false; },
                         'Control-Space': () => {
                             if (onAiDraftRef.current && segmentId) {
-                                onAiDraftRef.current(segmentId).then((newContent) => {
-                                    if (newContent) {
-                                        const hydrated = hydrateContent(newContent, availableTagsRef.current);
-                                        this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
-                                    }
-                                });
+                                onAiDraftRef.current(segmentId);
                                 return true;
                             }
                             return false;

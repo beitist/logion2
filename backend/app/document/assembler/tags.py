@@ -30,13 +30,26 @@ def _parse_tc_attrs(tag_content: str) -> dict:
 
 
 def _format_tc_date(date_str: str) -> str:
-    """Convert a date string to DOCX-compatible ISO 8601 format."""
+    """Convert a date string to DOCX-compatible ISO 8601 format.
+
+    Handles:
+    - ISO 8601: "2024-01-15T10:00:00Z" → pass through
+    - Space-separated: "2024-01-15 10:00" → "2024-01-15T10:00:00Z"
+    - Unix timestamp ms (from tiptap getMinuteTime()): "1708099200000" → ISO
+    - Empty/missing → current UTC time as fallback
+    """
+    from datetime import datetime as _dt
+
     if not date_str:
-        return "2026-01-01T00:00:00Z"
+        return _dt.utcnow().strftime("%Y-%m-%dT%H:%M:00Z")
     if "T" in date_str and date_str.endswith("Z"):
         return date_str
     try:
         date_str = date_str.strip()
+        # Unix timestamp in milliseconds (from tiptap track-change-extension)
+        if date_str.isdigit() and len(date_str) >= 10:
+            ts = int(date_str) / 1000
+            return _dt.utcfromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:00Z")
         if " " in date_str and "T" not in date_str:
             date_str = date_str.replace(" ", "T", 1)
         if not date_str.endswith("Z"):
@@ -50,7 +63,7 @@ def _format_tc_date(date_str: str) -> str:
                 date_str += "T00:00:00Z"
         return date_str
     except Exception:
-        return "2026-01-01T00:00:00Z"
+        return _dt.utcnow().strftime("%Y-%m-%dT%H:%M:00Z")
 
 
 class AssemblerContext:
