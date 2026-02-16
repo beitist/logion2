@@ -38,17 +38,55 @@ export function TargetColumn({
     onNavigate,
     onToggleFlag,
     registerEditor,
-    showDebug
+    showDebug,
+    tcMode = null,
+    activeTCStage = 0,
+    baseStage = 0,
+    isSimpleInsert = false,
+    isDeletedFinal = false,
+    trackChangesEnabled = false,
+    trackChangesUser = null
 }) {
+    const [localEditor, setLocalEditor] = React.useState(null);
     const isFlagged = segment.metadata?.flagged || false;
     const glossaryMatches = sortedMatches.filter(m => m.type === 'glossary');
+
+    // TC base state: slider is at the base stage (translate original/base, TC off)
+    const hasTC = segment.metadata?.has_track_changes;
+    const stages = segment.metadata?.revision_stages || [];
+    const isAtBase = hasTC && tcMode === 'step_by_step' && !isSimpleInsert && activeTCStage === baseStage;
+    const needsBaseTranslation = isAtBase && !segment.target_content;
+
+    // Detect if slider is at the deleted final stage
+    const isAtDeletedStage = isDeletedFinal && activeTCStage === stages.length - 1;
 
     // Background color varies based on segment state
     const bgClass = isFlagged
         ? 'bg-yellow-50/50 border-l border-yellow-200'
         : isMandatoryContext
             ? 'bg-red-50/80 border-l border-red-200'
-            : 'bg-white';
+            : isAtDeletedStage
+                ? 'bg-red-50/30 border-l border-red-200'
+                : trackChangesEnabled
+                    ? 'bg-blue-50/40 border-l border-blue-300'
+                    : needsBaseTranslation
+                        ? 'bg-blue-50/30 border-l border-blue-200'
+                        : 'bg-white';
+
+    // Target label reflects TC state and active stage
+    const targetLabel = isMandatoryContext
+        ? '⚠️ Mandatory Target'
+        : isAtDeletedStage
+            ? 'Target (DE) — Segment gelöscht'
+            : trackChangesEnabled
+                ? `Target (DE) — TC Stage ${activeTCStage} (${trackChangesUser?.nickname || 'Editor'})`
+                : isSimpleInsert
+                    ? 'Target (DE) — NEW'
+                    : needsBaseTranslation
+                        ? `Target (DE) — Stage ${baseStage} übersetzen`
+                        : isAtBase
+                            ? `Target (DE) — Stage ${baseStage}`
+                            : 'Target (DE)';
 
     return (
         <div className={`p-5 rounded-r-xl flex flex-col relative group ${bgClass}`}>
@@ -56,8 +94,14 @@ export function TargetColumn({
             <div className="text-xs text-gray-400 font-mono mb-2 uppercase tracking-wider flex justify-between items-center select-none">
                 <div className="flex items-center gap-2">
                     {/* Target label */}
-                    <span className={`font-bold transition-colors ${isMandatoryContext ? 'text-red-800' : 'text-gray-300 group-hover:text-indigo-400'}`}>
-                        {isMandatoryContext ? '⚠️ Mandatory Target' : 'Target (DE)'}
+                    <span className={`font-bold transition-colors ${
+                        isMandatoryContext ? 'text-red-800'
+                            : isAtDeletedStage ? 'text-red-500'
+                                : trackChangesEnabled ? 'text-blue-700'
+                                    : isAtBase ? 'text-blue-400'
+                                        : 'text-gray-300 group-hover:text-indigo-400'
+                    }`}>
+                        {targetLabel}
                     </span>
 
                     {/* Spacing mismatch warning */}
@@ -75,6 +119,30 @@ export function TargetColumn({
                 />
             </div>
 
+            {/* Base stage hint: translate base first before TC tracking begins */}
+            {needsBaseTranslation && (
+                <div className="mb-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+                    <span className="font-bold">Stage {baseStage}:</span> Zuerst {baseStage === 0 ? 'das Original' : 'die Basis'} übersetzen (MT oder manuell).
+                    Danach wird Track Changes für weitere Stufen aktiviert.
+                </div>
+            )}
+
+            {/* Hint: slider past base but no base translation yet */}
+            {hasTC && tcMode === 'step_by_step' && !isSimpleInsert && activeTCStage > baseStage && !segment.target_content && (
+                <div className="mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                    <span className="font-bold">Hinweis:</span> Zuerst Stage {baseStage} ({baseStage === 0 ? 'Original' : 'Basis'}) übersetzen.
+                    Slider auf Stage {baseStage} bewegen und Übersetzung eingeben.
+                </div>
+            )}
+
+            {/* Deleted segment hint */}
+            {isAtDeletedStage && (
+                <div className="mb-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                    <span className="font-bold">Gelöscht:</span> Dieses Segment wird in der finalen Version entfernt.
+                    {!segment.target_content && ' Keine Übersetzung nötig.'}
+                </div>
+            )}
+
             {/* Editable TiptapEditor */}
             <div className="flex-grow">
                 <TiptapEditor
@@ -87,8 +155,49 @@ export function TargetColumn({
                     onAiDraft={(id) => onAiDraft(id)}
                     onFocus={() => onFocus(segment.id)}
                     onNavigate={(dir) => onNavigate(segment.id, dir)}
-                    onEditorReady={(ed) => registerEditor(segment.id, ed)}
+                    onEditorReady={(ed) => {
+                        registerEditor(segment.id, ed);
+                        setLocalEditor(ed);
+                    }}
+                    trackChangesEnabled={trackChangesEnabled}
+                    trackChangesUser={trackChangesUser}
                 />
+
+                {/* Track Changes Action Bar */}
+                {trackChangesEnabled && localEditor && (
+                    <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-gray-100">
+                        <span className="text-[9px] font-bold text-blue-600 uppercase tracking-wider">TC</span>
+                        <button
+                            onClick={() => localEditor.commands.acceptChange?.()}
+                            className="text-[10px] px-2 py-0.5 rounded border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
+                            title="Accept change at cursor (Cmd+Shift+A)"
+                        >
+                            Accept
+                        </button>
+                        <button
+                            onClick={() => localEditor.commands.rejectChange?.()}
+                            className="text-[10px] px-2 py-0.5 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+                            title="Reject change at cursor (Cmd+Shift+R)"
+                        >
+                            Reject
+                        </button>
+                        <div className="flex-1" />
+                        <button
+                            onClick={() => localEditor.commands.acceptAllChanges?.()}
+                            className="text-[10px] px-2 py-0.5 rounded border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+                            title="Accept all changes"
+                        >
+                            Accept All
+                        </button>
+                        <button
+                            onClick={() => localEditor.commands.rejectAllChanges?.()}
+                            className="text-[10px] px-2 py-0.5 rounded border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+                            title="Reject all changes"
+                        >
+                            Reject All
+                        </button>
+                    </div>
+                )}
 
                 {/* Glossary Matches - Directly under editor for visibility */}
                 {glossaryMatches.length > 0 && (

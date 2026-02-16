@@ -244,3 +244,17 @@ class SegmentService:
         background_tasks.add_task(run_background_batch_translate, project_id, segment_ids)
         
         return {"status": "started", "message": "Batch translation started in background"}
+
+    def process_tc_batch(self, project_id: str, background_tasks: BackgroundTasks, segment_ids: List[str] = None):
+        """
+        TC Step-by-Step Batch Workflow (Background).
+        Translates each revision stage and diffs them into TC markup.
+        """
+        project = self.db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        from ..workflows.tc_batch import run_background_tc_batch
+        background_tasks.add_task(run_background_tc_batch, project_id, segment_ids)
+
+        return {"status": "started", "message": "TC batch translation started in background"}

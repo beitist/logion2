@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, getSegments, updateProject } from "../api/client";
+import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, getSegments, updateProject } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -307,6 +307,95 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         }
     };
 
+    const handleTCBatch = async () => {
+        const aiSettings = projectRef.current?.config?.ai_settings || {};
+        const workflowModel = aiSettings.workflow_model || "Fast Model";
+
+        // Count TC segments
+        const tcSegments = segmentsRef.current.filter(s => s.metadata?.has_track_changes);
+        if (tcSegments.length === 0) {
+            alert("No Track Changes segments found in this project.");
+            return;
+        }
+
+        if (!confirm(`Start TC Step-by-Step Translation?\n\nTC Segments: ${tcSegments.length}\nModel: ${workflowModel}\n\nThis translates each revision stage and generates TC markup.`)) return;
+
+        stopRef.current = false;
+        setBlockingTask({
+            isOpen: true,
+            type: 'tc_batch',
+            status: 'running',
+            title: `TC Step-by-Step (${tcSegments.length} segments)`,
+            logs: ["Starting TC batch translation..."],
+            progress: 0
+        });
+
+        await updateWorkflowState('running', 'tc_batch');
+
+        try {
+            // Trigger backend TC batch (processes all TC segments at once)
+            await tcBatchTranslate(projectId);
+
+            // Poll for backend completion
+            let pollAttempts = 0;
+            const maxPollAttempts = 600; // Up to 10 minutes
+            while (pollAttempts < maxPollAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                try {
+                    const projectStatus = await getProject(projectId);
+
+                    if (projectStatus.ingestion_logs?.length > 0) {
+                        setBlockingTask(prev => ({
+                            ...prev,
+                            logs: [...prev.logs.slice(-4), ...projectStatus.ingestion_logs.slice(-3)]
+                        }));
+                    }
+
+                    if (projectStatus.rag_progress !== undefined) {
+                        setBlockingTask(prev => ({
+                            ...prev,
+                            progress: projectStatus.rag_progress / 100
+                        }));
+                    }
+
+                    if (projectStatus.rag_status === 'ready') {
+                        break;
+                    } else if (projectStatus.rag_status === 'error') {
+                        setBlockingTask(prev => ({
+                            ...prev,
+                            status: 'error',
+                            logs: [...prev.logs, "TC batch failed on backend."]
+                        }));
+                        break;
+                    }
+                } catch (pollErr) {
+                    console.warn("TC Poll error:", pollErr);
+                }
+                pollAttempts++;
+            }
+
+            // Refresh segments
+            const updatedSegments = await getSegments(projectId);
+            setSegments(updatedSegments.segments || updatedSegments);
+
+            setBlockingTask(prev => ({
+                ...prev,
+                status: 'done',
+                title: "TC Translation Complete",
+                progress: 1,
+                logs: [...prev.logs, `Done. Processed ${tcSegments.length} TC segments.`]
+            }));
+        } catch (err) {
+            setBlockingTask(prev => ({
+                ...prev,
+                status: 'error',
+                logs: [...prev.logs, `Error: ${err.message}`]
+            }));
+        }
+
+        await updateWorkflowState('idle');
+    };
+
     const checkResumableWorkflow = async () => {
         if (!projectRef.current) return;
         const wf = projectRef.current.config?.workflow;
@@ -327,6 +416,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         handleFullReinit,
         handleReingest,
         handleBatchProcess,
+        handleTCBatch,
         checkResumableWorkflow
     };
 }

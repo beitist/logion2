@@ -190,6 +190,18 @@ async def batch_translate(
     """
     return service.process_batch_translation(project_id, background_tasks, payload.segment_ids, payload.mode)
 
+@router.post("/{project_id}/tc-batch-translate")
+async def tc_batch_translate(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    service: SegmentService = Depends(get_segment_service)
+):
+    """
+    TC Step-by-Step: Translates revision stages and generates TC markup.
+    Processes all TC segments in the project.
+    """
+    return service.process_tc_batch(project_id, background_tasks)
+
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(
     project_id: str, 

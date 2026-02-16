@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Copy, Search, GitCompareArrows } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Copy, Search } from 'lucide-react';
 import { TiptapEditor } from '../TiptapEditor';
 import { formatSourceContent, getSegmentComments, highlightGlossaryTerms } from '../../utils/editorTransforms';
 import { createInlineDiff } from '../../utils/diffUtils';
@@ -36,9 +36,14 @@ export function SourceColumn({
     generatingSegments,
     flashingSegments,
     showDebug,
-    showTrackChanges,
+    showSourceTC,
+    tcMode,
+    isSimpleInsert = false,
+    isDeletedFinal = false,
+    initialStage = 0,
     onAiDraft,
-    onContextMenu
+    onContextMenu,
+    onStageChange
 }) {
     const comments = getSegmentComments(segment.tags);
     const aiSettings = project?.config?.ai_settings || {};
@@ -55,18 +60,21 @@ export function SourceColumn({
             .map(m => ({ source: m.source_text || m.source, target: m.content || m.target, note: m.note }));
     }, [sortedMatches]);
 
-    // Track changes: use revision stages (slider) or fallback to simple diff
+    // Track changes display: mode-dependent
+    // step_by_step → slider (if >= 2 stages), first_last → simple diff
     const revisionStages = segment.metadata?.revision_stages;
-    const hasSlider = hasTC && revisionStages && revisionStages.length > 2;
+    const hasSlider = showSourceTC && tcMode === 'step_by_step' && revisionStages && revisionStages.length >= 2;
 
-    // Simple diff HTML (fallback when no stages or only 2 stages)
+    // Simple diff HTML: used in first_last mode OR as fallback when no slider stages
     const diffHtml = useMemo(() => {
-        if (!hasTC || !showTrackChanges || hasSlider) return null;
+        if (!showSourceTC) return null;
+        if (hasSlider) return null; // slider takes priority
+        // Show diff for first_last mode or step_by_step without stages
         return createInlineDiff(
-            segment.metadata.original_text,
-            segment.metadata.final_text
+            segment.metadata?.original_text,
+            segment.metadata?.final_text
         );
-    }, [hasTC, hasSlider, showTrackChanges, segment.metadata?.original_text, segment.metadata?.final_text]);
+    }, [showSourceTC, hasSlider, segment.metadata?.original_text, segment.metadata?.final_text]);
 
     // Format source content with glossary term highlighting
     const formattedSourceContent = useMemo(() => {
@@ -118,13 +126,23 @@ export function SourceColumn({
                 {hasTC && (
                     <span
                         className={`text-[9px] font-bold px-1.5 py-0.5 rounded cursor-default select-none ${
-                            showTrackChanges
+                            showSourceTC
                                 ? 'bg-blue-200 text-blue-800'
                                 : 'bg-blue-100 text-blue-600'
                         }`}
-                        title={`${revisionStages ? revisionStages.length - 1 : 1} revision(s)`}
+                        title={`${revisionStages ? revisionStages.length - 1 : 1} revision(s) — ${tcMode || 'not configured'}`}
                     >
-                        TC{revisionStages && revisionStages.length > 2 ? ` ${revisionStages.length - 1}` : ''}
+                        TC{revisionStages && revisionStages.length >= 2 ? ` ${revisionStages.length - 1}` : ''}
+                    </span>
+                )}
+                {isSimpleInsert && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green-100 text-green-700 cursor-default select-none">
+                        NEW
+                    </span>
+                )}
+                {isDeletedFinal && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-600 cursor-default select-none">
+                        DEL
                     </span>
                 )}
                 <span className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">
@@ -136,10 +154,27 @@ export function SourceColumn({
             {/* If glossary matches exist, use raw HTML to render highlights correctly */}
             {/* TipTap sanitizes unknown HTML elements, so we bypass it for highlighted content */}
             <div className="flex-grow">
-                {showTrackChanges && hasSlider ? (
+                {isSimpleInsert && revisionStages?.[1] ? (
+                    // Simple insert: show the new content with author info
+                    <div className="text-sm leading-relaxed">
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                            <span className="text-[10px] text-gray-500">
+                                {revisionStages[1].author || 'Author'}
+                            </span>
+                            {revisionStages[1].date && (
+                                <span className="text-[10px] text-gray-400">
+                                    {new Date(revisionStages[1].date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}
+                                </span>
+                            )}
+                        </div>
+                        <div className="text-green-800 bg-green-50/50 rounded px-2 py-1 border-l-2 border-green-300">
+                            {revisionStages[1].text}
+                        </div>
+                    </div>
+                ) : hasSlider ? (
                     // Git-Slider: navigate between revision stages with per-step diffs
-                    <RevisionSlider stages={revisionStages} />
-                ) : showTrackChanges && diffHtml ? (
+                    <RevisionSlider stages={revisionStages} onStageChange={onStageChange} initialStage={initialStage} />
+                ) : diffHtml ? (
                     // Simple diff view: shows original→final with red/green highlighting
                     <div
                         className="prose max-w-none text-sm leading-relaxed"

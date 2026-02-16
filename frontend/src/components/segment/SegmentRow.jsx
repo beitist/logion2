@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useState, useCallback, useMemo } from 'react';
 import { useSegmentMatches } from './hooks/useSegmentMatches';
 import { SourceColumn } from './SourceColumn';
 import { TargetColumn } from './TargetColumn';
@@ -29,7 +29,6 @@ export const SegmentRow = memo(({
     generatingSegments,
     flashingSegments,
     showDebug,
-    showTrackChanges,
     onAiDraft,
     onToggleFlag,
     onSave,
@@ -48,6 +47,47 @@ export const SegmentRow = memo(({
 
     const aiSettings = project?.config?.ai_settings || {};
 
+    // Derive Track Changes state from project config (no toolbar toggle needed)
+    const tcSettings = project?.config?.tc_settings || {};
+    const hasTC = segment.metadata?.has_track_changes;
+    // TC mode: 'first_last' (simple diff), 'step_by_step' (slider + target TC), or undefined
+    const tcMode = hasTC ? (tcSettings.tc_mode || 'first_last') : null;
+    const showSourceTC = !!tcMode;
+
+    // Revision stages & special segment type detection
+    const stages = segment.metadata?.revision_stages || [];
+    // Insert-only: stage 0 is empty (entirely new content in stage 1+)
+    const isInsertOnly = stages.length >= 2 && !stages[0]?.text?.trim();
+    // Deleted: final stage is empty (content removed in last revision)
+    const isDeletedFinal = stages.length >= 2 && !stages[stages.length - 1]?.text?.trim();
+    // Simple insert: insert-only with exactly 2 stages → no slider, no TC needed
+    const isSimpleInsert = isInsertOnly && stages.length === 2;
+
+    // Base stage: stage 1 for insert-only (stage 0 is empty), else 0
+    const baseStage = isInsertOnly ? 1 : 0;
+
+    // Slider stage tracking (starts at baseStage)
+    const [activeTCStage, setActiveTCStage] = useState(baseStage);
+    const handleStageChange = useCallback((stageIndex) => {
+        setActiveTCStage(stageIndex);
+    }, []);
+
+    // Target TC: active past base stage, with content, in step_by_step, not simple insert
+    const currentStage = stages[activeTCStage] || {};
+    const targetTCEnabled = tcMode === 'step_by_step'
+        && !isSimpleInsert
+        && activeTCStage > baseStage
+        && !!segment.target_content;
+
+    // TC user from revision stage author (memoized for stable object reference)
+    const trackChangesUser = useMemo(() => {
+        if (!targetTCEnabled) return null;
+        return {
+            id: (currentStage.author || 'editor').toLowerCase().replace(/\s+/g, '_'),
+            nickname: currentStage.author || 'Editor'
+        };
+    }, [targetTCEnabled, currentStage.author]);
+
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
             {/* Source Column (Left) */}
@@ -60,9 +100,14 @@ export const SegmentRow = memo(({
                 generatingSegments={generatingSegments}
                 flashingSegments={flashingSegments}
                 showDebug={showDebug}
-                showTrackChanges={showTrackChanges}
+                showSourceTC={showSourceTC}
+                tcMode={tcMode}
+                isSimpleInsert={isSimpleInsert}
+                isDeletedFinal={isDeletedFinal}
+                initialStage={baseStage}
                 onAiDraft={onAiDraft}
                 onContextMenu={onContextMenu}
+                onStageChange={handleStageChange}
             />
 
             {/* Target Column (Right) */}
@@ -79,6 +124,13 @@ export const SegmentRow = memo(({
                 onToggleFlag={onToggleFlag}
                 registerEditor={registerEditor}
                 showDebug={showDebug}
+                tcMode={tcMode}
+                activeTCStage={activeTCStage}
+                baseStage={baseStage}
+                isSimpleInsert={isSimpleInsert}
+                isDeletedFinal={isDeletedFinal}
+                trackChangesEnabled={targetTCEnabled}
+                trackChangesUser={trackChangesUser}
             />
         </div>
     );

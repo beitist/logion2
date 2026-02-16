@@ -5,6 +5,7 @@ import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
 import InvisibleCharacters, { InvisibleCharacter, SpaceCharacter, HardBreakNode, ParagraphNode } from '@tiptap/extension-invisible-characters'
 import { Node, Extension, mergeAttributes } from '@tiptap/core'
+import TrackChangeExtension from 'track-change-extension'
 
 import './TiptapStyles.css';
 import { getTagLabel, mergeAdjacentTags } from '../utils/tagUtils';
@@ -174,7 +175,7 @@ class NbspCharacter extends InvisibleCharacter {
     }
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false, trackChangesEnabled = false, trackChangesUser = null }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
@@ -182,6 +183,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     const onNavigateRef = React.useRef(onNavigate);
     const isSavingRef = React.useRef(false);
     const lastEmittedContent = React.useRef(content);
+    const trackChangesEnabledRef = React.useRef(trackChangesEnabled);
 
     useEffect(() => {
         aiSettingsRef.current = aiSettings;
@@ -189,7 +191,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         contextMatchesRef.current = contextMatches;
         availableTagsRef.current = availableTags;
         onNavigateRef.current = onNavigate;
-    }, [aiSettings, onAiDraft, contextMatches, availableTags, onNavigate]);
+        trackChangesEnabledRef.current = trackChangesEnabled;
+    }, [aiSettings, onAiDraft, contextMatches, availableTags, onNavigate, trackChangesEnabled]);
 
     // ... hydrateContent ... (same)
     const hydrateContent = (content, tags) => { // ... (same)
@@ -258,6 +261,12 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             }),
             // Custom Tag Node
             TagNode,
+            // Track Changes Extension
+            TrackChangeExtension.configure({
+                enabled: false,
+                dataOpUserId: '',
+                dataOpUserNickname: '',
+            }),
             Extension.create({
                 addKeyboardShortcuts() {
                     return {
@@ -381,7 +390,22 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                                 return true
                             }
                             return false
-                        }
+                        },
+
+                        // Track Changes: Accept change at cursor
+                        'Mod-Shift-a': () => {
+                            if (trackChangesEnabledRef.current && this.editor.commands.acceptChange) {
+                                return this.editor.commands.acceptChange();
+                            }
+                            return false;
+                        },
+                        // Track Changes: Reject change at cursor
+                        'Mod-Shift-r': () => {
+                            if (trackChangesEnabledRef.current && this.editor.commands.rejectChange) {
+                                return this.editor.commands.rejectChange();
+                            }
+                            return false;
+                        },
                     }
                 }
             }),
@@ -436,12 +460,50 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                 // from overwriting the editor while the user is working.
                 // EXCEPTION: If the editor is empty, we allow the update (Auto-Draft / Pre-Translate)
                 if (!editor.isFocused || editor.isEmpty) {
+                    // Disable TC during setContent to prevent the extension from
+                    // processing the ReplaceStep as a tracked change (crashes on
+                    // documents with existing TC marks — "Inconsistent open depths")
+                    const wasTCEnabled = trackChangesEnabledRef.current;
+                    if (wasTCEnabled) {
+                        editor.commands.setTrackChangeStatus?.(false);
+                    }
                     editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
                     lastEmittedContent.current = content;
+                    if (wasTCEnabled) {
+                        editor.commands.setTrackChangeStatus?.(true);
+                    }
                 }
             }
         }
     }, [content, editor, onEditorReady])
+
+    // Sync Track Changes status to editor when props change
+    const prevTCEnabledRef = React.useRef(false);
+    const prevTCUserRef = React.useRef(null);
+    useEffect(() => {
+        if (!editor) return;
+
+        // Only toggle TC status when the value actually changes
+        // (avoids re-triggering extension internals with redundant setTrackChangeStatus(true))
+        if (prevTCEnabledRef.current !== trackChangesEnabled) {
+            editor.commands.setTrackChangeStatus?.(trackChangesEnabled);
+            prevTCEnabledRef.current = trackChangesEnabled;
+        }
+
+        // Update user when TC is enabled and user changed
+        if (trackChangesEnabled && trackChangesUser) {
+            const userChanged = prevTCUserRef.current?.id !== trackChangesUser.id;
+            if (userChanged) {
+                editor.commands.updateOpUserOption?.(
+                    trackChangesUser.id,
+                    trackChangesUser.nickname
+                );
+                prevTCUserRef.current = trackChangesUser;
+            }
+        } else {
+            prevTCUserRef.current = null;
+        }
+    }, [editor, trackChangesEnabled, trackChangesUser]);
 
     if (!editor) {
         return null

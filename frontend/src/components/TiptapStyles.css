@@ -126,3 +126,24 @@
     /* Slightly larger */
     line-height: 1;
 }
+
+/* Track Changes Extension - insertion mark (<insert> element) */
+.ProseMirror insert,
+.ProseMirror insert[data-op-user-id] {
+    color: #16a34a;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    background-color: #f0fdf4;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* Track Changes Extension - deletion mark (<delete> element) */
+.ProseMirror delete,
+.ProseMirror delete[data-op-user-id] {
+    color: #dc2626;
+    text-decoration: line-through;
+    background-color: #fef2f2;
+    border-radius: 2px;
+    padding: 0 1px;
+}

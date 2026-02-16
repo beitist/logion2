@@ -162,6 +162,14 @@ export async function batchTranslate(projectId, segmentIds, mode = "draft") {
     return res.json();
 }
 
+export async function tcBatchTranslate(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/tc-batch-translate`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("TC batch translation failed");
+    return res.json();
+}
+
 // Glossary API
 
 export async function addGlossaryTerm(projectId, source, target, note) {

@@ -114,6 +114,7 @@ export function useProjectWorkspace(projectId) {
         // ...blocking
         ...blocking,
         handleBatchProcess: blocking.handleBatchProcess, // Explicitly expose new method
+        handleTCBatch: blocking.handleTCBatch, // TC Step-by-Step batch translation
 
         // Manual Overrides or Composition
         // e.g. handleSave uses data.handleSave

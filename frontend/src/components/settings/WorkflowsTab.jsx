@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2 } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
 import { copySourceToTarget, clearDraftTargets } from '../../api/client';
 import { SettingsCard, SettingsSection } from './shared';
@@ -15,7 +15,7 @@ import { SettingsCard, SettingsSection } from './shared';
  * - Reinitialize source file
  * - Re-ingest vectors
  */
-export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onFullReinit }) {
+export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onFullReinit }) {
     const [copyLoading, setCopyLoading] = useState(false);
     const [isReinitModalOpen, setIsReinitModalOpen] = useState(false);
 
@@ -158,6 +158,19 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                         onClick={handleCopySource}
                         disabled={copyLoading}
                     />
+
+                    {/* TC Step-by-Step — only shown when TC segments exist */}
+                    {segments?.some(s => s.metadata?.has_track_changes) && (
+                        <WorkflowCard
+                            icon={GitCompareArrows}
+                            iconBg="bg-indigo-50 text-indigo-600"
+                            title="TC Step-by-Step MT"
+                            description="Translate revision stages and generate TC markup"
+                            buttonText="Translate TC Stages"
+                            buttonStyle="bg-indigo-500 text-white hover:bg-indigo-600 shadow-sm"
+                            onClick={onTCBatch}
+                        />
+                    )}
                 </div>
 
                 {/* Maintenance Section */}

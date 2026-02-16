@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef } from 'react';
 import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows } from 'lucide-react';
 import './TiptapStyles.css';
 
@@ -9,6 +9,7 @@ import { StatisticsSettingsTab } from './settings/StatisticsSettingsTab';
 import { WorkflowsTab } from './settings/WorkflowsTab';
 import { ProjectSettingsTab } from './settings/ProjectSettingsTab';
 import { FilesSettingsTab } from './settings/FilesSettingsTab';  // Multi-File Management
+import { TCSettingsTab } from './settings/TCSettingsTab';
 
 import { GlossaryAddModal } from './GlossaryAddModal';
 import { LogConsole } from './LogConsole';
@@ -49,6 +50,7 @@ export function SplitView({ projectId, onBack }) {
         handleFullReinit,
         handleAutoTranslate, // Keep for backward compatibility if needed, or remove if fully replaced
         handleBatchProcess, // New
+        handleTCBatch, // TC Step-by-Step
         handleReingest,
         handleEditorUpdate,
         handleSave,
@@ -64,17 +66,11 @@ export function SplitView({ projectId, onBack }) {
         setProject // Destructure setProject to allow updates
     } = useProjectWorkspace(projectId);
 
-    // Track Changes toggle
-    const [showTrackChanges, setShowTrackChanges] = useState(false);
-
     // Virtualization ref for scrollable container
     const parentRef = useRef(null);
 
     // Get unique source files from project (safe for loading state)
     const sourceFiles = (project?.files || []).filter(f => f.category === 'source');
-
-    // Check if any segments have track changes
-    const hasAnyTrackChanges = segments.some(s => s.metadata?.has_track_changes);
 
     // Filter segments by activeFileId (null = show all)
     let filteredSegments = activeFileId
@@ -207,17 +203,6 @@ export function SplitView({ projectId, onBack }) {
                         <Keyboard size={18} />
                     </button>
 
-                    {/* Track Changes Toggle - only shown when document has TC */}
-                    {hasAnyTrackChanges && (
-                        <button
-                            onClick={() => setShowTrackChanges(!showTrackChanges)}
-                            className={`p-2 rounded-lg transition-colors ${showTrackChanges ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200 text-gray-600'}`}
-                            title="Toggle Track Changes View"
-                        >
-                            <GitCompareArrows size={18} />
-                        </button>
-                    )}
-
                     {/* Debug Toggle */}
                     <button
                         onClick={() => setShowDebug(!showDebug)}
@@ -330,7 +315,6 @@ export function SplitView({ projectId, onBack }) {
                                     generatingSegments={generatingSegments}
                                     flashingSegments={flashingSegments}
                                     showDebug={showDebug}
-                                    showTrackChanges={showTrackChanges}
                                     onAiDraft={handleAiDraft}
                                     onToggleFlag={handleToggleFlag}
                                     onSave={handleSave}
@@ -398,6 +382,7 @@ export function SplitView({ projectId, onBack }) {
                                     { id: 'rag', label: 'RAG / Context', icon: Database },
                                     { id: 'glossary', label: 'Glossary Manager', icon: BookOpen },
                                     { id: 'workflows', label: 'Workflows', icon: RefreshCw },
+                                    { id: 'tc', label: 'Track Changes', icon: GitCompareArrows },
                                     { id: 'stats', label: 'Statistics', icon: BarChart3 },
                                 ].map(tab => (
                                     <button
@@ -464,10 +449,14 @@ export function SplitView({ projectId, onBack }) {
                                             segments={segments}
                                             onQueueAll={queueSegments}
                                             onBatchProcess={handleBatchProcess} // Allow Blocking Workflows
+                                            onTCBatch={handleTCBatch} // TC Step-by-Step
                                             onReingest={handleReingest}
                                             onRefresh={refreshProject}
                                             onFullReinit={handleFullReinit}
                                         />
+                                    )}
+                                    {activeSettingsTab === 'tc' && (
+                                        <TCSettingsTab project={project} onUpdate={setProject} />
                                     )}
                                     {activeSettingsTab === 'stats' && (
                                         <StatisticsSettingsTab project={project} />
