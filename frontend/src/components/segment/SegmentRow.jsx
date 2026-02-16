@@ -88,6 +88,23 @@ export const SegmentRow = memo(({
         };
     }, [targetTCEnabled, currentStage.author]);
 
+    // Wrap onAiDraft to inject TC params when at a revision stage > base
+    const wrappedOnAiDraft = useCallback((segmentId) => {
+        if (tcMode === 'step_by_step' && !isSimpleInsert && activeTCStage > baseStage) {
+            const stageData = stages[activeTCStage] || {};
+            const tcParams = {
+                tc_source_text: stageData.text || '',
+                tc_base_translation: segment.target_content || '',
+                tc_author_id: (stageData.author || 'editor').toLowerCase().replace(/\s+/g, '_'),
+                tc_author_name: stageData.author || 'Editor',
+                tc_date: stageData.date || '',
+            };
+            onAiDraft(segmentId, false, 'translate', false, false, tcParams);
+        } else {
+            onAiDraft(segmentId);
+        }
+    }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, baseStage, stages, segment.target_content]);
+
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
             {/* Source Column (Left) */}
@@ -105,7 +122,7 @@ export const SegmentRow = memo(({
                 isSimpleInsert={isSimpleInsert}
                 isDeletedFinal={isDeletedFinal}
                 initialStage={baseStage}
-                onAiDraft={onAiDraft}
+                onAiDraft={wrappedOnAiDraft}
                 onContextMenu={onContextMenu}
                 onStageChange={handleStageChange}
             />
@@ -118,7 +135,7 @@ export const SegmentRow = memo(({
                 isMandatoryContext={isMandatoryContext}
                 aiSettings={aiSettings}
                 onSave={onSave}
-                onAiDraft={onAiDraft}
+                onAiDraft={wrappedOnAiDraft}
                 onFocus={onFocus}
                 onNavigate={onNavigate}
                 onToggleFlag={onToggleFlag}

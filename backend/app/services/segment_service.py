@@ -48,18 +48,25 @@ class SegmentService:
         """
         return self.db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
 
-    async def generate_and_log_draft(self, segment_id: str, mode: str = "translate", is_workflow: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
+    async def generate_and_log_draft(self, segment_id: str, mode: str = "translate", is_workflow: bool = False, force_refresh: bool = False, tc_params=None) -> Dict[str, Any]:
         """
-        Handles AI draft generation, including configuration lookup, RAG call, 
+        Handles AI draft generation, including configuration lookup, RAG call,
         metadata updates, and usage logging.
+
+        If tc_params is provided, translates the TC stage source text and diffs
+        against the base translation to produce TC markup.
         """
         segment = self.db.query(Segment).filter(Segment.id == segment_id).first()
         if not segment:
             raise HTTPException(status_code=404, detail="Segment not found")
-            
+
         project = self.db.query(Project).filter(Project.id == segment.project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+
+        # TC-aware single-segment MT: translate stage source, diff with base
+        if tc_params is not None:
+            return await self._generate_tc_draft(segment, project, tc_params)
 
         # 1. Workflow Shortcut: Copy Source
         if mode == "copy_source":
@@ -218,6 +225,109 @@ class SegmentService:
         except Exception as e:
             self.db.rollback()
             logger.error(f"Generate Draft Error: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def _generate_tc_draft(self, segment: Segment, project: Project, tc_params) -> Dict[str, Any]:
+        """
+        Translates the TC stage source text and diffs against the base translation
+        to produce TC markup with <insert>/<delete> tags.
+        """
+        from ..rag.inference import InferenceOrchestrator
+        from ..utils.tc_diff import generate_tc_markup
+
+        config = project.config or {}
+        ai_settings = config.get("ai_settings", {})
+        model_name = ai_settings.get("workflow_model") or ai_settings.get("model") or get_default_model_id()
+        custom_prompt = ai_settings.get("custom_prompt", "Translate the following text accurately.")
+
+        orchestrator = InferenceOrchestrator()
+
+        try:
+            translations, usage = await orchestrator.generate_structured_batch(
+                preceding_context=[],
+                following_context=[],
+                batch_items=[{
+                    "id": str(segment.id),
+                    "source_text": tc_params.tc_source_text,
+                    "tm_matches": [],
+                    "glossary_matches": [],
+                }],
+                source_lang=project.source_lang,
+                target_lang=project.target_lang,
+                model_name=model_name,
+                custom_prompt=custom_prompt,
+            )
+
+            stage_translation = translations.get(str(segment.id), "")
+
+            if not stage_translation:
+                raise HTTPException(status_code=500, detail="TC stage translation returned empty")
+
+            # Diff against base translation to produce TC markup
+            base = tc_params.tc_base_translation or ""
+            if base and stage_translation != base:
+                tc_content = generate_tc_markup(
+                    old_text=base,
+                    new_text=stage_translation,
+                    author_id=tc_params.tc_author_id,
+                    author_name=tc_params.tc_author_name,
+                    date=tc_params.tc_date,
+                )
+            else:
+                tc_content = stage_translation
+
+            segment.target_content = tc_content
+            segment.status = "translated"
+
+            # Update metadata
+            current_meta = dict(segment.metadata_json or {})
+            inner_meta = current_meta.get("metadata", {})
+            if not isinstance(inner_meta, dict):
+                inner_meta = {}
+            inner_meta["ai_model"] = model_name
+            inner_meta["tc_stage_translation"] = stage_translation
+            current_meta["metadata"] = inner_meta
+            segment.metadata_json = current_meta
+            flag_modified(segment, "metadata_json")
+
+            # Log usage
+            if usage:
+                self.db.add(AiUsageLog(
+                    project_id=project.id,
+                    segment_id=segment.id,
+                    model=model_name,
+                    trigger_type="tc_single",
+                    input_tokens=usage.get("input_tokens", 0),
+                    output_tokens=usage.get("output_tokens", 0),
+                ))
+
+                current_config = dict(project.config or {})
+                usage_stats = current_config.get("usage_stats", {})
+                m_stats = usage_stats.get(model_name, {"input_tokens": 0, "output_tokens": 0})
+                m_stats["input_tokens"] += usage.get("input_tokens", 0)
+                m_stats["output_tokens"] += usage.get("output_tokens", 0)
+                usage_stats[model_name] = m_stats
+                current_config["usage_stats"] = usage_stats
+                project.config = current_config
+                flag_modified(project, "config")
+
+            self.db.commit()
+            self.db.refresh(segment)
+
+            resp_dict = segment.__dict__.copy()
+            resp_dict.pop('embedding', None)
+            resp_dict.pop('_sa_instance_state', None)
+            meta_json = segment.metadata_json or {}
+            resp_dict['context_matches'] = meta_json.get("context_matches", [])
+            resp_dict['segment_metadata'] = meta_json.get("metadata")
+            resp_dict['tags'] = meta_json.get("tags")
+            return resp_dict
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"TC Draft Error: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
 
     def bulk_copy_source_to_target(self, project_id: str):

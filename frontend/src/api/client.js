@@ -88,11 +88,14 @@ export async function duplicateProject(projectId) {
 }
 
 // Generate AI Draft for a single segment
-export async function generateDraft(segmentId, mode = "translate", isWorkflow = false, forceRefresh = false) {
+export async function generateDraft(segmentId, mode = "translate", isWorkflow = false, forceRefresh = false, tcParams = null) {
     // Mode: 'translate' (rewrite target), 'draft' (suggestion only), 'analyze' (retrieval only)
-    const response = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft?mode=${mode}&is_workflow=${isWorkflow}&force_refresh=${forceRefresh}`, {
-        method: 'POST',
-    });
+    const options = { method: 'POST' };
+    if (tcParams) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify(tcParams);
+    }
+    const response = await fetch(`${API_BASE}/project/segment/${segmentId}/generate-draft?mode=${mode}&is_workflow=${isWorkflow}&force_refresh=${forceRefresh}`, options);
     if (!response.ok) {
         const errorText = await response.text();
         console.error(`Generate Draft Failed [${response.status}]:`, errorText);

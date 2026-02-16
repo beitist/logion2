@@ -1,11 +1,20 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form, Depends, HTTPException, BackgroundTasks, Body
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from ..database import get_db
 from ..schemas import ProjectCreate, ProjectResponse, SegmentResponse, ProjectUpdate, ProjectListResponse, BatchTranslateRequest
+
+
+class TCDraftParams(BaseModel):
+    tc_source_text: str
+    tc_base_translation: str = ""
+    tc_author_id: str = "mt"
+    tc_author_name: str = "MT"
+    tc_date: str = ""
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
 from ..logger import get_logger
 from ..config import get_default_model_id
@@ -107,21 +116,24 @@ async def reinitialize_project(
 
 @router.post("/segment/{segment_id}/generate-draft", response_model=SegmentResponse)
 async def generate_draft_endpoint(
-    segment_id: str, 
-    mode: str = "translate", 
-    is_workflow: bool = False, 
+    segment_id: str,
+    mode: str = "translate",
+    is_workflow: bool = False,
     force_refresh: bool = False,
+    tc_params: Optional[TCDraftParams] = Body(None),
     service: SegmentService = Depends(get_segment_service)
 ):
     """
     Triggers AI draft generation for a specific segment.
-    Delegates all logic to SegmentService.
+    If tc_params is provided, translates the TC stage source text
+    and diffs against the base translation to produce TC markup.
     """
     return await service.generate_and_log_draft(
-        segment_id=segment_id, 
-        mode=mode, 
-        is_workflow=is_workflow, 
-        force_refresh=force_refresh
+        segment_id=segment_id,
+        mode=mode,
+        is_workflow=is_workflow,
+        force_refresh=force_refresh,
+        tc_params=tc_params
     )
 
 @router.post("/{project_id}/reingest")
