@@ -60,6 +60,10 @@ export function TargetColumn({
     // Detect if slider is at the deleted final stage
     const isAtDeletedStage = isDeletedFinal && activeTCStage === stages.length - 1;
 
+    // Lock editor: past base stage without base translation → must translate base first
+    const editorLocked = hasTC && tcMode === 'step_by_step' && !isSimpleInsert
+        && activeTCStage > baseStage && !segment.target_content;
+
     // Background color varies based on segment state
     const bgClass = isFlagged
         ? 'bg-yellow-50/50 border-l border-yellow-200'
@@ -151,6 +155,7 @@ export function TargetColumn({
                     availableTags={segment.tags}
                     contextMatches={sortedMatches}
                     onSave={onSave}
+                    isReadOnly={editorLocked}
                     aiSettings={aiSettings}
                     onAiDraft={(id) => onAiDraft(id)}
                     onFocus={() => onFocus(segment.id)}

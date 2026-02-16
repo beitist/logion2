@@ -2,6 +2,7 @@ import re
 import copy
 import docx
 from docx.oxml.ns import qn
+from docx.oxml.shared import OxmlElement
 from docx.text.paragraph import Paragraph
 from app.logger import get_logger
 
@@ -18,6 +19,38 @@ def _parse_tag_token(token: str):
     if is_closing:
         tag_content = tag_content[1:]
     return tag_content, is_closing
+
+
+def _parse_tc_attrs(tag_content: str) -> dict:
+    """Extract data-op-* attributes from a TC tag like 'insert data-op-user-id="x" ...'."""
+    attrs = {}
+    for m in re.finditer(r'data-op-([\w-]+)="([^"]*)"', tag_content):
+        attrs[m.group(1)] = m.group(2)
+    return attrs
+
+
+def _format_tc_date(date_str: str) -> str:
+    """Convert a date string to DOCX-compatible ISO 8601 format."""
+    if not date_str:
+        return "2026-01-01T00:00:00Z"
+    if "T" in date_str and date_str.endswith("Z"):
+        return date_str
+    try:
+        date_str = date_str.strip()
+        if " " in date_str and "T" not in date_str:
+            date_str = date_str.replace(" ", "T", 1)
+        if not date_str.endswith("Z"):
+            parts = date_str.split("T")
+            if len(parts) == 2:
+                time_part = parts[1]
+                if time_part.count(":") < 2:
+                    time_part += ":00"
+                date_str = parts[0] + "T" + time_part + "Z"
+            else:
+                date_str += "T00:00:00Z"
+        return date_str
+    except Exception:
+        return "2026-01-01T00:00:00Z"
 
 
 class AssemblerContext:
@@ -49,6 +82,9 @@ class AssemblerContext:
         'endnote': '_handle_note_ref',
     }
 
+    # Class-level counter for unique TC revision IDs across paragraphs
+    _tc_rev_counter = 10000
+
     def __init__(self, paragraph: Paragraph, tags_map: dict, shape_map=None):
         self.paragraph = paragraph
         self.p_element = paragraph._element
@@ -61,6 +97,9 @@ class AssemblerContext:
             'superscript': False, 'subscript': False,
             'strike': False, 'smallCaps': False, 'caps': False,
         }
+        # Track Changes state: w:ins / w:del wrapper element
+        self.tc_wrapper = None   # Current OxmlElement (w:ins or w:del)
+        self.tc_type = None      # 'insert' or 'delete'
 
     def run(self, text: str):
         """Main entry point: preserve shapes, clear, inject tokens, append remaining shapes."""
@@ -214,25 +253,122 @@ class AssemblerContext:
             run._element.append(ref)
 
     def _handle_html_tag(self, tag_content: str, is_closing: bool):
-        """Handle residual HTML tags (br, b, i, u) from tiptap cleanup."""
-        lower_tag = tag_content.lower()
-        if lower_tag == 'br/':
+        """Handle residual HTML tags (br, b, i, u) and TC tags (insert, delete)."""
+        # Extract tag name (first word) for matching
+        tag_name = tag_content.split(None, 1)[0].lower() if tag_content else ""
+
+        if tag_name == 'br/':
             self.paragraph.add_run().add_break()
-        elif lower_tag in ['b', 'strong']:
+        elif tag_name in ['b', 'strong']:
             self.active_style['bold'] += -1 if is_closing else 1
-        elif lower_tag in ['i', 'em']:
+        elif tag_name in ['i', 'em']:
             self.active_style['italic'] += -1 if is_closing else 1
-        elif lower_tag == 'u':
+        elif tag_name == 'u':
             self.active_style['underline'] += -1 if is_closing else 1
+        elif tag_name == 'insert':
+            self._handle_tc_tag(tag_content, is_closing, 'insert')
+        elif tag_name == 'delete':
+            self._handle_tc_tag(tag_content, is_closing, 'delete')
+
+    def _handle_tc_tag(self, tag_content: str, is_closing: bool, tc_type: str):
+        """Handle Track Changes <insert>/<delete> tags → w:ins/w:del XML."""
+        if is_closing:
+            self.tc_wrapper = None
+            self.tc_type = None
+            return
+
+        attrs = _parse_tc_attrs(tag_content)
+        author = attrs.get('user-nickname', attrs.get('user-id', 'Unknown'))
+        date = _format_tc_date(attrs.get('date', ''))
+
+        AssemblerContext._tc_rev_counter += 1
+        rev_id = str(AssemblerContext._tc_rev_counter)
+
+        w_tag = 'w:ins' if tc_type == 'insert' else 'w:del'
+        tc_el = OxmlElement(w_tag)
+        tc_el.set(qn('w:id'), rev_id)
+        tc_el.set(qn('w:author'), author)
+        tc_el.set(qn('w:date'), date)
+        self.p_element.append(tc_el)
+
+        self.tc_wrapper = tc_el
+        self.tc_type = tc_type
 
     # --- Run Creation ---
 
     def add_styled_run(self, content: str):
         """Create a run with the current active formatting style."""
-        if 'hyperlink_el' in self.active_style:
+        if self.tc_wrapper is not None:
+            self._add_tc_run(content)
+        elif 'hyperlink_el' in self.active_style:
             self._add_hyperlink_run(content)
         else:
             self._add_paragraph_run(content)
+
+    def _add_tc_run(self, content: str):
+        """Add a run inside a w:ins or w:del element."""
+        run_el = OxmlElement('w:r')
+
+        # Run properties (formatting)
+        rPr = self._build_rpr()
+        if rPr is not None:
+            run_el.append(rPr)
+
+        # w:del uses w:delText, w:ins uses w:t
+        if self.tc_type == 'delete':
+            t = OxmlElement('w:delText')
+        else:
+            t = OxmlElement('w:t')
+        t.set(qn('xml:space'), 'preserve')
+        t.text = content
+        run_el.append(t)
+
+        self.tc_wrapper.append(run_el)
+
+    def _build_rpr(self):
+        """Build a w:rPr element from the current active_style. Returns None if no formatting."""
+        parts = []
+        if self.active_style['bold'] > 0:
+            parts.append(OxmlElement('w:b'))
+        if self.active_style['italic'] > 0:
+            parts.append(OxmlElement('w:i'))
+        if self.active_style['underline'] > 0:
+            u = OxmlElement('w:u')
+            u.set(qn('w:val'), 'single')
+            parts.append(u)
+        if self.active_style.get('superscript'):
+            vAlign = OxmlElement('w:vertAlign')
+            vAlign.set(qn('w:val'), 'superscript')
+            parts.append(vAlign)
+        if self.active_style.get('subscript'):
+            vAlign = OxmlElement('w:vertAlign')
+            vAlign.set(qn('w:val'), 'subscript')
+            parts.append(vAlign)
+        if self.active_style.get('strike'):
+            parts.append(OxmlElement('w:strike'))
+        if self.active_style.get('smallCaps'):
+            parts.append(OxmlElement('w:smallCaps'))
+        if self.active_style.get('caps'):
+            parts.append(OxmlElement('w:caps'))
+        if 'color' in self.active_style:
+            c = OxmlElement('w:color')
+            c.set(qn('w:val'), self.active_style['color'])
+            parts.append(c)
+        if 'size' in self.active_style:
+            sz = OxmlElement('w:sz')
+            sz.set(qn('w:val'), self.active_style['size'])
+            parts.append(sz)
+        if 'font' in self.active_style:
+            rFonts = OxmlElement('w:rFonts')
+            rFonts.set(qn('w:ascii'), self.active_style['font'])
+            rFonts.set(qn('w:hAnsi'), self.active_style['font'])
+            parts.append(rFonts)
+        if not parts:
+            return None
+        rPr = OxmlElement('w:rPr')
+        for p in parts:
+            rPr.append(p)
+        return rPr
 
     def _add_hyperlink_run(self, content: str):
         """Add a run inside the current active hyperlink element."""

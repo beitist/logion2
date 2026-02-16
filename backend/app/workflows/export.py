@@ -194,6 +194,16 @@ class ExportWorkflow(BaseWorkflow):
         text = re.sub(r'<(\d+)>', r'__TAG_START_\1__', html_content)
         text = re.sub(r'</(\d+)>', r'__TAG_END_\1__', text)
 
+        # Protect TC tags (<insert ...>...</insert>, <delete ...>...</delete>)
+        # so BeautifulSoup doesn't mangle their attributes
+        tc_store = []
+        def _protect_tc(m):
+            idx = len(tc_store)
+            tc_store.append(m.group(0))
+            return f"__TC_{idx}__"
+        text = re.sub(r'<(insert|delete)\s[^>]*>', _protect_tc, text)
+        text = re.sub(r'</(insert|delete)>', _protect_tc, text)
+
         soup = BeautifulSoup(text, "html.parser")
         
         # Convert Tiptap Spans
@@ -224,7 +234,13 @@ class ExportWorkflow(BaseWorkflow):
         # Restore placeholders
         cleaned_html = re.sub(r'__TAG_START_(\d+)__', r'<\1>', cleaned_html)
         cleaned_html = re.sub(r'__TAG_END_(\d+)__', r'</\1>', cleaned_html)
-         
+
+        # Restore TC tags
+        def _restore_tc(m):
+            idx = int(m.group(1))
+            return tc_store[idx] if idx < len(tc_store) else ''
+        cleaned_html = re.sub(r'__TC_(\d+)__', _restore_tc, cleaned_html)
+
         return cleaned_html
 
     def _generate_tmx_content(self, source_lang, target_lang, segments):

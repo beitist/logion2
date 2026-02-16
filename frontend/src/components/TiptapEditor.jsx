@@ -181,7 +181,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
     const contextMatchesRef = React.useRef(contextMatches);
     const availableTagsRef = React.useRef(availableTags);
     const onNavigateRef = React.useRef(onNavigate);
+    const onEditorReadyRef = React.useRef(onEditorReady);
     const isSavingRef = React.useRef(false);
+    const justSavedRef = React.useRef(false);
     const lastEmittedContent = React.useRef(content);
     const trackChangesEnabledRef = React.useRef(trackChangesEnabled);
 
@@ -191,8 +193,9 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         contextMatchesRef.current = contextMatches;
         availableTagsRef.current = availableTags;
         onNavigateRef.current = onNavigate;
+        onEditorReadyRef.current = onEditorReady;
         trackChangesEnabledRef.current = trackChangesEnabled;
-    }, [aiSettings, onAiDraft, contextMatches, availableTags, onNavigate, trackChangesEnabled]);
+    }, [aiSettings, onAiDraft, contextMatches, availableTags, onNavigate, onEditorReady, trackChangesEnabled]);
 
     // ... hydrateContent ... (same)
     const hydrateContent = (content, tags) => { // ... (same)
@@ -446,36 +449,47 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         onBlur: ({ editor }) => {
             if (isSavingRef.current) return;
             if (onSave && segmentId) {
+                // Guard: prevent content sync effect from reverting editor
+                // to a stale prop while the async save is in flight.
+                justSavedRef.current = true;
+                setTimeout(() => { justSavedRef.current = false; }, 1000);
                 onSave(segmentId, editor.getHTML())
             }
         },
     })
 
+    // Register editor instance via ref-based callback (stable, no re-triggers)
     useEffect(() => {
-        if (editor) {
-            if (onEditorReady) onEditorReady(editor);
+        if (editor && onEditorReadyRef.current) {
+            onEditorReadyRef.current(editor);
+        }
+    }, [editor])
 
-            if (content && content !== editor.getHTML() && content !== lastEmittedContent.current) {
-                // Focus Guard: Prevent external updates (e.g. from backend poller or MT refresh)
-                // from overwriting the editor while the user is working.
-                // EXCEPTION: If the editor is empty, we allow the update (Auto-Draft / Pre-Translate)
-                if (!editor.isFocused || editor.isEmpty) {
-                    // Disable TC during setContent to prevent the extension from
-                    // processing the ReplaceStep as a tracked change (crashes on
-                    // documents with existing TC marks — "Inconsistent open depths")
-                    const wasTCEnabled = trackChangesEnabledRef.current;
-                    if (wasTCEnabled) {
-                        editor.commands.setTrackChangeStatus?.(false);
-                    }
-                    editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
-                    lastEmittedContent.current = content;
-                    if (wasTCEnabled) {
-                        editor.commands.setTrackChangeStatus?.(true);
-                    }
+    // Content sync: update editor when the content prop changes externally
+    useEffect(() => {
+        if (editor && content && content !== editor.getHTML() && content !== lastEmittedContent.current) {
+            // Skip if we just saved via onBlur — the prop is stale, editor has the truth.
+            if (justSavedRef.current) return;
+
+            // Focus Guard: Prevent external updates (e.g. from backend poller or MT refresh)
+            // from overwriting the editor while the user is working.
+            // EXCEPTION: If the editor is empty, we allow the update (Auto-Draft / Pre-Translate)
+            if (!editor.isFocused || editor.isEmpty) {
+                // Disable TC during setContent to prevent the extension from
+                // processing the ReplaceStep as a tracked change (crashes on
+                // documents with existing TC marks — "Inconsistent open depths")
+                const wasTCEnabled = trackChangesEnabledRef.current;
+                if (wasTCEnabled) {
+                    editor.commands.setTrackChangeStatus?.(false);
+                }
+                editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
+                lastEmittedContent.current = content;
+                if (wasTCEnabled) {
+                    editor.commands.setTrackChangeStatus?.(true);
                 }
             }
         }
-    }, [content, editor, onEditorReady])
+    }, [content, editor])
 
     // Sync Track Changes status to editor when props change
     const prevTCEnabledRef = React.useRef(false);
