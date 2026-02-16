@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from ..models import Segment, ProjectFile, ProjectFileCategory
 from ..schemas import SegmentInternal, TagModel
 from ..storage import download_file
-from ..document.assembler import reassemble_docx
+from ..document.assembler import reassemble_docx, reassemble_xlsx
 from ..tmx import export_tmx
 from .base import BaseWorkflow
 from ..logger import get_logger
@@ -81,11 +81,15 @@ class ExportWorkflow(BaseWorkflow):
                 # Prepare segments for reassembly
                 reassembly_segments = self._prepare_segments_for_reassembly(file_segments)
                 
+                # Detect file format from extension
+                _, ext = os.path.splitext(source_record.filename)
+                ext = ext.lower()
+
                 # Download source file
                 input_object_name = source_record.file_path
-                temp_input_path = os.path.join(UPLOAD_DIR, f"temp_export_in_{source_record.id}.docx")
+                temp_input_path = os.path.join(UPLOAD_DIR, f"temp_export_in_{source_record.id}{ext}")
                 temp_files_to_cleanup.append(temp_input_path)
-                
+
                 try:
                     download_file(input_object_name, temp_input_path)
                 except Exception as e:
@@ -94,14 +98,17 @@ class ExportWorkflow(BaseWorkflow):
                         shutil.copy(input_object_name, temp_input_path)
                     else:
                         raise HTTPException(status_code=404, detail=f"Source file download failed: {e}")
-                
+
                 # Output filename for this file
                 output_filename = f"translated_{source_record.filename}"
                 output_path = os.path.join(UPLOAD_DIR, output_filename)
-                
-                # Reassemble this file
+
+                # Reassemble using format-specific assembler
                 try:
-                    reassemble_docx(temp_input_path, output_path, reassembly_segments)
+                    if ext in ('.xlsx', '.xls'):
+                        reassemble_xlsx(temp_input_path, output_path, reassembly_segments)
+                    else:
+                        reassemble_docx(temp_input_path, output_path, reassembly_segments)
                     output_files.append((output_filename, output_path))
                 except Exception as e:
                     import traceback

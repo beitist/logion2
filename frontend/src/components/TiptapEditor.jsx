@@ -41,7 +41,14 @@ const TagNode = Node.create({
                         'style': `--tag-label: "${lbl}"`
                     }
                 },
-            }
+            },
+            tagType: {
+                default: 'unknown',
+                parseHTML: element => element.getAttribute('data-tag-type'),
+                renderHTML: attributes => ({
+                    'data-tag-type': attributes.tagType,
+                }),
+            },
         }
     },
 

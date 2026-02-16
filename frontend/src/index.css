@@ -59,3 +59,21 @@
   font-size: 0.875rem;
   line-height: 1.625;
 }
+
+/* Track Changes diff display */
+.tc-deleted {
+  color: #dc2626;
+  text-decoration: line-through;
+  background-color: #fef2f2;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.tc-inserted {
+  color: #16a34a;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  background-color: #f0fdf4;
+  border-radius: 2px;
+  padding: 0 1px;
+}

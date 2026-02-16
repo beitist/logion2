@@ -1,7 +1,9 @@
-import React, { useMemo } from 'react';
-import { Copy, Search } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Copy, Search, GitCompareArrows } from 'lucide-react';
 import { TiptapEditor } from '../TiptapEditor';
 import { formatSourceContent, getSegmentComments, highlightGlossaryTerms } from '../../utils/editorTransforms';
+import { createInlineDiff } from '../../utils/diffUtils';
+import { RevisionSlider } from './RevisionSlider';
 import { MatchCard } from './MatchCard';
 
 /**
@@ -34,11 +36,13 @@ export function SourceColumn({
     generatingSegments,
     flashingSegments,
     showDebug,
+    showTrackChanges,
     onAiDraft,
     onContextMenu
 }) {
     const comments = getSegmentComments(segment.tags);
     const aiSettings = project?.config?.ai_settings || {};
+    const hasTC = segment.metadata?.has_track_changes;
 
     // Threshold values for filtering matches
     const tMandatory = aiSettings.threshold_mandatory ?? 60;
@@ -50,6 +54,19 @@ export function SourceColumn({
             .filter(m => m.type === 'glossary')
             .map(m => ({ source: m.source_text || m.source, target: m.content || m.target, note: m.note }));
     }, [sortedMatches]);
+
+    // Track changes: use revision stages (slider) or fallback to simple diff
+    const revisionStages = segment.metadata?.revision_stages;
+    const hasSlider = hasTC && revisionStages && revisionStages.length > 2;
+
+    // Simple diff HTML (fallback when no stages or only 2 stages)
+    const diffHtml = useMemo(() => {
+        if (!hasTC || !showTrackChanges || hasSlider) return null;
+        return createInlineDiff(
+            segment.metadata.original_text,
+            segment.metadata.final_text
+        );
+    }, [hasTC, hasSlider, showTrackChanges, segment.metadata?.original_text, segment.metadata?.final_text]);
 
     // Format source content with glossary term highlighting
     const formattedSourceContent = useMemo(() => {
@@ -89,7 +106,7 @@ export function SourceColumn({
 
     return (
         <div className="p-5 bg-gray-50/80 rounded-l-xl text-sm leading-relaxed border-r border-gray-100 flex flex-col relative">
-            {/* Copy button and segment index (shown on hover) */}
+            {/* Copy button, TC badge, and segment index (shown on hover) */}
             <div className="absolute top-2 right-2 flex items-center gap-2">
                 <button
                     onClick={() => navigator.clipboard.writeText(segment.source_content)}
@@ -98,6 +115,18 @@ export function SourceColumn({
                 >
                     <Copy size={12} />
                 </button>
+                {hasTC && (
+                    <span
+                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded cursor-default select-none ${
+                            showTrackChanges
+                                ? 'bg-blue-200 text-blue-800'
+                                : 'bg-blue-100 text-blue-600'
+                        }`}
+                        title={`${revisionStages ? revisionStages.length - 1 : 1} revision(s)`}
+                    >
+                        TC{revisionStages && revisionStages.length > 2 ? ` ${revisionStages.length - 1}` : ''}
+                    </span>
+                )}
                 <span className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-300 font-mono pointer-events-none">
                     #{segment.index + 1}
                 </span>
@@ -107,7 +136,16 @@ export function SourceColumn({
             {/* If glossary matches exist, use raw HTML to render highlights correctly */}
             {/* TipTap sanitizes unknown HTML elements, so we bypass it for highlighted content */}
             <div className="flex-grow">
-                {glossaryMatches.length > 0 ? (
+                {showTrackChanges && hasSlider ? (
+                    // Git-Slider: navigate between revision stages with per-step diffs
+                    <RevisionSlider stages={revisionStages} />
+                ) : showTrackChanges && diffHtml ? (
+                    // Simple diff view: shows original→final with red/green highlighting
+                    <div
+                        className="prose max-w-none text-sm leading-relaxed"
+                        dangerouslySetInnerHTML={{ __html: diffHtml }}
+                    />
+                ) : glossaryMatches.length > 0 ? (
                     // Raw HTML with glossary highlights (TipTap would escape the <mark> tags)
                     // Bind onContextMenu for right-click glossary add functionality
                     <div

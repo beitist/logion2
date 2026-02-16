@@ -33,19 +33,21 @@ export const hydrateContent = (htmlContent, tags) => {
                 return "";
             }
         }
-        return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}" class="tag-node tag-node-${finalId}" style="--tag-label: '${label}'"></span>`;
+        const tagType = tagInfo?.type || 'unknown';
+        return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}" data-tag-type="${tagType}" class="tag-node tag-node-${finalId}" style="--tag-label: '${label}'"></span>`;
     });
 
     // Post-Pass: Merge Combo Tags
     let mergeChanged = true;
     while (mergeChanged) {
         mergeChanged = false;
-        const regex = /<span data-type="tag-node" data-id="([^"]+)" data-label="([^"]+)"><\/span>(<span data-type="tag-node" data-id="([^"]+)" data-label="([^"]+)"><\/span>)/g;
-        hydrated = hydrated.replace(regex, (match, id1, label1, secondSpan, id2, label2) => {
+        const regex = /<span data-type="tag-node" data-id="([^"]+)" data-label="([^"]+)" data-tag-type="([^"]+)"><\/span>(<span data-type="tag-node" data-id="([^"]+)" data-label="([^"]+)" data-tag-type="([^"]+)"><\/span>)/g;
+        hydrated = hydrated.replace(regex, (match, id1, label1, type1, secondSpan, id2, label2, type2) => {
             mergeChanged = true;
             const newId = `${id1},${id2}`;
             const newLabel = `${label1},${label2}`;
-            return `<span data-type="tag-node" data-id="${newId}" data-label="${newLabel}" class="tag-node tag-node-${newId}" style="--tag-label: '${newLabel}'"></span>`;
+            const newType = type1 === type2 ? type1 : `${type1},${type2}`;
+            return `<span data-type="tag-node" data-id="${newId}" data-label="${newLabel}" data-tag-type="${newType}" class="tag-node tag-node-${newId}" style="--tag-label: '${newLabel}'"></span>`;
         });
     }
 

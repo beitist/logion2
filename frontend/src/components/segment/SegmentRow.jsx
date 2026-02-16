@@ -29,6 +29,7 @@ export const SegmentRow = memo(({
     generatingSegments,
     flashingSegments,
     showDebug,
+    showTrackChanges,
     onAiDraft,
     onToggleFlag,
     onSave,
@@ -59,6 +60,7 @@ export const SegmentRow = memo(({
                 generatingSegments={generatingSegments}
                 flashingSegments={flashingSegments}
                 showDebug={showDebug}
+                showTrackChanges={showTrackChanges}
                 onAiDraft={onAiDraft}
                 onContextMenu={onContextMenu}
             />

@@ -8,6 +8,12 @@ __pycache__
 
 /briefings/*.md
 
+/backend/uploads/*
+
+*.docx
+ÜPrompt.docx
+
+
 # Logs
 logs
 *.log

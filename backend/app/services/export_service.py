@@ -37,6 +37,8 @@ class ExportService:
         # Set correct media type based on file extension
         if filename.endswith('.zip'):
             media_type = "application/zip"
+        elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
             media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         

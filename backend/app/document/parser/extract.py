@@ -88,12 +88,14 @@ def extract_tags(run_element) -> list[TagModel]:
 
 def get_run_text(run_element) -> str:
     """
-    Extracts text from a run, handling <w:t>, <w:br>, <w:tab>.
+    Extracts text from a run, handling <w:t>, <w:delText>, <w:br>, <w:tab>.
     """
     text = ""
     for child in run_element:
         tag = child.tag
         if tag == qn('w:t'):
+             text += child.text or ""
+        elif tag == qn('w:delText'):
              text += child.text or ""
         elif tag == qn('w:br'):
              text += "\n"

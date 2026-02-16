@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings } from 'lucide-react';
+import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows } from 'lucide-react';
 import './TiptapStyles.css';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
@@ -64,11 +64,17 @@ export function SplitView({ projectId, onBack }) {
         setProject // Destructure setProject to allow updates
     } = useProjectWorkspace(projectId);
 
+    // Track Changes toggle
+    const [showTrackChanges, setShowTrackChanges] = useState(false);
+
     // Virtualization ref for scrollable container
     const parentRef = useRef(null);
 
     // Get unique source files from project (safe for loading state)
     const sourceFiles = (project?.files || []).filter(f => f.category === 'source');
+
+    // Check if any segments have track changes
+    const hasAnyTrackChanges = segments.some(s => s.metadata?.has_track_changes);
 
     // Filter segments by activeFileId (null = show all)
     let filteredSegments = activeFileId
@@ -201,6 +207,17 @@ export function SplitView({ projectId, onBack }) {
                         <Keyboard size={18} />
                     </button>
 
+                    {/* Track Changes Toggle - only shown when document has TC */}
+                    {hasAnyTrackChanges && (
+                        <button
+                            onClick={() => setShowTrackChanges(!showTrackChanges)}
+                            className={`p-2 rounded-lg transition-colors ${showTrackChanges ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-200 text-gray-600'}`}
+                            title="Toggle Track Changes View"
+                        >
+                            <GitCompareArrows size={18} />
+                        </button>
+                    )}
+
                     {/* Debug Toggle */}
                     <button
                         onClick={() => setShowDebug(!showDebug)}
@@ -226,7 +243,7 @@ export function SplitView({ projectId, onBack }) {
                                 <div className="p-1">
                                     <button onClick={handleExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
                                         <FileText size={16} className="text-blue-500" />
-                                        <span className="font-medium">Export DOCX</span>
+                                        <span className="font-medium">Export Translation</span>
                                     </button>
                                     <button onClick={handleTmXExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
                                         <FileText size={16} className="text-green-500" />
@@ -313,6 +330,7 @@ export function SplitView({ projectId, onBack }) {
                                     generatingSegments={generatingSegments}
                                     flashingSegments={flashingSegments}
                                     showDebug={showDebug}
+                                    showTrackChanges={showTrackChanges}
                                     onAiDraft={handleAiDraft}
                                     onToggleFlag={handleToggleFlag}
                                     onSave={handleSave}
