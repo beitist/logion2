@@ -242,6 +242,19 @@ class SegmentService:
 
         orchestrator = InferenceOrchestrator()
 
+        # If base translation exists, use revision prompt + TM reference
+        # so the MT revises rather than re-translates (cleaner diffs)
+        base = tc_params.tc_base_translation or ""
+        tm_matches = []
+        if base:
+            custom_prompt += (
+                "\n\nIMPORTANT: A reference translation is provided as TM match. "
+                "The source text was revised compared to the reference source. "
+                "Update the reference translation to reflect the source changes only. "
+                "Keep wording identical where the source has not changed."
+            )
+            tm_matches = [{"source": segment.source_content, "target": base, "score": 95}]
+
         try:
             translations, usage = await orchestrator.generate_structured_batch(
                 preceding_context=[],
@@ -249,7 +262,7 @@ class SegmentService:
                 batch_items=[{
                     "id": str(segment.id),
                     "source_text": tc_params.tc_source_text,
-                    "tm_matches": [],
+                    "tm_matches": tm_matches,
                     "glossary_matches": [],
                 }],
                 source_lang=project.source_lang,

@@ -127,7 +127,7 @@
     line-height: 1;
 }
 
-/* Track Changes Extension - insertion mark (<insert> element) */
+/* Track Changes Extension — base styles */
 .ProseMirror insert,
 .ProseMirror insert[data-op-user-id] {
     color: #16a34a;
@@ -138,7 +138,6 @@
     padding: 0 1px;
 }
 
-/* Track Changes Extension - deletion mark (<delete> element) */
 .ProseMirror delete,
 .ProseMirror delete[data-op-user-id] {
     color: #dc2626;
@@ -147,3 +146,24 @@
     border-radius: 2px;
     padding: 0 1px;
 }
+
+/* Track Changes — Per-stage color coding (5 levels) */
+/* Stage 1: Green (default — matches base styles above) */
+.ProseMirror insert[data-op-user-id*="__stage_1"] { color: #16a34a; background-color: #f0fdf4; }
+.ProseMirror delete[data-op-user-id*="__stage_1"] { color: #15803d; background-color: #f0fdf4; }
+
+/* Stage 2: Blue */
+.ProseMirror insert[data-op-user-id*="__stage_2"] { color: #2563eb; background-color: #eff6ff; }
+.ProseMirror delete[data-op-user-id*="__stage_2"] { color: #1d4ed8; background-color: #eff6ff; }
+
+/* Stage 3: Violet */
+.ProseMirror insert[data-op-user-id*="__stage_3"] { color: #7c3aed; background-color: #f5f3ff; }
+.ProseMirror delete[data-op-user-id*="__stage_3"] { color: #6d28d9; background-color: #f5f3ff; }
+
+/* Stage 4: Amber */
+.ProseMirror insert[data-op-user-id*="__stage_4"] { color: #d97706; background-color: #fffbeb; }
+.ProseMirror delete[data-op-user-id*="__stage_4"] { color: #b45309; background-color: #fffbeb; }
+
+/* Stage 5: Teal */
+.ProseMirror insert[data-op-user-id*="__stage_5"] { color: #0d9488; background-color: #f0fdfa; }
+.ProseMirror delete[data-op-user-id*="__stage_5"] { color: #0f766e; background-color: #f0fdfa; }

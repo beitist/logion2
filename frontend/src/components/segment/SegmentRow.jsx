@@ -95,7 +95,7 @@ export const SegmentRow = memo(({
             const tcParams = {
                 tc_source_text: stageData.text || '',
                 tc_base_translation: segment.target_content || '',
-                tc_author_id: (stageData.author || 'editor').toLowerCase().replace(/\s+/g, '_'),
+                tc_author_id: (stageData.author || 'editor').toLowerCase().replace(/\s+/g, '_') + `__stage_${activeTCStage}`,
                 tc_author_name: stageData.author || 'Editor',
                 tc_date: stageData.date || '',
             };

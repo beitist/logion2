@@ -1,11 +1,19 @@
 """
-TC Batch Workflow — Step-by-step MT for Track Changes segments.
+TC Batch Workflow — Langchain-style MT for Track Changes segments.
 
-Supports two modes (from project config tc_settings.tc_mode):
+Segments are categorised first:
+- Simple (insert-only with 2 stages, or deleted-final): batched fast, no TC markup.
+- Proper TC (actual revisions between stages): processed stage-by-stage
+  with chained TM references (all previous source→translation pairs).
+  The revision prompt instructs the MT to minimize changes; a word-level
+  diff then converts consecutive translations into TC markup.
 
-- first_last (default): Translate stage 0 and final stage, diff → single-author TC markup.
-- step_by_step: Translate ALL stages independently, store stage 0 as base target_content,
-  store all per-stage translations in metadata.stage_translations for manual review.
+Supports two output modes (project config tc_settings.tc_mode):
+
+- first_last (default): target_content = TC markup (base vs final diff).
+- step_by_step: target_content = clean base translation,
+  per-stage TC markup stored in metadata.stage_translations / tc_stage_markup
+  for the slider UI.
 
 The resulting target_content is parseable by tiptap's
 track-change-extension (InsertionMark / DeletionMark).
@@ -13,7 +21,7 @@ track-change-extension (InsertionMark / DeletionMark).
 
 import asyncio
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -43,6 +51,9 @@ async def run_background_tc_batch(project_id: str, segment_ids: Optional[List[st
 class TCBatchWorkflow(BaseWorkflow):
     BATCH_SIZE = 10
 
+    # ──────────────────────────────────────────────────────────────
+    # Main entry
+    # ──────────────────────────────────────────────────────────────
     async def run(self, segment_ids: Optional[List[str]] = None):
         try:
             self.log("Starting TC Batch Translation...")
@@ -89,163 +100,362 @@ class TCBatchWorkflow(BaseWorkflow):
             self.fail(e)
 
     # ──────────────────────────────────────────────────────────────
-    # MODE: first_last — translate stage 0 + final, single diff
+    # Shared: categorize TC segments
+    # ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _categorize(tc_segments):
+        """
+        Split TC segments into two buckets:
+        - simple: insert-only (2 stages) or deleted-final → batch-translate, no TC markup
+        - proper: actual revisions between stages → need langchain (chain) approach
+        """
+        simple, proper = [], []
+        for seg, stages in tc_segments:
+            is_insert_only = not stages[0]["text"].strip()
+            is_deleted_final = not stages[-1]["text"].strip()
+            is_simple = (is_insert_only and len(stages) == 2) or is_deleted_final
+            if is_simple:
+                simple.append((seg, stages))
+            else:
+                proper.append((seg, stages))
+        return simple, proper
+
+    @staticmethod
+    def _apply_simple(simple, all_t) -> int:
+        """Apply translations to simple segments. Returns success count."""
+        count = 0
+        for seg, stages in simple:
+            t = all_t.get(f"{seg.id}__simple", "")
+            if not t:
+                continue
+            seg.target_content = t
+            seg.status = "mt_draft"
+            meta = seg.metadata_json or {}
+            inner = meta.get("metadata", {})
+            inner["tc_base_translation"] = t
+            meta["metadata"] = inner
+            seg.metadata_json = dict(meta)
+            flag_modified(seg, "metadata_json")
+            count += 1
+        return count
+
+    @staticmethod
+    def _build_tm_chain(seg_state: dict, level: int) -> list:
+        """
+        Build TM matches for a given level from the full chain history.
+        Includes all previous source→translation pairs, newest first
+        with highest score so the MT prioritises the most recent revision.
+        """
+        tm = []
+        base_idx = seg_state["base_idx"]
+        # Walk from the level just before down to base
+        for prev_level in range(level - 1, base_idx - 1, -1):
+            prev_t = seg_state["translations"].get(str(prev_level), "")
+            prev_source = seg_state["stages"][prev_level]["text"]
+            if prev_t and prev_source.strip():
+                # Most recent revision gets highest score
+                distance = level - prev_level
+                score = max(99 - (distance - 1) * 5, 70)
+                tm.append({
+                    "source": prev_source,
+                    "target": prev_t,
+                    "score": score,
+                })
+        return tm
+
+    _REVISION_ADDENDUM = (
+        "\n\nIMPORTANT: A reference translation is provided as TM match. "
+        "The source text was revised compared to the reference source. "
+        "Update the reference translation to reflect the source changes only. "
+        "Keep wording identical where the source has not changed."
+    )
+
+    # ──────────────────────────────────────────────────────────────
+    # MODE: first_last — translate stage 0, revise for final, diff
     # ──────────────────────────────────────────────────────────────
     async def _run_first_last(self, tc_segments, model_name, custom_prompt):
         orchestrator = InferenceOrchestrator()
+        simple, proper = self._categorize(tc_segments)
 
-        # Build batch items: stage_0 and stage_final per segment
+        self.log(f"  Batch (insert/delete): {len(simple)}, Chain (revisions): {len(proper)}")
+
+        # ── Phase 1: Batch translate simple + base (stage 0) for proper ──
         batch_items = []
-        task_map = {}
 
-        for seg, stages in tc_segments:
-            stage_0 = stages[0]
-            stage_final = stages[-1]
+        for seg, stages in simple:
+            idx = 1 if not stages[0]["text"].strip() else 0
+            if stages[idx]["text"].strip():
+                batch_items.append({
+                    "id": f"{seg.id}__simple",
+                    "source_text": stages[idx]["text"],
+                    "tm_matches": [], "glossary_matches": [],
+                })
 
-            task_map[seg.id] = {
-                "segment": seg,
-                "stage_0": stage_0,
-                "stage_final": stage_final,
-            }
-
-            # Only translate non-empty stages
-            if stage_0["text"].strip():
+        for seg, stages in proper:
+            base_idx = 1 if not stages[0]["text"].strip() else 0
+            if stages[base_idx]["text"].strip():
                 batch_items.append({
                     "id": f"{seg.id}__s0",
-                    "source_text": stage_0["text"],
-                    "tm_matches": [],
-                    "glossary_matches": [],
-                })
-            if stage_final["text"].strip():
-                batch_items.append({
-                    "id": f"{seg.id}__final",
-                    "source_text": stage_final["text"],
-                    "tm_matches": [],
-                    "glossary_matches": [],
+                    "source_text": stages[base_idx]["text"],
+                    "tm_matches": [], "glossary_matches": [],
                 })
 
-        # Translate in batches
-        all_translations = await self._translate_batch(orchestrator, batch_items, model_name, custom_prompt)
+        all_t = await self._translate_batch(
+            orchestrator, batch_items, model_name, custom_prompt
+        ) if batch_items else {}
 
-        # Generate TC markup
-        self.log("Generating TC markup from translation diffs...")
-        success_count = 0
+        self.update_progress(40, status="processing")
 
-        for seg_id, task in task_map.items():
-            seg = task["segment"]
-            t0 = all_translations.get(f"{seg_id}__s0", "")
-            tf = all_translations.get(f"{seg_id}__final", "")
+        # ── Phase 2: Chain through intermediate stages to final ──────
+        # For segments with >2 stages, we chain through each level so
+        # the MT accumulates context. For 2-stage proper segments, this
+        # is just one revision call (base → final).
+        revision_prompt = custom_prompt + self._REVISION_ADDENDUM
 
-            if not t0 and not tf:
-                self.log(f"Segment {seg.index}: No translations received, skipping.")
+        # Build per-segment state
+        seg_state = {}
+        for seg, stages in proper:
+            base_idx = 1 if not stages[0]["text"].strip() else 0
+            base_t = all_t.get(f"{seg.id}__s0", "")
+            seg_state[seg.id] = {
+                "segment": seg, "stages": stages,
+                "base_idx": base_idx,
+                "translations": {str(base_idx): base_t},
+            }
+
+        max_depth = max(len(stages) for _, stages in proper) if proper else 0
+
+        for level in range(1, max_depth):
+            level_items = []
+
+            for sid, st in seg_state.items():
+                if level <= st["base_idx"] or level >= len(st["stages"]):
+                    continue
+                text = st["stages"][level]["text"]
+                prev_t = st["translations"].get(str(level - 1), "")
+                if not text.strip() or not prev_t:
+                    continue
+
+                tm = self._build_tm_chain(st, level)
+                level_items.append({
+                    "id": f"{sid}__s{level}",
+                    "source_text": text,
+                    "tm_matches": tm,
+                    "glossary_matches": [],
+                })
+
+            if not level_items:
                 continue
 
-            if t0 == tf:
-                seg.target_content = tf or t0
-                seg.status = "mt_draft"
+            self.log(f"Chain level {level}: Revising {len(level_items)} segments...")
+            level_t = await self._translate_batch(
+                orchestrator, level_items, model_name, revision_prompt
+            )
+
+            for sid, st in seg_state.items():
+                t = level_t.get(f"{sid}__s{level}", "")
+                if t:
+                    st["translations"][str(level)] = t
+
+            progress = int(40 + (level / max(max_depth - 1, 1)) * 40)
+            self.update_progress(min(progress, 85), status="processing")
+
+        self.update_progress(85, status="processing")
+
+        # ── Apply results ──
+        self.log("Generating TC markup...")
+        simple_count = self._apply_simple(simple, all_t)
+        tc_count = 0
+
+        for sid, st in seg_state.items():
+            seg = st["segment"]
+            stages = st["stages"]
+            base_idx = st["base_idx"]
+            base_t = st["translations"].get(str(base_idx), "")
+            final_idx = len(stages) - 1
+            final_t = st["translations"].get(str(final_idx), "")
+
+            if not base_t and not final_t:
+                continue
+
+            if not base_t or not final_t or base_t == final_t:
+                seg.target_content = final_t or base_t
             else:
-                author_info = task["stage_final"]
-                author_id = (author_info.get("author") or "editor").lower().replace(" ", "_")
-                author_name = author_info.get("author") or "Editor"
-                date = author_info.get("date") or ""
-
-                tc_content = generate_tc_markup(
-                    old_text=t0,
-                    new_text=tf,
-                    author_id=author_id,
-                    author_name=author_name,
-                    date=date,
+                author_info = stages[-1]
+                raw_author = (author_info.get("author") or "editor").lower().replace(" ", "_")
+                seg.target_content = generate_tc_markup(
+                    old_text=base_t, new_text=final_t,
+                    author_id=f"{raw_author}__stage_{final_idx}",
+                    author_name=author_info.get("author") or "Editor",
+                    date=author_info.get("date") or "",
                 )
-                seg.target_content = tc_content
-                seg.status = "mt_draft"
+            seg.status = "mt_draft"
 
-            # Store translations in metadata
             meta = seg.metadata_json or {}
             inner = meta.get("metadata", {})
-            inner["tc_base_translation"] = t0
-            inner["tc_final_translation"] = tf
+            inner["tc_base_translation"] = base_t
+            inner["tc_final_translation"] = final_t
             meta["metadata"] = inner
             seg.metadata_json = dict(meta)
             flag_modified(seg, "metadata_json")
-
-            success_count += 1
+            tc_count += 1
 
         self.db.commit()
         self.update_progress(100, status="ready")
-        self.log(f"TC Batch (first_last) Complete. {success_count}/{len(tc_segments)} segments.")
+        self.log(f"TC Batch (first_last) Complete. {simple_count} simple + {tc_count} TC / {len(tc_segments)} total.")
 
     # ──────────────────────────────────────────────────────────────
-    # MODE: step_by_step — translate ALL stages, store per-stage
+    # MODE: step_by_step — translate base, chain stage-by-stage,
+    #   store per-stage translations + precomputed TC markup
     # ──────────────────────────────────────────────────────────────
     async def _run_step_by_step(self, tc_segments, model_name, custom_prompt):
         orchestrator = InferenceOrchestrator()
+        simple, proper = self._categorize(tc_segments)
 
-        # Build batch items for ALL non-empty stages
+        self.log(f"  Batch (insert/delete): {len(simple)}, Chain (revisions): {len(proper)}")
+
+        # ── Phase 1: Batch translate simple + base stages ─────────
         batch_items = []
-        task_map = {}  # seg_id → {segment, stages}
 
-        for seg, stages in tc_segments:
-            task_map[seg.id] = {"segment": seg, "stages": stages}
+        for seg, stages in simple:
+            idx = 1 if not stages[0]["text"].strip() else 0
+            if stages[idx]["text"].strip():
+                batch_items.append({
+                    "id": f"{seg.id}__simple",
+                    "source_text": stages[idx]["text"],
+                    "tm_matches": [], "glossary_matches": [],
+                })
 
-            for i, stage in enumerate(stages):
-                if stage["text"].strip():
-                    batch_items.append({
-                        "id": f"{seg.id}__s{i}",
-                        "source_text": stage["text"],
-                        "tm_matches": [],
-                        "glossary_matches": [],
-                    })
+        for seg, stages in proper:
+            base_idx = 1 if not stages[0]["text"].strip() else 0
+            if stages[base_idx]["text"].strip():
+                batch_items.append({
+                    "id": f"{seg.id}__base",
+                    "source_text": stages[base_idx]["text"],
+                    "tm_matches": [], "glossary_matches": [],
+                })
 
-        self.log(f"Translating {len(batch_items)} stage texts across {len(tc_segments)} segments...")
+        all_t = await self._translate_batch(
+            orchestrator, batch_items, model_name, custom_prompt
+        ) if batch_items else {}
 
-        # Translate in batches
-        all_translations = await self._translate_batch(orchestrator, batch_items, model_name, custom_prompt)
+        # Apply simple results immediately
+        simple_count = self._apply_simple(simple, all_t)
 
-        # Process results
-        self.log("Storing per-stage translations...")
-        success_count = 0
+        self.update_progress(30, status="processing")
 
-        for seg_id, task in task_map.items():
-            seg = task["segment"]
-            stages = task["stages"]
+        if not proper:
+            self.db.commit()
+            self.update_progress(100, status="ready")
+            self.log(f"TC Batch (step_by_step) Complete. {simple_count} simple segments.")
+            return
 
-            # Collect translations for each stage
-            stage_translations = {}
-            for i, stage in enumerate(stages):
-                key = f"{seg_id}__s{i}"
-                translation = all_translations.get(key, "")
-                if translation:
-                    stage_translations[str(i)] = translation
+        # ── Phase 2+: Chain through stages level-by-level ─────────
+        # Each level includes ALL previous source→translation pairs as
+        # TM references so the MT revises with full context of the edit history.
+        revision_prompt = custom_prompt + self._REVISION_ADDENDUM
 
-            if not stage_translations:
-                self.log(f"Segment {seg.index}: No translations received, skipping.")
+        max_depth = max(len(stages) for _, stages in proper)
+
+        # Per-segment state for chaining
+        seg_state = {}
+        for seg, stages in proper:
+            base_idx = 1 if not stages[0]["text"].strip() else 0
+            base_t = all_t.get(f"{seg.id}__base", "")
+            seg_state[seg.id] = {
+                "segment": seg, "stages": stages,
+                "base_idx": base_idx,
+                "translations": {str(base_idx): base_t},
+            }
+
+        for level in range(1, max_depth):
+            level_items = []
+
+            for sid, st in seg_state.items():
+                if level <= st["base_idx"] or level >= len(st["stages"]):
+                    continue
+                text = st["stages"][level]["text"]
+                prev_t = st["translations"].get(str(level - 1), "")
+                if not text.strip() or not prev_t:
+                    continue
+
+                # Full TM chain: all previous source→translation pairs
+                tm = self._build_tm_chain(st, level)
+                level_items.append({
+                    "id": f"{sid}__s{level}",
+                    "source_text": text,
+                    "tm_matches": tm,
+                    "glossary_matches": [],
+                })
+
+            if not level_items:
                 continue
 
-            # Determine base stage (stage 1 for insert-only, else stage 0)
-            is_insert_only = not stages[0]["text"].strip()
-            base_idx = 1 if is_insert_only else 0
-            base_translation = stage_translations.get(str(base_idx), "")
+            self.log(f"Stage {level}: Revising {len(level_items)} segments...")
+            level_t = await self._translate_batch(
+                orchestrator, level_items, model_name, revision_prompt
+            )
 
-            # Store base translation as target_content (clean, no TC)
-            if base_translation:
-                seg.target_content = base_translation
-                seg.status = "mt_draft"
+            for sid, st in seg_state.items():
+                t = level_t.get(f"{sid}__s{level}", "")
+                if t:
+                    st["translations"][str(level)] = t
 
-            # Store all per-stage translations in metadata
+            progress = int(30 + (level / max(max_depth - 1, 1)) * 60)
+            self.update_progress(min(progress, 95), status="processing")
+
+        # ── Store results ─────────────────────────────────────────
+        # For each segment: target_content = clean base translation,
+        # metadata stores per-stage clean translations AND precomputed
+        # TC markup (diff between consecutive stages) for the slider UI.
+        tc_count = 0
+        for sid, st in seg_state.items():
+            seg = st["segment"]
+            stages = st["stages"]
+            base_idx = st["base_idx"]
+            base_t = st["translations"].get(str(base_idx), "")
+            if not base_t:
+                continue
+
+            # target_content = clean base translation (user starts at base stage)
+            seg.target_content = base_t
+            seg.status = "mt_draft"
+
+            final_t = st["translations"].get(str(len(stages) - 1), "")
+
+            # Precompute TC markup for each stage transition
+            tc_stage_markup = {}
+            for lvl in range(base_idx + 1, len(stages)):
+                prev_t = st["translations"].get(str(lvl - 1), "")
+                curr_t = st["translations"].get(str(lvl), "")
+                if not prev_t or not curr_t:
+                    continue
+                if prev_t == curr_t:
+                    tc_stage_markup[str(lvl)] = curr_t
+                else:
+                    stage_info = stages[lvl]
+                    raw_author = (stage_info.get("author") or "editor").lower().replace(" ", "_")
+                    tc_stage_markup[str(lvl)] = generate_tc_markup(
+                        old_text=prev_t, new_text=curr_t,
+                        author_id=f"{raw_author}__stage_{lvl}",
+                        author_name=stage_info.get("author") or "Editor",
+                        date=stage_info.get("date") or "",
+                    )
+
             meta = seg.metadata_json or {}
             inner = meta.get("metadata", {})
-            inner["stage_translations"] = stage_translations
-            inner["tc_base_translation"] = base_translation
-            inner["tc_final_translation"] = stage_translations.get(str(len(stages) - 1), "")
+            inner["stage_translations"] = st["translations"]
+            inner["tc_stage_markup"] = tc_stage_markup
+            inner["tc_base_translation"] = base_t
+            inner["tc_final_translation"] = final_t or base_t
             meta["metadata"] = inner
             seg.metadata_json = dict(meta)
             flag_modified(seg, "metadata_json")
-
-            success_count += 1
+            tc_count += 1
 
         self.db.commit()
         self.update_progress(100, status="ready")
-        self.log(f"TC Batch (step_by_step) Complete. {success_count}/{len(tc_segments)} segments with per-stage translations.")
+        self.log(f"TC Batch (step_by_step) Complete. {simple_count} simple + {tc_count} TC segments.")
 
     # ──────────────────────────────────────────────────────────────
     # Shared: translate batch items in chunks
@@ -282,9 +492,6 @@ class TCBatchWorkflow(BaseWorkflow):
                 self.log(f"Chunk {chunk_idx + 1} failed: {e}")
                 import traceback
                 traceback.print_exc()
-
-            progress = int(((chunk_idx + 1) / total_chunks) * 80)
-            self.update_progress(progress, status="processing")
 
         # Log usage
         if total_usage["input_tokens"] > 0 or total_usage["output_tokens"] > 0:
