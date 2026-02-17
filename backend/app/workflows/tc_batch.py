@@ -58,7 +58,7 @@ class TCBatchWorkflow(BaseWorkflow):
         try:
             self.log("Starting TC Batch Translation...")
 
-            # ── 1. Fetch TC segments ──────────────────────────────
+            # ── 1. Fetch all segments ──────────────────────────────
             query = self.db.query(Segment).filter(
                 Segment.project_id == self.project_id
             )
@@ -67,16 +67,19 @@ class TCBatchWorkflow(BaseWorkflow):
 
             all_segments = query.order_by(Segment.index).all()
 
-            # Filter to only segments with revision_stages (≥ 2 stages)
+            # Separate TC segments (revision_stages ≥ 2) from regular ones
             tc_segments = []
+            regular_segments = []
             for seg in all_segments:
                 meta = (seg.metadata_json or {}).get("metadata", {})
                 stages = meta.get("revision_stages", [])
                 if len(stages) >= 2:
                     tc_segments.append((seg, stages))
+                else:
+                    regular_segments.append(seg)
 
-            if not tc_segments:
-                self.log("No TC segments with revision stages found.")
+            if not tc_segments and not regular_segments:
+                self.log("No segments found.")
                 self.update_progress(100, status="ready")
                 return
 
@@ -88,13 +91,13 @@ class TCBatchWorkflow(BaseWorkflow):
             custom_prompt = ai_settings.get("custom_prompt", "Translate the following text accurately.")
             model_name = ai_settings.get("workflow_model")
 
-            self.log(f"Mode: {tc_mode} — Found {len(tc_segments)} TC segments.")
+            self.log(f"Mode: {tc_mode} — Found {len(tc_segments)} TC + {len(regular_segments)} regular segments.")
             self.update_progress(0, status="processing")
 
             if tc_mode == "step_by_step":
-                await self._run_step_by_step(tc_segments, model_name, custom_prompt)
+                await self._run_step_by_step(tc_segments, model_name, custom_prompt, regular_segments)
             else:
-                await self._run_first_last(tc_segments, model_name, custom_prompt)
+                await self._run_first_last(tc_segments, model_name, custom_prompt, regular_segments)
 
         except Exception as e:
             self.fail(e)
@@ -140,6 +143,19 @@ class TCBatchWorkflow(BaseWorkflow):
         return count
 
     @staticmethod
+    def _apply_regular(regular_segments, all_t) -> int:
+        """Apply translations to regular (non-TC) segments. Returns success count."""
+        count = 0
+        for seg in regular_segments:
+            t = all_t.get(f"{seg.id}__regular", "")
+            if not t:
+                continue
+            seg.target_content = t
+            seg.status = "mt_draft"
+            count += 1
+        return count
+
+    @staticmethod
     def _build_tm_chain(seg_state: dict, level: int) -> list:
         """
         Build TM matches for a given level from the full chain history.
@@ -173,14 +189,31 @@ class TCBatchWorkflow(BaseWorkflow):
     # ──────────────────────────────────────────────────────────────
     # MODE: first_last — translate stage 0, revise for final, diff
     # ──────────────────────────────────────────────────────────────
-    async def _run_first_last(self, tc_segments, model_name, custom_prompt):
+    async def _run_first_last(self, tc_segments, model_name, custom_prompt, regular_segments=None):
         orchestrator = InferenceOrchestrator()
         simple, proper = self._categorize(tc_segments)
+        regular_segments = regular_segments or []
 
-        self.log(f"  Batch (insert/delete): {len(simple)}, Chain (revisions): {len(proper)}")
+        # Filter regular segments: skip already translated / locked / empty source
+        regular_to_translate = [
+            seg for seg in regular_segments
+            if not seg.locked
+            and seg.source_content and seg.source_content.strip()
+            and not (seg.target_content and seg.target_content.strip())
+        ]
 
-        # ── Phase 1: Batch translate simple + base (stage 0) for proper ──
+        self.log(f"  Batch (insert/delete): {len(simple)}, Chain (revisions): {len(proper)}, Regular: {len(regular_to_translate)}")
+
+        # ── Phase 1: Batch translate simple + base (stage 0) for proper + regular ──
         batch_items = []
+
+        # Regular (non-TC) segments — simple MT
+        for seg in regular_to_translate:
+            batch_items.append({
+                "id": f"{seg.id}__regular",
+                "source_text": seg.source_content,
+                "tm_matches": [], "glossary_matches": [],
+            })
 
         for seg, stages in simple:
             idx = 1 if not stages[0]["text"].strip() else 0
@@ -265,6 +298,7 @@ class TCBatchWorkflow(BaseWorkflow):
         # ── Apply results ──
         self.log("Generating TC markup...")
         simple_count = self._apply_simple(simple, all_t)
+        regular_count = self._apply_regular(regular_to_translate, all_t)
         tc_count = 0
 
         # Author/date settings
@@ -314,20 +348,37 @@ class TCBatchWorkflow(BaseWorkflow):
 
         self.db.commit()
         self.update_progress(100, status="ready")
-        self.log(f"TC Batch (first_last) Complete. {simple_count} simple + {tc_count} TC / {len(tc_segments)} total.")
+        self.log(f"TC Batch (first_last) Complete. {regular_count} regular + {simple_count} simple + {tc_count} TC.")
 
     # ──────────────────────────────────────────────────────────────
     # MODE: step_by_step — translate base, chain stage-by-stage,
     #   store per-stage translations + precomputed TC markup
     # ──────────────────────────────────────────────────────────────
-    async def _run_step_by_step(self, tc_segments, model_name, custom_prompt):
+    async def _run_step_by_step(self, tc_segments, model_name, custom_prompt, regular_segments=None):
         orchestrator = InferenceOrchestrator()
         simple, proper = self._categorize(tc_segments)
+        regular_segments = regular_segments or []
 
-        self.log(f"  Batch (insert/delete): {len(simple)}, Chain (revisions): {len(proper)}")
+        # Filter regular segments: skip already translated / locked / empty source
+        regular_to_translate = [
+            seg for seg in regular_segments
+            if not seg.locked
+            and seg.source_content and seg.source_content.strip()
+            and not (seg.target_content and seg.target_content.strip())
+        ]
 
-        # ── Phase 1: Batch translate simple + base stages ─────────
+        self.log(f"  Batch (insert/delete): {len(simple)}, Chain (revisions): {len(proper)}, Regular: {len(regular_to_translate)}")
+
+        # ── Phase 1: Batch translate simple + base stages + regular ─────────
         batch_items = []
+
+        # Regular (non-TC) segments — simple MT
+        for seg in regular_to_translate:
+            batch_items.append({
+                "id": f"{seg.id}__regular",
+                "source_text": seg.source_content,
+                "tm_matches": [], "glossary_matches": [],
+            })
 
         for seg, stages in simple:
             idx = 1 if not stages[0]["text"].strip() else 0
@@ -351,15 +402,16 @@ class TCBatchWorkflow(BaseWorkflow):
             orchestrator, batch_items, model_name, custom_prompt
         ) if batch_items else {}
 
-        # Apply simple results immediately
+        # Apply simple + regular results immediately
         simple_count = self._apply_simple(simple, all_t)
+        regular_count = self._apply_regular(regular_to_translate, all_t)
 
         self.update_progress(30, status="processing")
 
         if not proper:
             self.db.commit()
             self.update_progress(100, status="ready")
-            self.log(f"TC Batch (step_by_step) Complete. {simple_count} simple segments.")
+            self.log(f"TC Batch (step_by_step) Complete. {regular_count} regular + {simple_count} simple segments.")
             return
 
         # ── Phase 2+: Chain through stages level-by-level ─────────
@@ -477,7 +529,7 @@ class TCBatchWorkflow(BaseWorkflow):
 
         self.db.commit()
         self.update_progress(100, status="ready")
-        self.log(f"TC Batch (step_by_step) Complete. {simple_count} simple + {tc_count} TC segments.")
+        self.log(f"TC Batch (step_by_step) Complete. {regular_count} regular + {simple_count} simple + {tc_count} TC segments.")
 
     # ──────────────────────────────────────────────────────────────
     # Shared: translate batch items in chunks

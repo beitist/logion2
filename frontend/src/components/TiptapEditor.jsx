@@ -4,7 +4,7 @@ import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
 import InvisibleCharacters, { InvisibleCharacter, SpaceCharacter, HardBreakNode, ParagraphNode } from '@tiptap/extension-invisible-characters'
-import { Node, Extension, mergeAttributes } from '@tiptap/core'
+import { Node, Extension, mergeAttributes, createNodeFromContent } from '@tiptap/core'
 import TrackChangeExtension from 'track-change-extension'
 
 import './TiptapStyles.css';
@@ -460,7 +460,10 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         }
     }, [editor])
 
-    // Content sync: update editor when the content prop changes externally
+    // Content sync: update editor when the content prop changes externally.
+    // Uses a custom transaction with 'trackManualChanged' meta so the
+    // track-change-extension's onTransaction handler skips processing
+    // and preserves <insert>/<delete> marks from precomputed TC markup.
     useEffect(() => {
         if (editor && content && content !== editor.getHTML() && content !== lastEmittedContent.current) {
             // Skip if we just saved via onBlur — the prop is stale, editor has the truth.
@@ -470,15 +473,25 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             // from overwriting the editor while the user is working.
             // EXCEPTION: If the editor is empty, we allow the update (Auto-Draft / Pre-Translate)
             if (!editor.isFocused || editor.isEmpty) {
-                // ALWAYS disable TC before setContent so the ReplaceStep is never
-                // tracked as a change. Then re-enable based on the CURRENT desired
-                // state (ref is already updated by the ref-sync effect above).
-                editor.commands.setTrackChangeStatus?.(false);
-                editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
-                lastEmittedContent.current = content;
-                if (trackChangesEnabledRef.current) {
-                    editor.commands.setTrackChangeStatus?.(true);
+                try {
+                    const doc = createNodeFromContent(content, editor.schema, {
+                        parseOptions: { preserveWhitespace: 'full' }
+                    });
+                    const { state, view } = editor;
+                    const tr = state.tr
+                        .replaceWith(0, state.doc.content.size, doc.content)
+                        .setMeta('trackManualChanged', true)
+                        .setMeta('addToHistory', false);
+                    view.dispatch(tr);
+                } catch (e) {
+                    // Fallback: use standard setContent if custom dispatch fails
+                    editor.commands.setTrackChangeStatus?.(false);
+                    editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
+                    if (trackChangesEnabledRef.current) {
+                        editor.commands.setTrackChangeStatus?.(true);
+                    }
                 }
+                lastEmittedContent.current = content;
             }
         }
     }, [content, editor])
