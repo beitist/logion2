@@ -60,6 +60,18 @@ export function TargetColumn({
     // Detect if slider is at the deleted final stage
     const isAtDeletedStage = isDeletedFinal && activeTCStage === stages.length - 1;
 
+    // Editor content: use precomputed TC markup from batch when available,
+    // otherwise fall back to target_content (base translation or manual edit).
+    const editorContent = React.useMemo(() => {
+        if (hasTC && tcMode === 'step_by_step' && !isSimpleInsert && activeTCStage > baseStage) {
+            const stageMarkup = segment.metadata?.tc_stage_markup?.[String(activeTCStage)];
+            if (stageMarkup) {
+                return hydrateContent(stageMarkup, segment.tags);
+            }
+        }
+        return hydrateContent(segment.target_content, segment.tags);
+    }, [segment.target_content, segment.metadata?.tc_stage_markup, activeTCStage, baseStage, tcMode, hasTC, isSimpleInsert, segment.tags]);
+
     // Lock editor: past base stage without base translation → must translate base first
     const editorLocked = hasTC && tcMode === 'step_by_step' && !isSimpleInsert
         && activeTCStage > baseStage && !segment.target_content;
@@ -150,7 +162,7 @@ export function TargetColumn({
             {/* Editable TiptapEditor */}
             <div className="flex-grow">
                 <TiptapEditor
-                    content={hydrateContent(segment.target_content, segment.tags)}
+                    content={editorContent}
                     segmentId={segment.id}
                     availableTags={segment.tags}
                     contextMatches={sortedMatches}

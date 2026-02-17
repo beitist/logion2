@@ -94,30 +94,24 @@ export const SegmentRow = memo(({
     }, [targetTCEnabled, currentStage.author, replaceAuthors, translatorName]);
 
     // Wrap onAiDraft to inject TC params for any TC segment (both modes).
-    // source_content in DB = final stage text, so we must always override
-    // with the correct stage source from revision_stages.
+    // Manual shortcut = simple MT of the displayed source (no chaining, no TC markup).
+    // The batch workflow handles proper stage-by-stage chaining separately.
     const wrappedOnAiDraft = useCallback((segmentId) => {
         if (tcMode && !isSimpleInsert && stages.length >= 2) {
             const stageData = stages[activeTCStage] || {};
-            const isBase = activeTCStage === baseStage;
-            // Author: use translator name if replacing, else original stage author
-            const authorName = replaceAuthors ? translatorName : (stageData.author || 'Editor');
-            const authorId = authorName.toLowerCase().replace(/\s+/g, '_') + `__stage_${activeTCStage}`;
+            // Simple MT: just translate the current stage source, no revision chaining
             const tcParams = {
                 tc_source_text: stageData.text || '',
-                tc_base_translation: isBase ? '' : (segment.target_content || ''),
-                tc_author_id: authorId,
-                tc_author_name: authorName,
-                // Retain original date when keeping original editors, empty → live timestamp when replacing
-                tc_date: replaceAuthors ? '' : (stageData.date || ''),
+                tc_base_translation: '',
+                tc_author_id: 'mt',
+                tc_author_name: 'MT',
+                tc_date: '',
             };
-            console.log('[TC-MT] Sending TC params:', { segmentId, activeTCStage, baseStage, isBase, tc_source_text_preview: (stageData.text || '').substring(0, 80), tcMode, replaceAuthors });
             return onAiDraft(segmentId, false, 'translate', false, false, tcParams);
         } else {
-            console.log('[TC-MT] Non-TC path:', { segmentId, tcMode, isSimpleInsert, stagesLen: stages.length });
             return onAiDraft(segmentId);
         }
-    }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, baseStage, stages, segment.target_content, replaceAuthors, translatorName]);
+    }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, stages]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">

@@ -293,8 +293,11 @@ class SegmentService:
             else:
                 tc_content = stage_translation
 
-            segment.target_content = tc_content
-            segment.status = "translated"
+            # Simple MT (empty base): only populate the MatchCard, don't overwrite editor.
+            # User applies via Cmd+Opt+0. TC revision (has base): write TC markup to editor.
+            if base:
+                segment.target_content = tc_content
+                segment.status = "translated"
 
             # Update metadata
             current_meta = dict(segment.metadata_json or {})
