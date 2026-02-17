@@ -470,16 +470,13 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             // from overwriting the editor while the user is working.
             // EXCEPTION: If the editor is empty, we allow the update (Auto-Draft / Pre-Translate)
             if (!editor.isFocused || editor.isEmpty) {
-                // Disable TC during setContent to prevent the extension from
-                // processing the ReplaceStep as a tracked change (crashes on
-                // documents with existing TC marks — "Inconsistent open depths")
-                const wasTCEnabled = trackChangesEnabledRef.current;
-                if (wasTCEnabled) {
-                    editor.commands.setTrackChangeStatus?.(false);
-                }
+                // ALWAYS disable TC before setContent so the ReplaceStep is never
+                // tracked as a change. Then re-enable based on the CURRENT desired
+                // state (ref is already updated by the ref-sync effect above).
+                editor.commands.setTrackChangeStatus?.(false);
                 editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
                 lastEmittedContent.current = content;
-                if (wasTCEnabled) {
+                if (trackChangesEnabledRef.current) {
                     editor.commands.setTrackChangeStatus?.(true);
                 }
             }
