@@ -127,9 +127,8 @@
     line-height: 1;
 }
 
-/* Track Changes Extension — base styles */
-.ProseMirror insert,
-.ProseMirror insert[data-op-user-id] {
+/* Track Changes Extension — base styles (low specificity: 0,1,0,1) */
+.ProseMirror insert {
     color: #16a34a;
     text-decoration: underline;
     text-decoration-style: dotted;
@@ -138,8 +137,7 @@
     padding: 0 1px;
 }
 
-.ProseMirror delete,
-.ProseMirror delete[data-op-user-id] {
+.ProseMirror delete {
     color: #dc2626;
     text-decoration: line-through;
     background-color: #fef2f2;
@@ -147,8 +145,12 @@
     padding: 0 1px;
 }
 
-/* Track Changes — Per-stage color coding (5 levels) */
-/* Stage 1: Green (default — matches base styles above) */
+/* Track Changes — Per-stage color coding (5 levels)
+   Higher specificity (0,1,1,1) ensures override of base styles. */
+
+/* Stage 0: Default green/red (no override needed — base styles apply) */
+
+/* Stage 1: Green (same as base, explicit for consistency) */
 .ProseMirror insert[data-op-user-id*="__stage_1"] { color: #16a34a; background-color: #f0fdf4; }
 .ProseMirror delete[data-op-user-id*="__stage_1"] { color: #15803d; background-color: #f0fdf4; }
 

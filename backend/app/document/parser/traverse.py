@@ -564,8 +564,12 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
 
     location['whitespaces'] = ws_meta
 
-    # Segmentation
-    parts = split_sentences(clean_content)
+    # Segmentation — skip sentence splitting for TC paragraphs to avoid
+    # duplicating full-paragraph revision_stages across sub-segments.
+    if location.get('has_track_changes'):
+        parts = [clean_content]
+    else:
+        parts = split_sentences(clean_content)
     repaired_parts = repair_tags(parts)
 
     final_segments = []

@@ -267,6 +267,11 @@ class TCBatchWorkflow(BaseWorkflow):
         simple_count = self._apply_simple(simple, all_t)
         tc_count = 0
 
+        # Author/date settings
+        tc_settings = (self.project.config or {}).get("tc_settings", {})
+        replace_authors = tc_settings.get("tc_replace_authors", False)
+        translator_name = tc_settings.get("tc_translator_name") or "Translator"
+
         for sid, st in seg_state.items():
             seg = st["segment"]
             stages = st["stages"]
@@ -281,13 +286,20 @@ class TCBatchWorkflow(BaseWorkflow):
             if not base_t or not final_t or base_t == final_t:
                 seg.target_content = final_t or base_t
             else:
-                author_info = stages[-1]
-                raw_author = (author_info.get("author") or "editor").lower().replace(" ", "_")
+                if replace_authors:
+                    a_name = translator_name
+                    a_id = translator_name.lower().replace(" ", "_") + f"__stage_{final_idx}"
+                    a_date = ""  # → _format_tc_date falls back to utcnow()
+                else:
+                    author_info = stages[-1]
+                    a_name = author_info.get("author") or "Editor"
+                    a_id = (author_info.get("author") or "editor").lower().replace(" ", "_") + f"__stage_{final_idx}"
+                    a_date = author_info.get("date") or ""
                 seg.target_content = generate_tc_markup(
                     old_text=base_t, new_text=final_t,
-                    author_id=f"{raw_author}__stage_{final_idx}",
-                    author_name=author_info.get("author") or "Editor",
-                    date=author_info.get("date") or "",
+                    author_id=a_id,
+                    author_name=a_name,
+                    date=a_date,
                 )
             seg.status = "mt_draft"
 
@@ -408,6 +420,9 @@ class TCBatchWorkflow(BaseWorkflow):
         # For each segment: target_content = clean base translation,
         # metadata stores per-stage clean translations AND precomputed
         # TC markup (diff between consecutive stages) for the slider UI.
+        tc_settings = (self.project.config or {}).get("tc_settings", {})
+        replace_authors = tc_settings.get("tc_replace_authors", False)
+        translator_name = tc_settings.get("tc_translator_name") or "Translator"
         tc_count = 0
         for sid, st in seg_state.items():
             seg = st["segment"]
@@ -433,13 +448,20 @@ class TCBatchWorkflow(BaseWorkflow):
                 if prev_t == curr_t:
                     tc_stage_markup[str(lvl)] = curr_t
                 else:
-                    stage_info = stages[lvl]
-                    raw_author = (stage_info.get("author") or "editor").lower().replace(" ", "_")
+                    if replace_authors:
+                        a_name = translator_name
+                        a_id = translator_name.lower().replace(" ", "_") + f"__stage_{lvl}"
+                        a_date = ""
+                    else:
+                        stage_info = stages[lvl]
+                        a_name = stage_info.get("author") or "Editor"
+                        a_id = (stage_info.get("author") or "editor").lower().replace(" ", "_") + f"__stage_{lvl}"
+                        a_date = stage_info.get("date") or ""
                     tc_stage_markup[str(lvl)] = generate_tc_markup(
                         old_text=prev_t, new_text=curr_t,
-                        author_id=f"{raw_author}__stage_{lvl}",
-                        author_name=stage_info.get("author") or "Editor",
-                        date=stage_info.get("date") or "",
+                        author_id=a_id,
+                        author_name=a_name,
+                        date=a_date,
                     )
 
             meta = seg.metadata_json or {}

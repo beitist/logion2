@@ -303,6 +303,18 @@ class SegmentService:
                 inner_meta = {}
             inner_meta["ai_model"] = model_name
             inner_meta["tc_stage_translation"] = stage_translation
+
+            # Update MT match in context_matches so the MatchCard shows the current result
+            existing_matches = current_meta.get("context_matches", [])
+            non_mt = [m for m in existing_matches if m.get("type") != "mt"]
+            non_mt.append({
+                "type": "mt",
+                "content": stage_translation,
+                "score": None,
+                "filename": model_name,
+            })
+            current_meta["context_matches"] = non_mt
+
             current_meta["metadata"] = inner_meta
             segment.metadata_json = current_meta
             flag_modified(segment, "metadata_json")

@@ -111,8 +111,10 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
 
         // Only auto-draft if use_ai is enabled AND preload_mode is off
         // (preload_mode=true means "auto-fetch on focus" is DISABLED in settings)
+        // Skip TC segments — they need stage-aware translation via shortcut.
         const aiSettings = projectRef.current?.config?.ai_settings || {};
-        if (projectRef.current?.use_ai && !aiSettings.preload_mode && !isTranslated && !hasContent) {
+        const hasTC = currentSeg.metadata?.has_track_changes;
+        if (projectRef.current?.use_ai && !aiSettings.preload_mode && !isTranslated && !hasContent && !hasTC) {
             await generateDraft(currentSeg.id, 'draft');
         }
     };
@@ -224,8 +226,10 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
 
             // Only auto-draft if use_ai is enabled AND auto-fetch on focus is NOT disabled.
             // preload_mode=true means "auto-fetch on focus" is disabled in AI Settings.
+            // Skip TC segments entirely — they need stage-aware translation via shortcut.
             const aiSettings = projectRef.current?.config?.ai_settings || {};
-            if (projectRef.current?.use_ai && !aiSettings.preload_mode && !isTranslated && !hasDraft && !hasContent) {
+            const hasTC = analyzedSeg.metadata?.has_track_changes;
+            if (projectRef.current?.use_ai && !aiSettings.preload_mode && !isTranslated && !hasDraft && !hasContent && !hasTC) {
                 handleAiDraft(analyzedSeg.id, true);
             }
         }
