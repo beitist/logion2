@@ -94,24 +94,39 @@ export const SegmentRow = memo(({
     }, [targetTCEnabled, currentStage.author, replaceAuthors, translatorName]);
 
     // Wrap onAiDraft to inject TC params for any TC segment (both modes).
-    // Manual shortcut = simple MT of the displayed source (no chaining, no TC markup).
-    // The batch workflow handles proper stage-by-stage chaining separately.
+    // TC 0 (base): simple MT, no chaining — classic behavior.
+    // TC 1+ (step_by_step): chain with previous stage translation → TC markup with diffs.
+    // The batch workflow handles the full multi-stage chain; this is single-stage.
     const wrappedOnAiDraft = useCallback((segmentId) => {
         if (tcMode && !isSimpleInsert && stages.length >= 2) {
-            const stageData = stages[activeTCStage] || {};
-            // Simple MT: just translate the current stage source, no revision chaining
+            // first_last: translate the final source text
+            // step_by_step: translate the current slider stage
+            const stageIdx = tcMode === 'first_last' ? stages.length - 1 : activeTCStage;
+            const stageData = stages[stageIdx] || {};
+
+            // TC 1+: chain with previous stage's translation for TC markup
+            let baseTranslation = '';
+            if (tcMode === 'step_by_step' && stageIdx > baseStage) {
+                const stageTranslations = segment.metadata?.stage_translations || {};
+                baseTranslation = stageTranslations[String(stageIdx - 1)] || segment.target_content || '';
+            }
+
+            // Author: use stage author or translator name (consistent with batch workflow)
+            const authorName = (replaceAuthors ? translatorName : (stageData.author || 'MT'));
+            const authorId = authorName.toLowerCase().replace(/\s+/g, '_') + `__stage_${stageIdx}`;
+
             const tcParams = {
                 tc_source_text: stageData.text || '',
-                tc_base_translation: '',
-                tc_author_id: 'mt',
-                tc_author_name: 'MT',
-                tc_date: '',
+                tc_base_translation: baseTranslation,
+                tc_author_id: baseTranslation ? authorId : 'mt',
+                tc_author_name: baseTranslation ? authorName : 'MT',
+                tc_date: stageData.date || '',
             };
             return onAiDraft(segmentId, false, 'translate', false, false, tcParams);
         } else {
             return onAiDraft(segmentId);
         }
-    }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, stages]);
+    }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, stages, baseStage, segment.metadata?.stage_translations, segment.target_content, replaceAuthors, translatorName]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
