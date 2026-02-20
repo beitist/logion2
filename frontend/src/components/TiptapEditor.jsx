@@ -304,7 +304,21 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
 
                             if (bestMatch) {
                                 const hydrated = hydrateContent(bestMatch.content, availableTagsRef.current);
-                                return this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' })
+                                // Use trackManualChanged to preserve TC markup (<insert>/<delete>)
+                                try {
+                                    const doc = createNodeFromContent(hydrated, this.editor.schema, {
+                                        parseOptions: { preserveWhitespace: 'full' }
+                                    });
+                                    const { state, view } = this.editor;
+                                    const tr = state.tr
+                                        .replaceWith(0, state.doc.content.size, doc.content)
+                                        .setMeta('trackManualChanged', true)
+                                        .setMeta('addToHistory', false);
+                                    view.dispatch(tr);
+                                } catch (e) {
+                                    this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
+                                }
+                                return true;
                             }
                             return false;
                         },

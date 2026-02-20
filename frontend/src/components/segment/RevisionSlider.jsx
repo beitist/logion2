@@ -21,15 +21,17 @@ export function RevisionSlider({ stages, onStageChange, initialStage = 0 }) {
         onStageChange?.(activeStage);
     }, [activeStage, onStageChange]);
 
-    // Pre-compute diffs between consecutive stages (stage 1+)
+    // Pre-compute cumulative diffs from base stage (not consecutive).
+    // This keeps earlier TC changes visible as tracked (not "accepted").
     const diffs = useMemo(() => {
         if (!stages || stages.length < 2) return [];
+        const baseText = stages[initialStage]?.text || '';
         const d = [];
         for (let i = 1; i < stages.length; i++) {
-            d.push(createInlineDiff(stages[i - 1].text, stages[i].text));
+            d.push(createInlineDiff(baseText, stages[i].text));
         }
         return d;
-    }, [stages]);
+    }, [stages, initialStage]);
 
     if (!stages || stages.length < 2) return null;
 

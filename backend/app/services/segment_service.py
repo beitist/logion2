@@ -293,11 +293,8 @@ class SegmentService:
             else:
                 tc_content = stage_translation
 
-            # Simple MT (empty base): only populate the MatchCard, don't overwrite editor.
-            # User applies via Cmd+Opt+0. TC revision (has base): write TC markup to editor.
-            if base:
-                segment.target_content = tc_content
-                segment.status = "translated"
+            # Never write to target_content from manual shortcut.
+            # User applies via Cmd+Opt+0 which inserts the MT card content.
 
             # Update metadata
             current_meta = dict(segment.metadata_json or {})
@@ -307,12 +304,16 @@ class SegmentService:
             inner_meta["ai_model"] = model_name
             inner_meta["tc_stage_translation"] = stage_translation
 
+            # MT card content: TC markup (with diffs) when base was provided,
+            # clean translation otherwise (TC 0 / base stage).
+            mt_card_content = tc_content if base else stage_translation
+
             # Update MT match in context_matches so the MatchCard shows the current result
             existing_matches = current_meta.get("context_matches", [])
             non_mt = [m for m in existing_matches if m.get("type") != "mt"]
             non_mt.append({
                 "type": "mt",
-                "content": stage_translation,
+                "content": mt_card_content,
                 "score": None,
                 "filename": model_name,
             })

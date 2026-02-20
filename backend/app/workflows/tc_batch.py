@@ -28,7 +28,13 @@ from sqlalchemy.orm.attributes import flag_modified
 from ..models import Project, Segment, AiUsageLog
 from ..rag.inference import InferenceOrchestrator
 from ..database import SessionLocal
-from ..utils.tc_diff import generate_tc_markup
+from ..utils.tc_diff import (
+    generate_tc_markup,
+    convert_ai_tc_to_tiptap,
+    extract_clean_from_tc,
+    validate_ai_tc_markup,
+    accumulate_tc_stages,
+)
 from .base import BaseWorkflow
 
 logger = logging.getLogger("TCBatch")
@@ -161,12 +167,16 @@ class TCBatchWorkflow(BaseWorkflow):
         Build TM matches for a given level from the full chain history.
         Includes all previous source→translation pairs, newest first
         with highest score so the MT prioritises the most recent revision.
+
+        Uses 'clean_translations' if available (step_by_step mode),
+        falls back to 'translations' (first_last mode).
         """
         tm = []
         base_idx = seg_state["base_idx"]
+        translations = seg_state.get("clean_translations") or seg_state.get("translations", {})
         # Walk from the level just before down to base
         for prev_level in range(level - 1, base_idx - 1, -1):
-            prev_t = seg_state["translations"].get(str(prev_level), "")
+            prev_t = translations.get(str(prev_level), "")
             prev_source = seg_state["stages"][prev_level]["text"]
             if prev_t and prev_source.strip():
                 # Most recent revision gets highest score
@@ -186,6 +196,24 @@ class TCBatchWorkflow(BaseWorkflow):
         "Keep wording identical where the source has not changed."
     )
 
+    _TC_MARKUP_ADDENDUM = (
+        "\n\nTRACK CHANGES MODE:\n"
+        "A reference translation is provided as the highest-scoring TM match. "
+        "The source text was revised compared to the reference source. "
+        "Update the reference translation to reflect the source changes, "
+        "marking ALL changes with inline tags:\n"
+        "- <ins>new text</ins> for inserted/added text\n"
+        "- <del>old text</del> for deleted/removed text\n"
+        "- Text that did not change MUST remain exactly as-is (no tags).\n\n"
+        "If a word was replaced: <del>old word</del> <ins>new word</ins>\n"
+        "If text was added: existing text <ins>added text</ins>\n"
+        "If text was removed: <del>removed text</del> remaining text\n"
+        "If nothing changed: return the reference translation unchanged (no tags).\n\n"
+        "CRITICAL: Only mark actual differences. Keep unchanged parts identical to the reference.\n"
+        "If the source change is only a spelling/punctuation fix with no semantic impact, "
+        "return the reference translation EXACTLY unchanged (no tags)."
+    )
+
     # ──────────────────────────────────────────────────────────────
     # MODE: first_last — translate stage 0, revise for final, diff
     # ──────────────────────────────────────────────────────────────
@@ -197,8 +225,7 @@ class TCBatchWorkflow(BaseWorkflow):
         # Filter regular segments: skip already translated / locked / empty source
         regular_to_translate = [
             seg for seg in regular_segments
-            if not seg.locked
-            and seg.source_content and seg.source_content.strip()
+            if seg.source_content and seg.source_content.strip()
             and not (seg.target_content and seg.target_content.strip())
         ]
 
@@ -362,8 +389,7 @@ class TCBatchWorkflow(BaseWorkflow):
         # Filter regular segments: skip already translated / locked / empty source
         regular_to_translate = [
             seg for seg in regular_segments
-            if not seg.locked
-            and seg.source_content and seg.source_content.strip()
+            if seg.source_content and seg.source_content.strip()
             and not (seg.target_content and seg.target_content.strip())
         ]
 
@@ -415,13 +441,16 @@ class TCBatchWorkflow(BaseWorkflow):
             return
 
         # ── Phase 2+: Chain through stages level-by-level ─────────
-        # Each level includes ALL previous source→translation pairs as
-        # TM references so the MT revises with full context of the edit history.
-        revision_prompt = custom_prompt + self._REVISION_ADDENDUM
+        # AI generates TC markup directly (<ins>/<del>) instead of
+        # producing clean translations that get word-level-diffed.
+        # We extract clean text from AI output for chaining to next stage.
+        tc_markup_prompt = custom_prompt + self._TC_MARKUP_ADDENDUM
 
         max_depth = max(len(stages) for _, stages in proper)
 
         # Per-segment state for chaining
+        # clean_translations: clean text for TM chaining (no markup)
+        # raw_outputs: AI output with <ins>/<del> tags per level
         seg_state = {}
         for seg, stages in proper:
             base_idx = 1 if not stages[0]["text"].strip() else 0
@@ -429,7 +458,8 @@ class TCBatchWorkflow(BaseWorkflow):
             seg_state[seg.id] = {
                 "segment": seg, "stages": stages,
                 "base_idx": base_idx,
-                "translations": {str(base_idx): base_t},
+                "clean_translations": {str(base_idx): base_t},
+                "raw_outputs": {},
             }
 
         for level in range(1, max_depth):
@@ -439,11 +469,11 @@ class TCBatchWorkflow(BaseWorkflow):
                 if level <= st["base_idx"] or level >= len(st["stages"]):
                     continue
                 text = st["stages"][level]["text"]
-                prev_t = st["translations"].get(str(level - 1), "")
-                if not text.strip() or not prev_t:
+                prev_clean = st["clean_translations"].get(str(level - 1), "")
+                if not text.strip() or not prev_clean:
                     continue
 
-                # Full TM chain: all previous source→translation pairs
+                # TM chain uses CLEAN translations (no markup)
                 tm = self._build_tm_chain(st, level)
                 level_items.append({
                     "id": f"{sid}__s{level}",
@@ -455,73 +485,102 @@ class TCBatchWorkflow(BaseWorkflow):
             if not level_items:
                 continue
 
-            self.log(f"Stage {level}: Revising {len(level_items)} segments...")
+            self.log(f"Stage {level}: Revising {len(level_items)} segments (AI TC markup)...")
             level_t = await self._translate_batch(
-                orchestrator, level_items, model_name, revision_prompt
+                orchestrator, level_items, model_name, tc_markup_prompt
             )
 
+            # Extract clean text for chaining; store raw for markup conversion
             for sid, st in seg_state.items():
-                t = level_t.get(f"{sid}__s{level}", "")
-                if t:
-                    st["translations"][str(level)] = t
+                raw = level_t.get(f"{sid}__s{level}", "")
+                if not raw:
+                    continue
+                st["raw_outputs"][str(level)] = raw
+                st["clean_translations"][str(level)] = extract_clean_from_tc(raw)
 
             progress = int(30 + (level / max(max_depth - 1, 1)) * 60)
             self.update_progress(min(progress, 95), status="processing")
 
         # ── Store results ─────────────────────────────────────────
-        # For each segment: target_content = clean base translation,
-        # metadata stores per-stage clean translations AND precomputed
-        # TC markup (diff between consecutive stages) for the slider UI.
+        # target_content = accumulated TC document (all stages' marks layered).
+        # Per-stage TC markup (from AI or word-level fallback) stored in
+        # metadata for the slider UI.
         tc_settings = (self.project.config or {}).get("tc_settings", {})
         replace_authors = tc_settings.get("tc_replace_authors", False)
         translator_name = tc_settings.get("tc_translator_name") or "Translator"
         tc_count = 0
+        fallback_count = 0
+
         for sid, st in seg_state.items():
             seg = st["segment"]
             stages = st["stages"]
             base_idx = st["base_idx"]
-            base_t = st["translations"].get(str(base_idx), "")
+            base_t = st["clean_translations"].get(str(base_idx), "")
             if not base_t:
                 continue
 
-            # target_content = clean base translation (user starts at base stage)
-            seg.target_content = base_t
-            seg.status = "mt_draft"
+            final_clean = st["clean_translations"].get(str(len(stages) - 1), "")
 
-            final_t = st["translations"].get(str(len(stages) - 1), "")
-
-            # Precompute TC markup for each stage transition
+            # Build per-stage TC markup, clean translations, and author info
             tc_stage_markup = {}
+            stage_translations = dict(st["clean_translations"])
+            ordered_clean_texts = []
+            ordered_authors = []
+
             for lvl in range(base_idx + 1, len(stages)):
-                prev_t = st["translations"].get(str(lvl - 1), "")
-                curr_t = st["translations"].get(str(lvl), "")
-                if not prev_t or not curr_t:
+                prev_clean = st["clean_translations"].get(str(lvl - 1), "")
+                curr_clean = st["clean_translations"].get(str(lvl), "")
+                raw = st["raw_outputs"].get(str(lvl), "")
+
+                if not prev_clean or not curr_clean:
                     continue
-                if prev_t == curr_t:
-                    tc_stage_markup[str(lvl)] = curr_t
+
+                # Author info for this stage
+                if replace_authors:
+                    a_name = translator_name
+                    a_id = translator_name.lower().replace(" ", "_") + f"__stage_{lvl}"
+                    a_date = ""
                 else:
-                    if replace_authors:
-                        a_name = translator_name
-                        a_id = translator_name.lower().replace(" ", "_") + f"__stage_{lvl}"
-                        a_date = ""
-                    else:
-                        stage_info = stages[lvl]
-                        a_name = stage_info.get("author") or "Editor"
-                        a_id = (stage_info.get("author") or "editor").lower().replace(" ", "_") + f"__stage_{lvl}"
-                        a_date = stage_info.get("date") or ""
-                    tc_stage_markup[str(lvl)] = generate_tc_markup(
-                        old_text=prev_t, new_text=curr_t,
-                        author_id=a_id,
-                        author_name=a_name,
-                        date=a_date,
+                    stage_info = stages[lvl]
+                    a_name = stage_info.get("author") or "Editor"
+                    a_id = (stage_info.get("author") or "editor").lower().replace(" ", "_") + f"__stage_{lvl}"
+                    a_date = stage_info.get("date") or ""
+
+                # Collect for accumulation
+                ordered_clean_texts.append(curr_clean)
+                ordered_authors.append((a_id, a_name, a_date))
+
+                # Per-stage markup for slider UI
+                if prev_clean == curr_clean:
+                    tc_stage_markup[str(lvl)] = curr_clean
+                elif raw and validate_ai_tc_markup(raw) and ('<ins>' in raw or '<del>' in raw):
+                    tc_stage_markup[str(lvl)] = convert_ai_tc_to_tiptap(
+                        raw, author_id=a_id, author_name=a_name, date=a_date
                     )
+                else:
+                    if raw and not validate_ai_tc_markup(raw):
+                        logger.warning(f"Malformed AI TC markup for segment {sid} stage {lvl}, falling back to word-level diff")
+                    tc_stage_markup[str(lvl)] = generate_tc_markup(
+                        old_text=prev_clean, new_text=curr_clean,
+                        author_id=a_id, author_name=a_name, date=a_date,
+                    )
+                    fallback_count += 1
+
+            # target_content = accumulated multi-author TC document
+            if ordered_clean_texts and base_t != (final_clean or base_t):
+                seg.target_content = accumulate_tc_stages(
+                    base_t, ordered_clean_texts, ordered_authors
+                )
+            else:
+                seg.target_content = final_clean or base_t
+            seg.status = "mt_draft"
 
             meta = seg.metadata_json or {}
             inner = meta.get("metadata", {})
-            inner["stage_translations"] = st["translations"]
+            inner["stage_translations"] = stage_translations
             inner["tc_stage_markup"] = tc_stage_markup
             inner["tc_base_translation"] = base_t
-            inner["tc_final_translation"] = final_t or base_t
+            inner["tc_final_translation"] = final_clean or base_t
             meta["metadata"] = inner
             seg.metadata_json = dict(meta)
             flag_modified(seg, "metadata_json")
@@ -529,7 +588,8 @@ class TCBatchWorkflow(BaseWorkflow):
 
         self.db.commit()
         self.update_progress(100, status="ready")
-        self.log(f"TC Batch (step_by_step) Complete. {regular_count} regular + {simple_count} simple + {tc_count} TC segments.")
+        fb_note = f" ({fallback_count} word-level fallbacks)" if fallback_count else ""
+        self.log(f"TC Batch (step_by_step) Complete. {regular_count} regular + {simple_count} simple + {tc_count} TC{fb_note}.")
 
     # ──────────────────────────────────────────────────────────────
     # Shared: translate batch items in chunks
