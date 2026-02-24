@@ -5,6 +5,7 @@ from ..models import Project, Segment, AiUsageLog
 from ..rag.manager import RAGManager
 from ..database import SessionLocal
 from .base import BaseWorkflow
+from ..config import get_default_model_id
 
 from typing import List, Optional
 
@@ -119,7 +120,7 @@ class BatchTranslateWorkflow(BaseWorkflow):
                         self.db.add(AiUsageLog(
                             project_id=self.project_id,
                             segment_id=first_id_in_batch,
-                            model=model_name or "gemini-2.0-flash-001",
+                            model=model_name or get_default_model_id(),
                             trigger_type="batch_generation",
                             input_tokens=input_tokens,
                             output_tokens=output_tokens
@@ -130,7 +131,7 @@ class BatchTranslateWorkflow(BaseWorkflow):
                         self.db.refresh(self.project)
                         current_config = dict(self.project.config or {})
                         usage_stats = current_config.get("usage_stats", {})
-                        model_key = model_name or "gemini-2.0-flash-001"
+                        model_key = model_name or get_default_model_id()
                         m_stats = usage_stats.get(model_key, {"input_tokens": 0, "output_tokens": 0})
                         m_stats["input_tokens"] += input_tokens
                         m_stats["output_tokens"] += output_tokens

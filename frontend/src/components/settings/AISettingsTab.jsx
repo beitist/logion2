@@ -24,7 +24,7 @@ Prüfe den Text auf typisches 'Übersetzungsdeutsch' und formuliere ihn so um, a
 Prüfe deine Übersetzung vor der Ausgabe: Würde dieser Satz so in einem offiziellen deutschen Regierungsdokument stehen? Falls er noch nach 'Übersetzung' klingt, strukturiere ihn radikal um.`;
 
 /** Preferred default model ID for both editor and workflow translation */
-const DEFAULT_MODEL_ID = 'gemini-3-pro-preview';
+const DEFAULT_MODEL_ID = 'gemini-3.1-pro-preview';
 
 /**
  * AI Configuration Settings Tab

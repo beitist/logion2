@@ -1,22 +1,13 @@
 {
     "models": [
         {
-            "id": "gemini-2.5-flash",
-            "name": "Gemini 2.5 Flash (Fast)",
+            "id": "gemini-3.1-pro-preview",
+            "name": "Gemini 3.1 Pro Preview",
             "provider": "google",
             "usage": "mt",
             "context_window": 1000000,
-            "input_cost_per_m": 0.3,
-            "output_cost_per_m": 2.5
-        },
-        {
-            "id": "gemini-2.5-pro",
-            "name": "Gemini 2.5 Pro (Stable)",
-            "provider": "google",
-            "usage": "mt",
-            "context_window": 1000000,
-            "input_cost_per_m": 1.25,
-            "output_cost_per_m": 10.00
+            "input_cost_per_m": 2.0,
+            "output_cost_per_m": 12.0
         },
         {
             "id": "gemini-3-pro-preview",
@@ -35,6 +26,24 @@
             "context_window": 1000000,
             "input_cost_per_m": 0.5,
             "output_cost_per_m": 3.0
+        },
+        {
+            "id": "gemini-2.5-pro",
+            "name": "Gemini 2.5 Pro (Stable)",
+            "provider": "google",
+            "usage": "mt",
+            "context_window": 1000000,
+            "input_cost_per_m": 1.25,
+            "output_cost_per_m": 10.00
+        },
+        {
+            "id": "gemini-2.5-flash",
+            "name": "Gemini 2.5 Flash (Fast)",
+            "provider": "google",
+            "usage": "mt",
+            "context_window": 1000000,
+            "input_cost_per_m": 0.3,
+            "output_cost_per_m": 2.5
         },
         {
             "id": "voyage-3-large",
