@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getGlossaryTerms, addGlossaryTerm, uploadGlossary } from '../../api/client';
-import { BookOpen, Plus, Upload, Download, Search } from 'lucide-react';
+import { getGlossaryTerms, addGlossaryTerm, updateGlossaryTerm, deleteGlossaryTerm, uploadGlossary } from '../../api/client';
+import { BookOpen, Plus, Upload, Download, Search, Pencil, Trash2, Check, X } from 'lucide-react';
 import { SettingsCard, SettingsSection } from './shared';
 
 /**
@@ -23,6 +23,9 @@ export function GlossarySettingsTab({ project }) {
     const [note, setNote] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const [uploadFile, setUploadFile] = useState(null);
+
+    // Inline edit state: { id, source, target, note } or null
+    const [editing, setEditing] = useState(null);
 
     useEffect(() => {
         if (project) loadTerms();
@@ -67,6 +70,30 @@ export function GlossarySettingsTab({ project }) {
         } catch (e) {
             alert("Upload failed");
             console.error(e);
+        }
+    };
+
+    const handleEditSave = async () => {
+        if (!editing || !editing.source || !editing.target) return;
+        try {
+            await updateGlossaryTerm(project.id, editing.id, {
+                source_term: editing.source,
+                target_term: editing.target,
+                context_note: editing.note || '',
+            });
+            setEditing(null);
+            loadTerms();
+        } catch (e) {
+            alert("Failed to update term");
+        }
+    };
+
+    const handleDelete = async (entryId) => {
+        try {
+            await deleteGlossaryTerm(project.id, entryId);
+            loadTerms();
+        } catch (e) {
+            alert("Failed to delete term");
         }
     };
 
@@ -224,22 +251,90 @@ export function GlossarySettingsTab({ project }) {
                             <th className="px-4 py-3 border-b border-gray-100">Source Term</th>
                             <th className="px-4 py-3 border-b border-gray-100">Target Term</th>
                             <th className="px-4 py-3 border-b border-gray-100">Note</th>
+                            <th className="px-4 py-3 border-b border-gray-100 w-20"></th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                         {filteredTerms.map(t => (
-                            <tr key={t.id} className="hover:bg-gray-50 transition-colors">
-                                <td className="px-4 py-3">
-                                    <div className="font-medium text-gray-800">{t.source}</div>
-                                    <div className="text-xs text-gray-400 font-mono">{t.lemma}</div>
-                                </td>
-                                <td className="px-4 py-3 text-gray-700">{t.target}</td>
-                                <td className="px-4 py-3 text-gray-500 italic text-xs">{t.note}</td>
-                            </tr>
+                            editing?.id === t.id ? (
+                                <tr key={t.id} className="bg-amber-50/50">
+                                    <td className="px-4 py-2">
+                                        <input
+                                            className="w-full text-sm px-2 py-1.5 border border-amber-300 rounded-lg
+                                                       focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+                                            value={editing.source}
+                                            onChange={e => setEditing({ ...editing, source: e.target.value })}
+                                            autoFocus
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <input
+                                            className="w-full text-sm px-2 py-1.5 border border-amber-300 rounded-lg
+                                                       focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+                                            value={editing.target}
+                                            onChange={e => setEditing({ ...editing, target: e.target.value })}
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <input
+                                            className="w-full text-sm px-2 py-1.5 border border-gray-200 rounded-lg
+                                                       focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+                                            value={editing.note || ''}
+                                            onChange={e => setEditing({ ...editing, note: e.target.value })}
+                                            placeholder="optional"
+                                        />
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                onClick={handleEditSave}
+                                                className="p-1.5 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors"
+                                                title="Save"
+                                            >
+                                                <Check size={14} />
+                                            </button>
+                                            <button
+                                                onClick={() => setEditing(null)}
+                                                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                                                title="Cancel"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : (
+                                <tr key={t.id} className="hover:bg-gray-50 transition-colors group">
+                                    <td className="px-4 py-3">
+                                        <div className="font-medium text-gray-800">{t.source}</div>
+                                        <div className="text-xs text-gray-400 font-mono">{t.lemma}</div>
+                                    </td>
+                                    <td className="px-4 py-3 text-gray-700">{t.target}</td>
+                                    <td className="px-4 py-3 text-gray-500 italic text-xs">{t.note}</td>
+                                    <td className="px-4 py-3">
+                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={() => setEditing({ id: t.id, source: t.source, target: t.target, note: t.note || '' })}
+                                                className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                                title="Edit"
+                                            >
+                                                <Pencil size={14} />
+                                            </button>
+                                            <button
+                                                onClick={() => handleDelete(t.id)}
+                                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="Delete"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )
                         ))}
                         {!loading && filteredTerms.length === 0 && (
                             <tr>
-                                <td colSpan="3" className="px-4 py-12 text-center text-gray-400 italic">
+                                <td colSpan="4" className="px-4 py-12 text-center text-gray-400 italic">
                                     {searchQuery ? 'No matching terms found' : 'No terms yet. Add your first term above.'}
                                 </td>
                             </tr>

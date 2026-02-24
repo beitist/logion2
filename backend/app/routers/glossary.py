@@ -15,6 +15,11 @@ class GlossaryAddRequest(BaseModel):
     target_term: str
     context_note: str = None
 
+class GlossaryUpdateRequest(BaseModel):
+    source_term: str = None
+    target_term: str = None
+    context_note: str = None
+
 @router.post("")
 def add_glossary_term(project_id: str, item: GlossaryAddRequest, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -37,6 +42,50 @@ def list_glossary(project_id: str, db: Session = Depends(get_db)):
         "note": e.context_note
     } for e in entries]
     
+@router.put("/{entry_id}")
+def update_glossary_term(project_id: str, entry_id: str, item: GlossaryUpdateRequest, db: Session = Depends(get_db)):
+    entry = db.query(GlossaryEntry).filter(
+        GlossaryEntry.id == entry_id,
+        GlossaryEntry.project_id == project_id
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Glossary entry not found")
+
+    matcher = GlossaryMatcher(project_id, db)
+
+    if item.source_term is not None:
+        entry.source_term = item.source_term.strip()
+        doc = matcher.nlp(entry.source_term)
+        entry.source_lemma = " ".join([t.lemma_ for t in doc])
+    if item.target_term is not None:
+        entry.target_term = item.target_term.strip()
+    if item.context_note is not None:
+        entry.context_note = item.context_note.strip() or None
+
+    db.commit()
+    db.refresh(entry)
+
+    return {
+        "id": entry.id,
+        "source": entry.source_term,
+        "target": entry.target_term,
+        "lemma": entry.source_lemma,
+        "note": entry.context_note
+    }
+
+@router.delete("/{entry_id}")
+def delete_glossary_term(project_id: str, entry_id: str, db: Session = Depends(get_db)):
+    entry = db.query(GlossaryEntry).filter(
+        GlossaryEntry.id == entry_id,
+        GlossaryEntry.project_id == project_id
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Glossary entry not found")
+
+    db.delete(entry)
+    db.commit()
+    return {"deleted": entry_id}
+
 @router.post("/upload")
 async def upload_glossary(project_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     content = await file.read()

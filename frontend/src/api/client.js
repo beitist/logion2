@@ -191,6 +191,24 @@ export async function getGlossaryTerms(projectId) {
     return res.json();
 }
 
+export async function updateGlossaryTerm(projectId, entryId, { source_term, target_term, context_note }) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/glossary/${entryId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_term, target_term, context_note }),
+    });
+    if (!res.ok) throw new Error("Failed to update glossary term");
+    return res.json();
+}
+
+export async function deleteGlossaryTerm(projectId, entryId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/glossary/${entryId}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete glossary term");
+    return res.json();
+}
+
 export async function uploadGlossary(projectId, file) {
     const formData = new FormData();
     formData.append("file", file);
