@@ -103,8 +103,12 @@ class InferenceOrchestrator:
 Rules:
 1. Output valid JSON array: [{{ "id": "segment_id", "target": "translated_text" }}, ...]
 2. Preserve XML-like tags (e.g. <1>, <b>) exactly as they appear in source.
-3. Use the provided glossary and TM matches if relevant.
-4. Maintain style consistency across the batch.
+3. TM match handling by score:
+   - Score >= 95: This is a verified reference translation. Use it as-is. Only adapt if the source text differs from the TM source — and even then, change only what the source difference requires.
+   - Score 70-94: Strong reference. Use as base and adapt for any source differences while keeping style and terminology.
+   - Score < 70: Stylistic inspiration only. Translate freely but consider the terminology used.
+4. ALWAYS use glossary terms over your own word choices. Glossary entries are mandatory.
+5. Maintain style consistency across the batch.
 """
 
         if custom_prompt:
