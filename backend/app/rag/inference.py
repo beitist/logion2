@@ -103,16 +103,16 @@ class InferenceOrchestrator:
 Rules:
 1. Output valid JSON array: [{{ "id": "segment_id", "target": "translated_text" }}, ...]
 2. Preserve XML-like tags (e.g. <1>, <b>) exactly as they appear in source.
-3. TM match handling by score:
-   - Score >= 95: This is a verified reference translation. Use it as-is. Only adapt if the source text differs from the TM source — and even then, change only what the source difference requires.
-   - Score 70-94: Strong reference. Use as base and adapt for any source differences while keeping style and terminology.
-   - Score < 70: Stylistic inspiration only. Translate freely but consider the terminology used.
+3. TM match handling by score (HIGHEST PRIORITY — overrides Style Guide):
+   - Score >= 95: MANDATORY reference. Copy the TM target translation verbatim. Do NOT rephrase, do NOT apply style guide rules, do NOT change terminology (e.g. keep "Stakeholder" even if the style guide prefers gendered language). The ONLY permitted change: if the current source text differs from the TM source, adjust the translation minimally to reflect that specific source difference — nothing else.
+   - Score 70-94: Strong reference. Use as base and adapt for any source differences while keeping its style and terminology. Apply style guide only where the TM has no opinion.
+   - Score < 70: Weak reference. Translate freely following the style guide, but consider the TM terminology.
 4. ALWAYS use glossary terms over your own word choices. Glossary entries are mandatory.
 5. Maintain style consistency across the batch.
 """
 
         if custom_prompt:
-            system_instruction += f"\nStyle Guide:\n{custom_prompt}\n"
+            system_instruction += f"\nStyle Guide (applies to free translations and weak TM matches only — do NOT override TM matches with score >= 95):\n{custom_prompt}\n"
             
         # Construct JSON Input
         # "context_window": { "preceding": [...], "following": [...] }

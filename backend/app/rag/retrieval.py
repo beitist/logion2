@@ -146,8 +146,8 @@ class RetrievalEngine:
             return 1
             
         for m in matches:
-            key = m.source_text.strip()
-            
+            key = self.clean_tags(m.source_text).strip()
+
             if key not in unique_map:
                 unique_map[key] = m
             else:
@@ -182,12 +182,22 @@ class RetrievalEngine:
             for m in candidates: m.score = 80
             return candidates, 0
 
-        # Prepare Documents
-        docs = [c.source_text for c in candidates]
-        
+        # Prepare Documents — strip XML tags so they don't affect relevance scoring
+        clean_query = self.clean_tags(query)
+        docs = [self.clean_tags(c.source_text) for c in candidates]
+
+        # Instruction prefix: guide rerank-2.5 to score translation equivalence,
+        # not generic topical relevance
+        instructed_query = (
+            "Find segments that are direct translations, paraphrases, or close "
+            "semantic equivalents of the following source text. "
+            "Prefer segment-level matches over longer paragraphs.\n\n"
+            + clean_query
+        )
+
         try:
             reranking = self._client.rerank(
-                query=query,
+                query=instructed_query,
                 documents=docs,
                 model="rerank-2.5",
                 top_k=len(docs)
@@ -201,18 +211,29 @@ class RetrievalEngine:
             return candidates, 0
 
         final_list = []
-        
+        query_chars = len(clean_query)
+
         for i, match in enumerate(candidates):
             raw_score = score_map.get(i, 0.0)
-            base_score = int(raw_score * 100)
-            
+
+            # Length penalty: only penalize candidates much LONGER than query (>3x)
+            # A paragraph matching on a single keyword should not outscore a segment-level match
+            doc_chars = len(docs[i])
+            if query_chars > 0 and doc_chars > query_chars * 3:
+                length_factor = (query_chars * 3) / doc_chars  # 5x→0.6, 10x→0.3
+            else:
+                length_factor = 1.0
+
+            adjusted_score = raw_score * length_factor
+            base_score = int(adjusted_score * 100)
+
             # Boosts/Penalties
             boost = 2
             is_mandatory = (match.type == TranslationOrigin.mandatory or match.category == ProjectFileCategory.legal)
-            
+
             if is_mandatory:
                 boost = 5
-                
+
             final_score = base_score + boost
             match.score = max(0, min(99, final_score))
             
@@ -222,7 +243,7 @@ class RetrievalEngine:
             final_list.append(match)
             
         final_list.sort(key=lambda x: x.score, reverse=True)
-        return [m for m in final_list if m.score > 40], tokens
+        return [m for m in final_list if m.score > 35], tokens
 
     def _lookup_tm(self, db: Session, project_id: str, text_val: str) -> List[TranslationMatch]:
         """

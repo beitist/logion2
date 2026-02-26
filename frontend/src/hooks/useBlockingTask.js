@@ -138,7 +138,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
                 isOpen: true,
                 type: 'reinit',
                 status: 'running',
-                title: "Re-ingesting Project...",
+                title: "Re-ingesting Context...",
                 logs: ["Request sent..."],
                 progress: -1
             });

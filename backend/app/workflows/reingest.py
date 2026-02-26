@@ -1,6 +1,6 @@
 import os
 import logging
-from ..models import ProjectFile, ContextChunk, ProjectFileCategory, TranslationOrigin, Segment
+from ..models import ProjectFile, ContextChunk, ProjectFileCategory, TranslationOrigin, TranslationUnit, Segment
 from ..storage import download_file
 from ..document.parser import parse_document
 from ..tmx import parse_tmx_units, ingest_tmx_direct
@@ -39,8 +39,24 @@ class ReingestWorkflow(BaseWorkflow):
             ProjectFile.category.in_([ProjectFileCategory.legal.value, ProjectFileCategory.background.value])
         ).all()
         
-        self.log(f"Found {len(files)} context files. Starting Phase 1: Parsing...")
-        
+        self.log(f"Found {len(files)} context files.")
+
+        # --- Cleanup: Delete ALL old chunks & non-user TM units for this project ---
+        # Use subquery to catch chunks from deleted/recategorized files too
+        from sqlalchemy import select
+        all_file_ids = select(ProjectFile.id).where(ProjectFile.project_id == self.project_id)
+        old_chunks = self.db.query(ContextChunk).filter(
+            ContextChunk.file_id.in_(all_file_ids)
+        ).delete(synchronize_session=False)
+        old_tus = self.db.query(TranslationUnit).filter(
+            TranslationUnit.project_id == self.project_id,
+            TranslationUnit.origin_type != TranslationOrigin.user.value
+        ).delete(synchronize_session=False)
+        self.db.commit()
+        self.log(f"Cleanup: Removed {old_chunks} old chunks + {old_tus} old TM units.")
+
+        self.log("Starting Phase 1: Parsing...")
+
         # --- Phase 1: Parse & Prepare (In Memory) ---
         all_chunks_to_persist = []
         

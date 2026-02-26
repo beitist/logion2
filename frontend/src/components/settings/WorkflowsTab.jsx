@@ -13,7 +13,7 @@ import { SettingsCard, SettingsSection } from './shared';
  * - Machine translation (fill targets)
  * - Copy source to target
  * - Reinitialize source file
- * - Re-ingest vectors
+ * - Re-ingest context
  */
 export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onFullReinit }) {
     const [copyLoading, setCopyLoading] = useState(false);
@@ -199,7 +199,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                                            rounded-xl text-xs font-medium hover:bg-gray-100 transition-colors"
                             >
                                 <Database size={14} />
-                                Re-Ingest Vectors
+                                Re-Ingest Context
                             </button>
 
                             <button

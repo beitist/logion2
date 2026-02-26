@@ -164,7 +164,7 @@ export function AISettingsTab({ project, onUpdate }) {
                             className="flex items-center gap-2 px-4 py-2 bg-white border border-yellow-300 text-yellow-700 rounded hover:bg-yellow-100 transition-colors shadow-sm font-medium"
                         >
                             <RefreshCw size={16} className={reingesting ? "animate-spin" : ""} />
-                            Re-Ingest Project
+                            Re-Ingest Context
                         </button>
                     </div>
                     {reingestMsg && <p className="text-xs text-center text-gray-500 mt-2 font-mono">{reingestMsg}</p>}

@@ -78,10 +78,23 @@ def _ingest_logic(project_id: str, db: Session):
     ).all()
     
     log(f"Found {len(files)} context files. Starting Phase 1: Parsing...")
-    
+
+    # --- Cleanup: Delete ALL old chunks & non-user TM units for this project ---
+    from sqlalchemy import select
+    all_file_ids = select(ProjectFile.id).where(ProjectFile.project_id == project_id)
+    old_chunks = db.query(ContextChunk).filter(
+        ContextChunk.file_id.in_(all_file_ids)
+    ).delete(synchronize_session=False)
+    old_tus = db.query(TranslationUnit).filter(
+        TranslationUnit.project_id == project_id,
+        TranslationUnit.origin_type != TranslationOrigin.user.value
+    ).delete(synchronize_session=False)
+    db.commit()
+    log(f"Cleanup: Removed {old_chunks} old chunks + {old_tus} old TM units.")
+
     # --- Phase 1: Parse & Prepare (In Memory) ---
     # We parse all files to get the Total Chunk Count for proper progress bars.
-    
+
     all_chunks_to_persist = []
     
     for file in files:
