@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, getSegments, updateProject } from "../api/client";
 
-export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, onRefresh, clearAIQueue }) {
+export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, activeFileId, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
         isOpen: false,
         type: null,
@@ -12,6 +12,24 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
     });
 
     const stopRef = useRef(false);
+
+    // Ref to avoid stale closure for activeFileId
+    const activeFileIdRef = useRef(activeFileId);
+    activeFileIdRef.current = activeFileId;
+
+    // Helper: filter segments by active file dropdown (null = all files)
+    const getFilteredSegments = () => {
+        const fid = activeFileIdRef.current;
+        if (!fid) return segmentsRef.current;
+        return segmentsRef.current.filter(s => s.file_id === fid);
+    };
+
+    const getFileLabel = () => {
+        const fid = activeFileIdRef.current;
+        if (!fid) return null;
+        const seg = segmentsRef.current.find(s => s.file_id === fid);
+        return seg?.filename || 'selected file';
+    };
 
     // Polling Logic
     useEffect(() => {
@@ -51,10 +69,12 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
     const handleAutoTranslate = async () => {
         const aiSettings = projectRef.current?.config?.ai_settings || {};
         const modelName = aiSettings.model || "Default";
+        const fileLabel = getFileLabel();
+        const scope = fileLabel ? `for '${fileLabel}'` : '';
 
-        if (!confirm(`Start Auto-Translate (High Quality)?\n\nModel: ${modelName}`)) return;
+        if (!confirm(`Start Auto-Translate (High Quality) ${scope}?\n\nModel: ${modelName}`)) return;
 
-        const candidates = segmentsRef.current.filter(s => s.status !== 'translated' && s.status !== 'approved');
+        const candidates = getFilteredSegments().filter(s => s.status !== 'translated' && s.status !== 'approved');
         if (candidates.length === 0) {
             alert("No untranslated segments found!");
             return;
@@ -173,24 +193,27 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         const aiSettings = projectRef.current?.config?.ai_settings || {};
         const batchSize = aiSettings.batch_size || 10;
         const workflowModel = aiSettings.workflow_model || "Fast Model";
+        const fileLabel = getFileLabel();
+        const scope = fileLabel ? ` for '${fileLabel}'` : '';
 
         const modeLabel = mode === 'draft' ? "Pre-Translate" : "Machine Translation";
 
         // Confirmation (Skip if resuming autonomously, but usually user triggers resume)
-        if (!resume && !confirm(`Start ${modeLabel}?\n\nModel: ${workflowModel}\nBatch Size: ${batchSize}`)) return;
+        if (!resume && !confirm(`Start ${modeLabel}${scope}?\n\nModel: ${workflowModel}\nBatch Size: ${batchSize}`)) return;
 
-        // Filter Candidates
+        // Filter Candidates (respect file dropdown)
+        const base = getFilteredSegments();
         let candidates = [];
         if (mode === 'draft') {
-            // Pre-Translate: Process ALL segments (update drafts)
+            // Pre-Translate: Process segments (update drafts)
             // If Resuming, skip those that already have ai_draft and match the model
-            candidates = segmentsRef.current;
+            candidates = base;
             if (resume) {
                 candidates = candidates.filter(s => !s.metadata?.ai_draft);
             }
         } else {
             // Machine Translation: Process only EMPTY targets (fill gaps)
-            candidates = segmentsRef.current.filter(s => !s.target_content);
+            candidates = base.filter(s => !s.target_content);
             // Resume for Translate is implicit as we filter fulfilled ones
         }
 
@@ -399,22 +422,24 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
     const handleSequentialTranslate = async () => {
         const aiSettings = projectRef.current?.config?.ai_settings || {};
         const workflowModel = aiSettings.workflow_model || "Fast Model";
+        const fileLabel = getFileLabel();
+        const scope = fileLabel ? ` for '${fileLabel}'` : '';
 
-        // Count empty segments
-        const emptySegments = segmentsRef.current.filter(s => !s.target_content);
+        // Count empty segments (respect file filter)
+        const emptySegments = getFilteredSegments().filter(s => !s.target_content);
         if (emptySegments.length === 0) {
             alert("No empty segments to translate.");
             return;
         }
 
-        if (!confirm(`Start Sequential Translation (1-by-1 with Auto-Glossary)?\n\nEmpty Segments: ${emptySegments.length}\nModel: ${workflowModel}\n\nThis is slower but builds terminology as it goes.`)) return;
+        if (!confirm(`Start Sequential Translation${scope} (1-by-1 with Auto-Glossary)?\n\nEmpty Segments: ${emptySegments.length}\nModel: ${workflowModel}\n\nThis is slower but builds terminology as it goes.`)) return;
 
         stopRef.current = false;
         setBlockingTask({
             isOpen: true,
             type: 'sequential',
             status: 'running',
-            title: `Sequential Translation (${emptySegments.length} segments)`,
+            title: `Sequential Translation${scope} (${emptySegments.length} segments)`,
             logs: ["Starting sequential translation with auto-glossary..."],
             progress: 0
         });
@@ -422,8 +447,9 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         await updateWorkflowState('running', 'sequential');
 
         try {
-            // Trigger backend sequential workflow
-            await sequentialTranslate(projectId);
+            // Trigger backend sequential workflow (send segment_ids when file-filtered)
+            const segmentIds = activeFileIdRef.current ? emptySegments.map(s => s.id) : null;
+            await sequentialTranslate(projectId, segmentIds);
 
             // Poll for backend completion (longer timeout — 1 segment at a time)
             let pollAttempts = 0;

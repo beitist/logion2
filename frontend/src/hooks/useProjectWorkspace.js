@@ -44,6 +44,7 @@ export function useProjectWorkspace(projectId) {
     const blocking = useBlockingTask(projectId, {
         segmentsRef: data.segmentsRef,
         projectRef: data.projectRef,
+        activeFileId: ui.activeFileId,
         setSegments: data.setSegments,
         onRefresh: data.refreshProject,
         clearAIQueue: ai.clearQueue
