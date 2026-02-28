@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { Terminal, Bug, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows } from 'lucide-react';
+import React, { useRef, useEffect } from 'react';
+import { Terminal, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows } from 'lucide-react';
 import './TiptapStyles.css';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
@@ -15,6 +15,7 @@ import { GlossaryAddModal } from './GlossaryAddModal';
 import { LogConsole } from './LogConsole';
 import { ShortcutsPanel } from './ShortcutsPanel';
 import { BlockingModal } from './BlockingModal';
+import { WorkflowIndicator } from './WorkflowIndicator';
 
 import { useProjectWorkspace } from '../hooks/useProjectWorkspace';
 import { SegmentRow } from './segment';
@@ -48,10 +49,11 @@ export function SplitView({ projectId, onBack }) {
         // Handlers
         handleToggleFlag,
         handleFullReinit,
-        handleAutoTranslate, // Keep for backward compatibility if needed, or remove if fully replaced
-        handleBatchProcess, // New
-        handleTCBatch, // TC Step-by-Step
-        handleSequentialTranslate, // Sequential 1-by-1
+        handleAutoTranslate,
+        handleBatchProcess,
+        handleTCBatch,
+        handleSequentialTranslate,
+        cancelWorkflow,
         handleReingest,
         handleEditorUpdate,
         handleSave,
@@ -95,6 +97,17 @@ export function SplitView({ projectId, onBack }) {
         estimateSize: () => 180,
         overscan: 5,
     });
+
+    // Scroll to active segment when it changes (works with virtualizer)
+    const prevActiveRef = useRef(null);
+    useEffect(() => {
+        if (!activeSegmentId || activeSegmentId === prevActiveRef.current) return;
+        prevActiveRef.current = activeSegmentId;
+        const idx = filteredSegments.findIndex(s => s.id === activeSegmentId);
+        if (idx >= 0) {
+            rowVirtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
+        }
+    }, [activeSegmentId, filteredSegments, rowVirtualizer]);
 
     // Early return for loading state - AFTER all hooks
     if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
@@ -204,14 +217,14 @@ export function SplitView({ projectId, onBack }) {
                         <Keyboard size={18} />
                     </button>
 
-                    {/* Debug Toggle */}
-                    <button
-                        onClick={() => setShowDebug(!showDebug)}
-                        className={`p-2 rounded-lg transition-colors ${showDebug ? 'bg-red-100 text-red-700' : 'hover:bg-gray-200 text-gray-600'}`}
-                        title="Toggle Debug View"
-                    >
-                        <Bug size={18} />
-                    </button>
+                    {/* Workflow Indicator */}
+                    <WorkflowIndicator
+                        project={project}
+                        projectId={projectId}
+                        blockingTask={blockingTask}
+                        onCancel={cancelWorkflow}
+                        onSegmentsRefresh={refreshProject}
+                    />
 
                     <div className="h-6 w-px bg-gray-300 mx-2" />
 

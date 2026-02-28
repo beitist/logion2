@@ -94,6 +94,11 @@ class BatchTranslateWorkflow(BaseWorkflow):
             self.log(f"Split into {total_batches} batches for processing")
             
             for batch_idx, batch_ids in enumerate(all_batches):
+                # Check for cancellation before each batch
+                if self.is_cancelled():
+                    self.log(f"Workflow cancelled after {batch_idx}/{total_batches} batches ({success_count} segments translated).")
+                    return
+
                 self.log(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_ids)} segments)...")
                 
                 try:

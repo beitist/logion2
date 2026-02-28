@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, getSegments, updateProject } from "../api/client";
+import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, getSegments, updateProject, resetWorkflowStatus } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, activeFileId, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -226,7 +226,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
 
         stopRef.current = false;
         setBlockingTask({
-            isOpen: true,
+            isOpen: false,
             type: 'batch',
             status: 'running',
             title: `${modeLabel} ${resume ? '(Resuming)' : ''} (${candidates.length})`,
@@ -345,7 +345,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
 
         stopRef.current = false;
         setBlockingTask({
-            isOpen: true,
+            isOpen: false,
             type: 'tc_batch',
             status: 'running',
             title: `TC Step-by-Step (${tcSegments.length} segments)`,
@@ -436,7 +436,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
 
         stopRef.current = false;
         setBlockingTask({
-            isOpen: true,
+            isOpen: false,
             type: 'sequential',
             status: 'running',
             title: `Sequential Translation${scope} (${emptySegments.length} segments)`,
@@ -511,6 +511,17 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         await updateWorkflowState('idle');
     };
 
+    const cancelWorkflow = async () => {
+        stopRef.current = true;
+        try {
+            await resetWorkflowStatus(projectId);
+            setBlockingTask(prev => ({ ...prev, status: 'idle', isOpen: false }));
+            if (onRefresh) onRefresh();
+        } catch (err) {
+            console.error('Cancel failed:', err);
+        }
+    };
+
     const checkResumableWorkflow = async () => {
         if (!projectRef.current) return;
         const wf = projectRef.current.config?.workflow;
@@ -527,6 +538,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
     return {
         blockingTask, setBlockingTask,
         stopRef,
+        cancelWorkflow,
         handleAutoTranslate,
         handleFullReinit,
         handleReingest,

@@ -72,7 +72,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
 
     const handleResetWorkflow = async () => {
         if (!project) return;
-        if (!confirm("Reset workflow status? Use this if a workflow is stuck in 'processing'.")) return;
+        if (!confirm("Stop running workflow and reset status? The workflow will stop after the current segment finishes.")) return;
 
         try {
             setResetLoading(true);
@@ -249,7 +249,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                                            disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <CircleStop size={14} />
-                                {resetLoading ? "Resetting..." : "Reset Stuck Workflow"}
+                                {resetLoading ? "Stopping..." : "Stop / Reset Workflow"}
                             </button>
                         </div>
                     </SettingsSection>

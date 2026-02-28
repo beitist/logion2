@@ -33,6 +33,11 @@ class BaseWorkflow:
                 self.project.rag_status = status
             self.db.commit()
 
+    def is_cancelled(self) -> bool:
+        """Checks if the workflow was cancelled (status reset to 'ready' externally)."""
+        self.db.refresh(self.project)
+        return self.project.rag_status != "processing"
+
     def fail(self, error: Exception):
         """Logs failure and updates status."""
         self.log(f"Workflow Failed: {str(error)}")

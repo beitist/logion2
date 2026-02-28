@@ -63,6 +63,11 @@ class SequentialTranslateWorkflow(BaseWorkflow):
             success_count = 0
 
             for idx, seg in enumerate(segments):
+                # Check for cancellation before each segment
+                if self.is_cancelled():
+                    self.log(f"Workflow cancelled after {success_count}/{total} segments.")
+                    return
+
                 try:
                     # 1. Fresh RAGManager per segment (picks up new auto-glossary entries)
                     manager = RAGManager(self.project_id, self.db)

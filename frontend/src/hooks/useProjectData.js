@@ -43,26 +43,15 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
                     }
                 }
 
-                // Initial Focus: Scroll to first unconfirmed segment
-                // Priority: 1) First empty target, 2) First draft/mt_draft status
+                // Initial Focus: Set active segment to first unconfirmed
+                // (SplitView handles scrolling via virtualizer)
                 if (s.length > 0) {
-                    // Find first segment that needs work
                     const firstUnconfirmed = s.find(seg =>
-                        // Empty target content
                         (!seg.target_content || seg.target_content.trim() === '') ||
-                        // Or has draft/mt_draft status (not yet confirmed by user)
                         ['draft', 'mt_draft', 'error'].includes(seg.status)
                     );
-
-                    const targetSegment = firstUnconfirmed || s[0]; // Fallback to first segment
-
-                    setTimeout(() => {
-                        const el = document.getElementById(`editor-${targetSegment.id}`);
-                        if (el) {
-                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            if (setActiveSegmentId) setActiveSegmentId(targetSegment.id);
-                        }
-                    }, 500);
+                    const targetSegment = firstUnconfirmed || s[0];
+                    if (setActiveSegmentId) setActiveSegmentId(targetSegment.id);
                 }
             }
         } catch (err) {
@@ -77,6 +66,28 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
     }, [projectId]);
 
     const refreshProject = () => loadData(false);
+
+    // Auto-poll project status during active workflows
+    useEffect(() => {
+        if (!project || project.rag_status !== 'processing') return;
+
+        const interval = setInterval(async () => {
+            try {
+                const updated = await getProject(projectId);
+                setProject(updated);
+
+                // Workflow completed — auto-refresh segments
+                if (updated.rag_status === 'ready' || updated.rag_status === 'error') {
+                    const segs = await getSegments(projectId);
+                    setSegments(segs.segments || segs);
+                }
+            } catch (err) {
+                console.error('Auto-poll error:', err);
+            }
+        }, 2500);
+
+        return () => clearInterval(interval);
+    }, [project?.rag_status, projectId]);
 
     const handleSave = async (id, htmlContent) => {
         setSavingId(id);
