@@ -12,6 +12,31 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Logion 2 API")
 
+# Startup: Reset any projects stuck in 'processing' (killed by server restart)
+@app.on_event("startup")
+def reset_stuck_workflows():
+    from .database import SessionLocal
+    from .models import Project
+    from sqlalchemy.orm.attributes import flag_modified
+    db = SessionLocal()
+    try:
+        stuck = db.query(Project).filter(Project.rag_status == "processing").all()
+        for p in stuck:
+            main_logger.warning("reset_stuck_workflow", project_id=p.id, name=p.name)
+            p.rag_status = "error"
+            p.ingestion_logs = (p.ingestion_logs or []) + ["Workflow interrupted by server restart."]
+            config = dict(p.config or {})
+            config.pop("workflow", None)
+            p.config = config
+            flag_modified(p, "config")
+        if stuck:
+            db.commit()
+            main_logger.info("reset_stuck_workflows_done", count=len(stuck))
+    except Exception as e:
+        main_logger.error("reset_stuck_workflows_failed", error=str(e))
+    finally:
+        db.close()
+
 # Middleware: Correlation ID
 from .middleware.correlation import CorrelationMiddleware, get_request_id
 

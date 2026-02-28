@@ -236,49 +236,44 @@ export const highlightGlossaryTerms = (htmlContent, glossaryMatches) => {
         return htmlContent;
     }
 
-    let result = htmlContent;
-
     // Sort glossary terms by length (longest first) to avoid partial replacements
-    // e.g., "Final Report" should be matched before "Report"
     const sortedMatches = [...glossaryMatches].sort(
         (a, b) => (b.source?.length || 0) - (a.source?.length || 0)
     );
 
-    // Track which regions are already marked to avoid double-highlighting
-    const markedRegions = [];
+    // Split HTML into text segments and tag segments to avoid matching inside HTML attributes.
+    // This prevents a second glossary term from corrupting <mark> tags inserted by a prior term.
+    const applyToTextNodes = (html, fn) => {
+        // Split on HTML tags — capturing group keeps the tags in the result array
+        const parts = html.split(/(<[^>]+>)/g);
+        return parts.map((part, i) => {
+            // Even indices are text nodes, odd indices are HTML tags
+            if (i % 2 === 0) return fn(part);
+            return part; // Leave HTML tags untouched
+        }).join('');
+    };
+
+    let result = htmlContent;
 
     for (const match of sortedMatches) {
         if (!match.source) continue;
 
-        // Escape special regex characters in the source term
         const escapedSource = match.source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        // Case-insensitive word boundary match
-        // Using word boundaries to avoid partial word matches
         const regex = new RegExp(`\\b(${escapedSource})\\b`, 'gi');
 
-        result = result.replace(regex, (fullMatch, capturedTerm, offset) => {
-            // Check if this region overlaps with an already marked region
-            for (const region of markedRegions) {
-                if (offset >= region.start && offset < region.end) {
-                    return fullMatch; // Skip - already highlighted
-                }
-            }
+        let alreadyHighlighted = false;
 
-            // Mark this region as highlighted
-            markedRegions.push({ start: offset, end: offset + fullMatch.length });
+        result = applyToTextNodes(result, (textNode) => {
+            return textNode.replace(regex, (fullMatch, capturedTerm) => {
+                if (alreadyHighlighted) return fullMatch; // One highlight per term
+                alreadyHighlighted = true;
 
-            // Create tooltip content
-            const targetText = match.target || '';
-            const noteText = match.note ? ` (${match.note})` : '';
-            const tooltipContent = `→ ${targetText}${noteText}`;
+                const targetText = match.target || '';
+                const noteText = match.note ? ` (${match.note})` : '';
+                const tooltipContent = `→ ${targetText}${noteText}`;
 
-            // Return the highlighted term with tooltip
-            // Using data attributes for potential JS-based tooltip enhancement
-            return `<mark class="glossary-highlight bg-yellow-100 border-b border-yellow-400 cursor-help rounded-sm px-0.5" 
-                         title="${tooltipContent.replace(/"/g, '&quot;')}"
-                         data-glossary-source="${match.source.replace(/"/g, '&quot;')}"
-                         data-glossary-target="${targetText.replace(/"/g, '&quot;')}">${capturedTerm}</mark>`;
+                return `<mark class="glossary-highlight bg-yellow-100 border-b border-yellow-400 cursor-help rounded-sm px-0.5" title="${tooltipContent.replace(/"/g, '&quot;')}" data-glossary-source="${match.source.replace(/"/g, '&quot;')}" data-glossary-target="${targetText.replace(/"/g, '&quot;')}">${capturedTerm}</mark>`;
+            });
         });
     }
 

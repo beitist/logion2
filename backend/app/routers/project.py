@@ -216,6 +216,11 @@ async def sequential_translate(
     project.rag_status = "processing"
     project.rag_progress = 0
     project.ingestion_logs = []
+    config = dict(project.config or {})
+    config['workflow'] = {'status': 'running', 'active_mode': 'sequential'}
+    project.config = config
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(project, "config")
     db.commit()
 
     from ..workflows.sequential_translate import run_background_sequential_translate
@@ -233,6 +238,10 @@ async def reset_workflow_status(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
     project.rag_status = "ready"
     project.rag_progress = 100
+    config = dict(project.config or {})
+    config.pop("workflow", None)
+    project.config = config
+    flag_modified(project, "config")
     db.commit()
     return {"status": "reset", "message": "Workflow status reset to ready"}
 

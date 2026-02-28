@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import GlossaryEntry, Project
-from ..glossary_service import GlossaryMatcher
+from ..glossary_service import GlossaryMatcher, invalidate_glossary_cache
 from pydantic import BaseModel
 import csv
 import io
@@ -66,6 +66,7 @@ def update_glossary_term(project_id: str, entry_id: str, item: GlossaryUpdateReq
 
     db.commit()
     db.refresh(entry)
+    invalidate_glossary_cache(project_id)
 
     return {
         "id": entry.id,
@@ -86,6 +87,7 @@ def delete_glossary_term(project_id: str, entry_id: str, db: Session = Depends(g
 
     db.delete(entry)
     db.commit()
+    invalidate_glossary_cache(project_id)
     return {"deleted": entry_id}
 
 @router.post("/upload")

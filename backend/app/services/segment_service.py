@@ -383,10 +383,17 @@ class SegmentService:
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        if project.rag_status == "processing":
+            raise HTTPException(status_code=409, detail="A workflow is already running for this project")
+
         # Set status BEFORE starting background task so frontend sees it immediately
         project.rag_status = "processing"
         project.rag_progress = 0
         project.ingestion_logs = []
+        config = dict(project.config or {})
+        config['workflow'] = {'status': 'running', 'active_mode': mode}
+        project.config = config
+        flag_modified(project, "config")
         self.db.commit()
 
         from ..workflows.batch_translate import run_background_batch_translate
@@ -403,10 +410,17 @@ class SegmentService:
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        if project.rag_status == "processing":
+            raise HTTPException(status_code=409, detail="A workflow is already running for this project")
+
         # Set status BEFORE starting background task so frontend sees it immediately
         project.rag_status = "processing"
         project.rag_progress = 0
         project.ingestion_logs = []
+        config = dict(project.config or {})
+        config['workflow'] = {'status': 'running', 'active_mode': 'tc_batch'}
+        project.config = config
+        flag_modified(project, "config")
         self.db.commit()
 
         from ..workflows.tc_batch import run_background_tc_batch

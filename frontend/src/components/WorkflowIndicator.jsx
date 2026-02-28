@@ -22,6 +22,35 @@ export function WorkflowIndicator({ project, projectId, blockingTask, onCancel, 
     const isActive = project?.rag_status === 'processing';
     const isError = project?.rag_status === 'error';
 
+    // Stuck detection: if progress hasn't changed for 2 minutes
+    const [isStuck, setIsStuck] = useState(false);
+    const lastProgressRef = useRef({ value: -1, time: Date.now() });
+
+    useEffect(() => {
+        if (!isActive) {
+            setIsStuck(false);
+            lastProgressRef.current = { value: -1, time: Date.now() };
+            return;
+        }
+
+        const currentProgress = project?.rag_progress || 0;
+        const lastLogs = project?.ingestion_logs || [];
+
+        // Check if progress or logs changed
+        if (currentProgress !== lastProgressRef.current.value ||
+            lastLogs.length !== (lastProgressRef.current.logCount || 0)) {
+            lastProgressRef.current = { value: currentProgress, logCount: lastLogs.length, time: Date.now() };
+            setIsStuck(false);
+        }
+
+        const timer = setInterval(() => {
+            const elapsed = Date.now() - lastProgressRef.current.time;
+            if (elapsed > 120000) setIsStuck(true); // 2 minutes
+        }, 10000);
+
+        return () => clearInterval(timer);
+    }, [isActive, project?.rag_progress, project?.ingestion_logs?.length]);
+
     // Detect completion: processing → ready
     useEffect(() => {
         const prev = prevStatusRef.current;
@@ -131,6 +160,15 @@ export function WorkflowIndicator({ project, projectId, blockingTask, onCancel, 
                                         </div>
                                     ))}
                                     <div className="animate-pulse text-green-600 text-xs mt-1">_</div>
+                                </div>
+                            )}
+
+                            {/* Stuck Warning */}
+                            {isStuck && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">
+                                    <div className="text-[11px] font-medium text-amber-700">
+                                        No progress for 2+ minutes. The workflow may have been interrupted (e.g. by a server restart).
+                                    </div>
                                 </div>
                             )}
 

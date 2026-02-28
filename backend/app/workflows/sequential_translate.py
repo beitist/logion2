@@ -69,6 +69,8 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                     return
 
                 try:
+                    self.log(f"Segment {idx+1}/{total} (#{seg.index+1})...")
+
                     # 1. Fresh RAGManager per segment (picks up new auto-glossary entries)
                     manager = RAGManager(self.project_id, self.db)
 

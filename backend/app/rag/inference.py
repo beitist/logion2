@@ -118,11 +118,11 @@ class InferenceOrchestrator:
         
         system_instruction = f"""You are a professional translator. Translate the following content from {source_lang} to {target_lang}.
 Rules:
-1. Output valid JSON array: [{{ "id": "segment_id", "target": "translated_text" }}, ...]
+1. Output valid JSON array: [{{ "id": "segment_id", "target": "translated_text" }}, ...]. Escape double quotes inside translations with backslash (\"). Do not include literal newlines inside JSON strings.
 2. Preserve XML-like tags (e.g. <1>, <b>) exactly as they appear in source.
 3. TM match handling by score (HIGHEST PRIORITY — overrides Style Guide):
-   - Score >= 95: MANDATORY reference. Copy the TM target translation verbatim. Do NOT rephrase, do NOT apply style guide rules, do NOT change terminology (e.g. keep "Stakeholder" even if the style guide prefers gendered language). The ONLY permitted change: if the current source text differs from the TM source, adjust the translation minimally to reflect that specific source difference — nothing else.
-   - Score 70-94: Strong reference. Use as base and adapt for any source differences while keeping its style and terminology. Apply style guide only where the TM has no opinion.
+   - Score >= 95: MANDATORY. Copy the TM target verbatim. The ONLY permitted change: if the current source differs from the TM source, adjust minimally to reflect that specific difference — nothing else.
+   - Score 70-94: STRONG. Start by copying the TM target AS-IS. Then compare the current source with the TM source word by word. ONLY replace words/phrases in the TM target that directly correspond to differences in the source. Keep ALL other words, terminology, and phrasing from the TM target unchanged. Do NOT rephrase, do NOT substitute synonyms, do NOT apply style guide rules to TM-derived parts.
    - Score < 70: Weak reference. Translate freely following the style guide, but consider the TM terminology.
 4. ALWAYS use glossary terms over your own word choices. Glossary entries are mandatory.
 5. Maintain style consistency across the batch.
@@ -138,8 +138,8 @@ Rules:
         input_data = {
             "task": "Translate batch",
             "context_window": {
-                "preceding_segments": preceding_context,
-                "following_segments": following_context
+                "preceding_segments": [self._sanitize_for_prompt(s) for s in preceding_context],
+                "following_segments": [self._sanitize_for_prompt(s) for s in following_context],
             },
             "segments_to_translate": []
         }
@@ -147,16 +147,20 @@ Rules:
         for item in batch_items:
             seg_obj = {
                 "id": item['id'],
-                "source": item['source_text'],
+                "source": self._sanitize_for_prompt(item['source_text']),
                 "glossary": item['glossary_matches'],
-                "tm_suggestions": item['tm_matches']
+                "tm_suggestions": [{
+                    **tm,
+                    "source": self._sanitize_for_prompt(tm.get("source", "")),
+                    "target": self._sanitize_for_prompt(tm.get("target", ""))
+                } for tm in item['tm_matches']]
             }
             input_data['segments_to_translate'].append(seg_obj)
             
         prompt = f"{system_instruction}\n\nInput Data:\n{json.dumps(input_data, indent=2)}\n\nOutput JSON:"
         
         try:
-            response_text, usage = await self._call_llm(prompt, model_name, temperature=0.2)
+            response_text, usage = await self._call_llm(prompt, model_name, temperature=0.2, json_mode=True)
             
             # Robust JSON extraction
             import re
@@ -176,19 +180,39 @@ Rules:
             try:
                 data = json.loads(json_str)
             except json.JSONDecodeError:
-                # 3. Final Fallback: Aggressive cleanup
-                # Sometimes models output "Here is the JSON: [ ... ]" without markdown
-                json_str = re.sub(r'^[^{[]*', '', json_str) # strip leading non-json
-                json_str = re.sub(r'[^}\]]*$', '', json_str) # strip trailing non-json
-                data = json.loads(json_str)
-            
+                # 3. Repair: fix unescaped characters and retry
+                repaired = self._repair_llm_json(json_str)
+                try:
+                    data = json.loads(repaired)
+                    logger.info("JSON parsed after repair")
+                except json.JSONDecodeError:
+                    # 4. Final fallback: extract "target" values via regex
+                    logger.warning(f"JSON parse failed after repair, attempting regex extraction. Raw (first 500): {response_text[:500]}")
+                    target_matches = re.findall(r'"target"\s*:\s*"((?:[^"\\]|\\.)*)"', json_str)
+                    id_matches = re.findall(r'"id"\s*:\s*"((?:[^"\\]|\\.)*)"', json_str)
+
+                    if target_matches and id_matches and len(target_matches) == len(id_matches):
+                        data = [{"id": id_matches[i], "target": target_matches[i]} for i in range(len(id_matches))]
+                    elif target_matches and len(batch_items) == 1:
+                        data = [{"id": batch_items[0]["id"], "target": target_matches[0]}]
+                    else:
+                        if len(batch_items) == 1:
+                            plain = re.sub(r'[\[\]{}":]', '', response_text).strip()
+                            if plain:
+                                logger.warning("Using plain text fallback for single segment")
+                                data = [{"id": batch_items[0]["id"], "target": plain}]
+                            else:
+                                data = []
+                        else:
+                            data = []
+
             results = {}
             if isinstance(data, list):
                 for item in data:
                     if 'id' in item and 'target' in item:
                         results[item['id']] = item['target']
             return results, usage
-            
+
         except Exception as e:
             logger.error(f"Batch Inference Failed: {e}")
             return {}, {"input_tokens": 0, "output_tokens": 0}
@@ -234,6 +258,106 @@ Rules:
         
         return await self._call_llm(prompt_content, model, temperature=0.3)
 
+    @staticmethod
+    def _sanitize_for_prompt(text: str) -> str:
+        """
+        Light cleanup of source text before embedding in prompt.
+        Only normalizes whitespace and strips control characters.
+        Does NOT touch quotes or punctuation — that's the LLM's job.
+        """
+        if not text:
+            return text
+        result = text.replace('\t', ' ')
+        result = re.sub(r' {2,}', ' ', result)
+        result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
+        return result.strip()
+
+    @staticmethod
+    def _repair_llm_json(text: str) -> str:
+        """
+        Repair common JSON issues from LLM responses before parsing.
+        Uses a state machine to track whether we're inside a JSON string value,
+        then fixes:
+        - Unescaped double quotes inside string values
+        - Literal newlines / carriage returns / tabs inside strings
+        - Invalid escape sequences (lone backslash before non-escape char)
+        - Control characters (ASCII < 32)
+        """
+        result = []
+        i = 0
+        in_string = False
+
+        while i < len(text):
+            c = text[i]
+
+            # Inside a string: handle escape sequences
+            if in_string and c == '\\':
+                if i + 1 < len(text):
+                    next_c = text[i + 1]
+                    if next_c in '"\\\/bfnrtu':
+                        # Valid JSON escape — pass through
+                        result.append(c)
+                        result.append(next_c)
+                        i += 2
+                        continue
+                    else:
+                        # Invalid escape (e.g. \S, \e) — escape the backslash
+                        result.append('\\\\')
+                        i += 1
+                        continue
+                else:
+                    result.append('\\\\')
+                    i += 1
+                    continue
+
+            if c == '"':
+                if not in_string:
+                    in_string = True
+                    result.append(c)
+                    i += 1
+                    continue
+
+                # Inside string, hit a quote — is it structural or content?
+                # Look ahead past whitespace to see what follows
+                j = i + 1
+                while j < len(text) and text[j] in ' \t\r\n':
+                    j += 1
+
+                if j >= len(text) or text[j] in ',}]:':
+                    # Structural delimiter follows → this closes the string
+                    in_string = False
+                    result.append(c)
+                else:
+                    # Something else follows (letter, number, etc.)
+                    # → likely an unescaped quote inside the value
+                    result.append('\\"')
+                i += 1
+                continue
+
+            # Inside string: fix literal whitespace characters
+            if in_string:
+                if c == '\n':
+                    result.append('\\n')
+                    i += 1
+                    continue
+                elif c == '\r':
+                    result.append('\\r')
+                    i += 1
+                    continue
+                elif c == '\t':
+                    result.append('\\t')
+                    i += 1
+                    continue
+                elif ord(c) < 32:
+                    # Strip other control characters
+                    i += 1
+                    continue
+
+            result.append(c)
+            i += 1
+
+        return ''.join(result)
+
     def _build_prompt_content(self, system_instr, source, ctx: SegmentContext) -> str:
         out = system_instruction = system_instr
         
@@ -267,17 +391,20 @@ Rules:
              
         return out
 
-    async def _call_llm(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3) -> (str, Dict):
+    async def _call_llm(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3, json_mode: bool = False) -> (str, Dict):
         """Dispatch to the correct provider based on model ID."""
         provider = _get_provider(model_name)
         if provider == "anthropic":
             return await self._call_claude(prompt, model_name, temperature, max_retries)
         else:
-            return await self._call_gemini(prompt, model_name, temperature, max_retries)
+            return await self._call_gemini(prompt, model_name, temperature, max_retries, json_mode=json_mode)
 
-    async def _call_gemini(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3) -> (str, Dict):
+    async def _call_gemini(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3, json_mode: bool = False) -> (str, Dict):
         gm = genai.GenerativeModel(model_name)
-        config = genai.GenerationConfig(temperature=temperature)
+        config_kwargs = {"temperature": temperature}
+        if json_mode:
+            config_kwargs["response_mime_type"] = "application/json"
+        config = genai.GenerationConfig(**config_kwargs)
 
         for attempt in range(max_retries):
             try:

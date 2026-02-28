@@ -239,10 +239,14 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
             }
         }
 
-        const currentIndex = segmentsRef.current.findIndex(s => s.id === segmentId);
-        if (currentIndex !== -1) {
-            const nextSegments = segmentsRef.current.slice(currentIndex + 1, currentIndex + 6);
-            lookaheadRef.current.queue = nextSegments.map(s => s.id);
+        // Only populate lookahead queue if pre_translate_count > 0 (setting controls lookahead)
+        const lookaheadCount = parseInt(projectRef.current?.config?.ai_settings?.pre_translate_count) || 0;
+        if (lookaheadCount > 0 && projectRef.current?.use_ai) {
+            const currentIndex = segmentsRef.current.findIndex(s => s.id === segmentId);
+            if (currentIndex !== -1) {
+                const nextSegments = segmentsRef.current.slice(currentIndex + 1, currentIndex + 1 + Math.min(lookaheadCount, 5));
+                lookaheadRef.current.queue = nextSegments.map(s => s.id);
+            }
         }
     };
 

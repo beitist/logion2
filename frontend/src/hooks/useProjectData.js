@@ -71,13 +71,19 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
     useEffect(() => {
         if (!project || project.rag_status !== 'processing') return;
 
+        let pollCount = 0;
         const interval = setInterval(async () => {
             try {
                 const updated = await getProject(projectId);
                 setProject(updated);
+                pollCount++;
 
-                // Workflow completed — auto-refresh segments
                 if (updated.rag_status === 'ready' || updated.rag_status === 'error') {
+                    // Workflow completed — final segment refresh
+                    const segs = await getSegments(projectId);
+                    setSegments(segs.segments || segs);
+                } else if (pollCount % 4 === 0) {
+                    // During processing — refresh segments every ~10s so targets appear live
                     const segs = await getSegments(projectId);
                     setSegments(segs.segments || segs);
                 }

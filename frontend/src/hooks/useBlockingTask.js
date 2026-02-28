@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, getSegments, updateProject, resetWorkflowStatus } from "../api/client";
+import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, resetWorkflowStatus } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, activeFileId, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -165,62 +165,22 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         } catch (e) { alert("Failed: " + e.message); }
     };
 
-    // State Tracking Helper
-    const updateWorkflowState = async (status, mode = null) => {
-        if (!projectRef.current) return;
-        const currentConfig = projectRef.current.config || {};
-        const workflowState = status === 'idle' ? null : {
-            status,
-            active_mode: mode,
-            timestamp: Date.now()
-        };
-
-        // Optimistic update? No, rely on refetch for safety or local ref
-        // deep merge config
-        const newConfig = { ...currentConfig, workflow: workflowState };
-
-        try {
-            // We use the client directly to avoid circular hook dependency if possible
-            // But we need to import updateProject
-            await updateProject(projectId, { config: newConfig });
-        } catch (e) {
-            console.error("Failed to update workflow state in DB", e);
-        }
-    };
-
-    const handleBatchProcess = async (mode, options = {}) => {
-        const { resume = false } = options;
+    const handleBatchProcess = async (mode) => {
         const aiSettings = projectRef.current?.config?.ai_settings || {};
-        const batchSize = aiSettings.batch_size || 10;
         const workflowModel = aiSettings.workflow_model || "Fast Model";
         const fileLabel = getFileLabel();
         const scope = fileLabel ? ` for '${fileLabel}'` : '';
 
         const modeLabel = mode === 'draft' ? "Pre-Translate" : "Machine Translation";
 
-        // Confirmation (Skip if resuming autonomously, but usually user triggers resume)
-        if (!resume && !confirm(`Start ${modeLabel}${scope}?\n\nModel: ${workflowModel}\nBatch Size: ${batchSize}`)) return;
+        if (!confirm(`Start ${modeLabel}${scope}?\n\nModel: ${workflowModel}`)) return;
 
         // Filter Candidates (respect file dropdown)
         const base = getFilteredSegments();
-        let candidates = [];
-        if (mode === 'draft') {
-            // Pre-Translate: Process segments (update drafts)
-            // If Resuming, skip those that already have ai_draft and match the model
-            candidates = base;
-            if (resume) {
-                candidates = candidates.filter(s => !s.metadata?.ai_draft);
-            }
-        } else {
-            // Machine Translation: Process only EMPTY targets (fill gaps)
-            candidates = base.filter(s => !s.target_content);
-            // Resume for Translate is implicit as we filter fulfilled ones
-        }
+        let candidates = mode === 'draft' ? base : base.filter(s => !s.target_content);
 
         if (candidates.length === 0) {
             alert("No applicable segments found.");
-            // Clear state if we were trying to resume
-            if (resume) updateWorkflowState('idle');
             return;
         }
 
@@ -229,107 +189,22 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
             isOpen: false,
             type: 'batch',
             status: 'running',
-            title: `${modeLabel} ${resume ? '(Resuming)' : ''} (${candidates.length})`,
-            logs: [`Starting ${modeLabel}...`, `Batch Size: ${batchSize}`],
+            title: `${modeLabel} (${candidates.length} segments)`,
+            logs: [],
             progress: 0
         });
 
-        // Track Start in DB
-        await updateWorkflowState('running', mode);
-
-        let processed = 0;
-        let errors = 0;
-
-        // Chunking
-        for (let i = 0; i < candidates.length; i += batchSize) {
-            if (stopRef.current) {
-                setBlockingTask(prev => ({ ...prev, status: 'error', logs: [...prev.logs, "Stopped by user."] }));
-                // Track Paused (or Idle if strict stop)
-                // User said "erase ephemeral data" if they say NO to resume. 
-                // But here we just stop. We should leave it as 'running' or set to 'paused' so on reload we ask?
-                // Let's set to 'running' (idempotent) or 'paused'.
-                // If we set 'idle', we lose progress tracking.
-                // Let's leave it as is (so on reload it detects 'running' and asks).
-                break;
-            }
-
-            const batch = candidates.slice(i, i + batchSize);
-            const batchIds = batch.map(s => s.id);
-
-            try {
-                setBlockingTask(prev => ({
-                    ...prev,
-                    logs: [...prev.logs.slice(-4), `Processing batch ${Math.floor(i / batchSize) + 1}...`],
-                    progress: processed / candidates.length
-                }));
-
-                // Call Batch API (triggers async background processing)
-                await batchTranslate(projectId, batchIds, mode);
-
-                // Refresh project state so WorkflowIndicator picks up 'processing'
-                if (i === 0 && onRefresh) onRefresh();
-
-                // Poll for backend completion before moving to next batch
-                // The backend updates rag_progress as it processes each segment
-                let pollAttempts = 0;
-                const maxPollAttempts = 120; // 2 minutes max wait per batch
-                while (pollAttempts < maxPollAttempts) {
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
-                    try {
-                        const projectStatus = await getProject(projectId);
-
-                        // Update logs from backend
-                        if (projectStatus.ingestion_logs?.length > 0) {
-                            setBlockingTask(prev => ({
-                                ...prev,
-                                logs: [...prev.logs.slice(-3), ...projectStatus.ingestion_logs.slice(-2)]
-                            }));
-                        }
-
-                        // Update progress from backend (0-100 int -> 0-1 float)
-                        if (projectStatus.rag_progress !== undefined) {
-                            // Calculate combined progress: batch completion + within-batch progress
-                            const batchProgress = processed / candidates.length;
-                            const withinBatchProgress = (projectStatus.rag_progress / 100) * (batch.length / candidates.length);
-                            setBlockingTask(prev => ({
-                                ...prev,
-                                progress: batchProgress + withinBatchProgress
-                            }));
-                        }
-
-                        // Check if batch processing is complete
-                        if (projectStatus.rag_status === 'ready' || projectStatus.rag_status === 'error') {
-                            break;
-                        }
-                    } catch (pollErr) {
-                        console.warn("Poll error:", pollErr);
-                    }
-                    pollAttempts++;
-                }
-
-                // Refresh Frontend State (Sync)
-                const updatedSegments = await getSegments(projectId);
-                setSegments(updatedSegments.segments || updatedSegments);
-
-            } catch (err) {
-                console.error(err);
-                errors += batch.length;
-                setBlockingTask(prev => ({ ...prev, logs: [...prev.logs, `Batch Error: ${err.message}`] }));
-            }
-
-            processed += batch.length;
-        }
-
-        if (!stopRef.current) {
+        try {
+            // Fire-and-forget: send ALL IDs, backend handles internal batching
+            const candidateIds = candidates.map(s => s.id);
+            await batchTranslate(projectId, candidateIds, mode);
+            if (onRefresh) onRefresh();
+        } catch (err) {
             setBlockingTask(prev => ({
                 ...prev,
-                status: 'done',
-                title: "Workflow Complete",
-                progress: 1,
-                logs: [...prev.logs, `Done. Processed: ${processed}, Errors: ${errors}`]
+                status: 'error',
+                logs: [`Error: ${err.message}`]
             }));
-            // Clear DB State
-            await updateWorkflowState('idle');
         }
     };
 
@@ -352,77 +227,21 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
             type: 'tc_batch',
             status: 'running',
             title: `TC Step-by-Step (${tcSegments.length} segments)`,
-            logs: ["Starting TC batch translation..."],
+            logs: [],
             progress: 0
         });
 
-        await updateWorkflowState('running', 'tc_batch');
-
         try {
-            // Trigger backend TC batch (processes all TC segments at once)
+            // Fire-and-forget: backend handles everything, auto-poll tracks progress
             await tcBatchTranslate(projectId);
-
-            // Refresh project state so WorkflowIndicator picks up 'processing' immediately
             if (onRefresh) onRefresh();
-
-            // Poll for backend completion
-            let pollAttempts = 0;
-            const maxPollAttempts = 600; // Up to 10 minutes
-            while (pollAttempts < maxPollAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                try {
-                    const projectStatus = await getProject(projectId);
-
-                    if (projectStatus.ingestion_logs?.length > 0) {
-                        setBlockingTask(prev => ({
-                            ...prev,
-                            logs: [...prev.logs.slice(-4), ...projectStatus.ingestion_logs.slice(-3)]
-                        }));
-                    }
-
-                    if (projectStatus.rag_progress !== undefined) {
-                        setBlockingTask(prev => ({
-                            ...prev,
-                            progress: projectStatus.rag_progress / 100
-                        }));
-                    }
-
-                    if (projectStatus.rag_status === 'ready') {
-                        break;
-                    } else if (projectStatus.rag_status === 'error') {
-                        setBlockingTask(prev => ({
-                            ...prev,
-                            status: 'error',
-                            logs: [...prev.logs, "TC batch failed on backend."]
-                        }));
-                        break;
-                    }
-                } catch (pollErr) {
-                    console.warn("TC Poll error:", pollErr);
-                }
-                pollAttempts++;
-            }
-
-            // Refresh segments
-            const updatedSegments = await getSegments(projectId);
-            setSegments(updatedSegments.segments || updatedSegments);
-
-            setBlockingTask(prev => ({
-                ...prev,
-                status: 'done',
-                title: "TC Translation Complete",
-                progress: 1,
-                logs: [...prev.logs, `Done. Processed ${tcSegments.length} TC segments.`]
-            }));
         } catch (err) {
             setBlockingTask(prev => ({
                 ...prev,
                 status: 'error',
-                logs: [...prev.logs, `Error: ${err.message}`]
+                logs: [`Error: ${err.message}`]
             }));
         }
-
-        await updateWorkflowState('idle');
     };
 
     const handleSequentialTranslate = async () => {
@@ -446,78 +265,23 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
             type: 'sequential',
             status: 'running',
             title: `Sequential Translation${scope} (${emptySegments.length} segments)`,
-            logs: ["Starting sequential translation with auto-glossary..."],
+            logs: [],
             progress: 0
         });
 
-        await updateWorkflowState('running', 'sequential');
-
         try {
-            // Trigger backend sequential workflow (send segment_ids when file-filtered)
+            // Fire-and-forget: backend handles everything, auto-poll tracks progress
             const segmentIds = activeFileIdRef.current ? emptySegments.map(s => s.id) : null;
             await sequentialTranslate(projectId, segmentIds);
-
-            // Refresh project state so WorkflowIndicator picks up 'processing' immediately
+            // Refresh project state so auto-poll + WorkflowIndicator activate immediately
             if (onRefresh) onRefresh();
-
-            // Poll for backend completion (longer timeout — 1 segment at a time)
-            let pollAttempts = 0;
-            const maxPollAttempts = 1200; // Up to 40 minutes
-            while (pollAttempts < maxPollAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                try {
-                    const projectStatus = await getProject(projectId);
-
-                    if (projectStatus.ingestion_logs?.length > 0) {
-                        setBlockingTask(prev => ({
-                            ...prev,
-                            logs: [...prev.logs.slice(-5), ...projectStatus.ingestion_logs.slice(-3)]
-                        }));
-                    }
-
-                    if (projectStatus.rag_progress !== undefined) {
-                        setBlockingTask(prev => ({
-                            ...prev,
-                            progress: projectStatus.rag_progress / 100
-                        }));
-                    }
-
-                    if (projectStatus.rag_status === 'ready') {
-                        break;
-                    } else if (projectStatus.rag_status === 'error') {
-                        setBlockingTask(prev => ({
-                            ...prev,
-                            status: 'error',
-                            logs: [...prev.logs, "Sequential translation failed on backend."]
-                        }));
-                        break;
-                    }
-                } catch (pollErr) {
-                    console.warn("Sequential poll error:", pollErr);
-                }
-                pollAttempts++;
-            }
-
-            // Refresh segments
-            const updatedSegments = await getSegments(projectId);
-            setSegments(updatedSegments.segments || updatedSegments);
-
-            setBlockingTask(prev => ({
-                ...prev,
-                status: 'done',
-                title: "Sequential Translation Complete",
-                progress: 1,
-                logs: [...prev.logs, `Done. ${emptySegments.length} segments processed with auto-glossary.`]
-            }));
         } catch (err) {
             setBlockingTask(prev => ({
                 ...prev,
                 status: 'error',
-                logs: [...prev.logs, `Error: ${err.message}`]
+                logs: [`Error: ${err.message}`]
             }));
         }
-
-        await updateWorkflowState('idle');
     };
 
     const cancelWorkflow = async () => {
@@ -531,19 +295,6 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         }
     };
 
-    const checkResumableWorkflow = async () => {
-        if (!projectRef.current) return;
-        const wf = projectRef.current.config?.workflow;
-        if (wf && wf.status === 'running' && wf.active_mode) {
-            if (confirm(`Uncompleted workflow detected (${wf.active_mode}).\nDo you want to continue?`)) {
-                handleBatchProcess(wf.active_mode, { resume: true });
-            } else {
-                // Erase ephemeral data
-                await updateWorkflowState('idle');
-            }
-        }
-    };
-
     return {
         blockingTask, setBlockingTask,
         stopRef,
@@ -553,7 +304,6 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         handleReingest,
         handleBatchProcess,
         handleTCBatch,
-        handleSequentialTranslate,
-        checkResumableWorkflow
+        handleSequentialTranslate
     };
 }

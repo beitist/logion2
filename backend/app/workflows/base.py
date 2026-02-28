@@ -31,6 +31,13 @@ class BaseWorkflow:
             self.project.rag_progress = int(progress)
             if status:
                 self.project.rag_status = status
+            # Clear workflow config when completed or errored
+            if status in ('ready', 'error'):
+                from sqlalchemy.orm.attributes import flag_modified
+                config = dict(self.project.config or {})
+                config.pop('workflow', None)
+                self.project.config = config
+                flag_modified(self.project, "config")
             self.db.commit()
 
     def is_cancelled(self) -> bool:
@@ -43,4 +50,9 @@ class BaseWorkflow:
         self.log(f"Workflow Failed: {str(error)}")
         if self.project:
             self.project.rag_status = "error"
+            from sqlalchemy.orm.attributes import flag_modified
+            config = dict(self.project.config or {})
+            config.pop('workflow', None)
+            self.project.config = config
+            flag_modified(self.project, "config")
             self.db.commit()
