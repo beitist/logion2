@@ -51,6 +51,7 @@ export function SplitView({ projectId, onBack }) {
         handleAutoTranslate, // Keep for backward compatibility if needed, or remove if fully replaced
         handleBatchProcess, // New
         handleTCBatch, // TC Step-by-Step
+        handleSequentialTranslate, // Sequential 1-by-1
         handleReingest,
         handleEditorUpdate,
         handleSave,
@@ -450,6 +451,7 @@ export function SplitView({ projectId, onBack }) {
                                             onQueueAll={queueSegments}
                                             onBatchProcess={handleBatchProcess} // Allow Blocking Workflows
                                             onTCBatch={handleTCBatch} // TC Step-by-Step
+                                            onSequentialTranslate={handleSequentialTranslate} // Sequential 1-by-1
                                             onReingest={handleReingest}
                                             onRefresh={refreshProject}
                                             onFullReinit={handleFullReinit}

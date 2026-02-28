@@ -39,7 +39,9 @@ def list_glossary(project_id: str, db: Session = Depends(get_db)):
         "source": e.source_term,
         "target": e.target_term,
         "lemma": e.source_lemma,
-        "note": e.context_note
+        "note": e.context_note,
+        "origin": getattr(e, "origin", "manual"),
+        "segment_id": getattr(e, "segment_id", None),
     } for e in entries]
     
 @router.put("/{entry_id}")

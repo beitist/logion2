@@ -56,15 +56,17 @@ class ContextAssembler:
         # Convert to TranslationMatch for uniformity
         gloss_matches = []
         for g in gloss_hits:
+             origin = g.get("origin", "manual")
              gloss_matches.append(TranslationMatch(
                  id=f"gloss-{compute_hash(g['source'])}",
                  content=g['target'],
                  source_text=g['source'],
-                 filename="Glossary",
+                 filename="Auto-Glossary" if origin == "auto" else "Glossary",
                  type="glossary",
                  category="term",
                  score=100,
-                 note=g['note']
+                 note=g['note'],
+                 metadata={"origin": origin},
              ))
              
         # 5. Unit Conversion Facts

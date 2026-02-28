@@ -173,6 +173,14 @@ export async function tcBatchTranslate(projectId) {
     return res.json();
 }
 
+export async function sequentialTranslate(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/sequential-translate`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Sequential translation failed");
+    return res.json();
+}
+
 // Glossary API
 
 export async function addGlossaryTerm(projectId, source, target, note) {

@@ -91,7 +91,8 @@ class GlossaryMatcher:
                 results.append({
                     "source": entry.source_term,
                     "target": entry.target_term,
-                    "note": entry.context_note
+                    "note": entry.context_note,
+                    "origin": getattr(entry, "origin", "manual"),
                 })
         
         # Dedup based on source term

@@ -190,9 +190,27 @@ async def clear_drafts_workflow(project_id: str, db: Session = Depends(get_db)):
     return {"message": "Draft targets cleared successfully", "project_id": project_id}
 
 
+@router.post("/{project_id}/sequential-translate")
+async def sequential_translate(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Sequential 1-by-1 translation with auto-glossary extraction after each segment.
+    Higher quality than batch MT because terminology builds up incrementally.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from ..workflows.sequential_translate import run_background_sequential_translate
+    background_tasks.add_task(run_background_sequential_translate, project_id)
+    return {"status": "started", "message": "Sequential translation started in background"}
+
 @router.post("/{project_id}/batch-translate")
 async def batch_translate(
-    project_id: str, 
+    project_id: str,
     background_tasks: BackgroundTasks,
     payload: BatchTranslateRequest,
     service: SegmentService = Depends(get_segment_service)

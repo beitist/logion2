@@ -41,6 +41,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
         model: '',
         workflow_model: '',
         custom_prompt: '',
+        topic_description: '',
         pre_translate_count: 0,
         batch_size: 10,
         preload_mode: false  // If true, disables auto-fetch on focus
@@ -67,6 +68,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                 workflow_model: ai.workflow_model || '',
                 // Fall back to the default translation prompt if none is configured yet
                 custom_prompt: ai.custom_prompt !== undefined ? ai.custom_prompt : DEFAULT_CUSTOM_PROMPT,
+                topic_description: ai.topic_description || '',
                 pre_translate_count: ai.pre_translate_count || 0,
                 batch_size: ai.batch_size || 10,
                 preload_mode: ai.preload_mode || false
@@ -231,6 +233,27 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                             className="w-full h-28 px-4 py-3 border border-gray-200 rounded-xl 
                                        focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 
                                        shadow-sm text-sm font-mono resize-none transition-all
+                                       placeholder:text-gray-400"
+                        />
+                    </SettingsSection>
+                </SettingsCard>
+
+                {/* Topic Description */}
+                <SettingsCard>
+                    <SettingsSection
+                        icon={Command}
+                        title="Topic / Domain"
+                        description="Describes the project domain for auto-glossary extraction"
+                        accentColor="text-teal-500"
+                    >
+                        <textarea
+                            value={settings.topic_description}
+                            onChange={(e) => setSettings({ ...settings, topic_description: e.target.value })}
+                            placeholder="e.g. 'Evaluation of GIZ projects in the area of climate adaptation in Sub-Saharan Africa.'"
+                            rows={2}
+                            className="w-full px-4 py-3 border border-gray-200 rounded-xl
+                                       focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400
+                                       shadow-sm text-sm resize-none transition-all
                                        placeholder:text-gray-400"
                         />
                     </SettingsSection>

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, getSegments, updateProject } from "../api/client";
+import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, getSegments, updateProject } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -396,6 +396,95 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         await updateWorkflowState('idle');
     };
 
+    const handleSequentialTranslate = async () => {
+        const aiSettings = projectRef.current?.config?.ai_settings || {};
+        const workflowModel = aiSettings.workflow_model || "Fast Model";
+
+        // Count empty segments
+        const emptySegments = segmentsRef.current.filter(s => !s.target_content);
+        if (emptySegments.length === 0) {
+            alert("No empty segments to translate.");
+            return;
+        }
+
+        if (!confirm(`Start Sequential Translation (1-by-1 with Auto-Glossary)?\n\nEmpty Segments: ${emptySegments.length}\nModel: ${workflowModel}\n\nThis is slower but builds terminology as it goes.`)) return;
+
+        stopRef.current = false;
+        setBlockingTask({
+            isOpen: true,
+            type: 'sequential',
+            status: 'running',
+            title: `Sequential Translation (${emptySegments.length} segments)`,
+            logs: ["Starting sequential translation with auto-glossary..."],
+            progress: 0
+        });
+
+        await updateWorkflowState('running', 'sequential');
+
+        try {
+            // Trigger backend sequential workflow
+            await sequentialTranslate(projectId);
+
+            // Poll for backend completion (longer timeout — 1 segment at a time)
+            let pollAttempts = 0;
+            const maxPollAttempts = 1200; // Up to 40 minutes
+            while (pollAttempts < maxPollAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                try {
+                    const projectStatus = await getProject(projectId);
+
+                    if (projectStatus.ingestion_logs?.length > 0) {
+                        setBlockingTask(prev => ({
+                            ...prev,
+                            logs: [...prev.logs.slice(-5), ...projectStatus.ingestion_logs.slice(-3)]
+                        }));
+                    }
+
+                    if (projectStatus.rag_progress !== undefined) {
+                        setBlockingTask(prev => ({
+                            ...prev,
+                            progress: projectStatus.rag_progress / 100
+                        }));
+                    }
+
+                    if (projectStatus.rag_status === 'ready') {
+                        break;
+                    } else if (projectStatus.rag_status === 'error') {
+                        setBlockingTask(prev => ({
+                            ...prev,
+                            status: 'error',
+                            logs: [...prev.logs, "Sequential translation failed on backend."]
+                        }));
+                        break;
+                    }
+                } catch (pollErr) {
+                    console.warn("Sequential poll error:", pollErr);
+                }
+                pollAttempts++;
+            }
+
+            // Refresh segments
+            const updatedSegments = await getSegments(projectId);
+            setSegments(updatedSegments.segments || updatedSegments);
+
+            setBlockingTask(prev => ({
+                ...prev,
+                status: 'done',
+                title: "Sequential Translation Complete",
+                progress: 1,
+                logs: [...prev.logs, `Done. ${emptySegments.length} segments processed with auto-glossary.`]
+            }));
+        } catch (err) {
+            setBlockingTask(prev => ({
+                ...prev,
+                status: 'error',
+                logs: [...prev.logs, `Error: ${err.message}`]
+            }));
+        }
+
+        await updateWorkflowState('idle');
+    };
+
     const checkResumableWorkflow = async () => {
         if (!projectRef.current) return;
         const wf = projectRef.current.config?.workflow;
@@ -417,6 +506,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         handleReingest,
         handleBatchProcess,
         handleTCBatch,
+        handleSequentialTranslate,
         checkResumableWorkflow
     };
 }

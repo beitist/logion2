@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
 import { copySourceToTarget, clearDraftTargets } from '../../api/client';
 import { SettingsCard, SettingsSection } from './shared';
@@ -15,7 +15,7 @@ import { SettingsCard, SettingsSection } from './shared';
  * - Reinitialize source file
  * - Re-ingest context
  */
-export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onFullReinit }) {
+export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onSequentialTranslate, onFullReinit }) {
     const [copyLoading, setCopyLoading] = useState(false);
     const [isReinitModalOpen, setIsReinitModalOpen] = useState(false);
 
@@ -146,6 +146,16 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                         buttonText="Translate All Empty"
                         buttonStyle="bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm"
                         onClick={() => handleRun("translate")}
+                    />
+
+                    <WorkflowCard
+                        icon={ListOrdered}
+                        iconBg="bg-amber-50 text-amber-600"
+                        title="Sequential Translation"
+                        description="1-by-1 with auto-glossary (higher quality, slower)"
+                        buttonText="Translate Sequentially"
+                        buttonStyle="bg-amber-500 text-white hover:bg-amber-600 shadow-sm"
+                        onClick={onSequentialTranslate}
                     />
 
                     <WorkflowCard

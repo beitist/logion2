@@ -10,6 +10,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
     const lookaheadRef = useRef({ queue: [], processing: false });
     const circuitRef = useRef({ failures: 0, isBroken: false });
     const activeRequestsRef = useRef({});
+    const lastFocusedRef = useRef(null);
 
     // --- Core Generators ---
 
@@ -195,6 +196,10 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
     const handleSegmentFocus = async (segmentId) => {
         if (setActiveSegmentId) setActiveSegmentId(segmentId);
 
+        // Guard: skip re-analysis if re-focusing the same segment
+        const isRefocus = lastFocusedRef.current === segmentId;
+        lastFocusedRef.current = segmentId;
+
         const seg = segmentsRef.current.find(s => s.id === segmentId);
         if (seg) {
             // Transition mt_draft to translated when user focuses (indicates review)
@@ -215,7 +220,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
             }
 
             let analyzedSeg = seg;
-            if (!seg.context_matches || seg.context_matches.length === 0) {
+            if (!isRefocus && (!seg.context_matches || seg.context_matches.length === 0)) {
                 const updatedFields = await analyzeSegment(seg, 'analyze');
                 analyzedSeg = { ...seg, ...updatedFields };
             }

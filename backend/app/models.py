@@ -183,11 +183,16 @@ class GlossaryEntry(Base):
     source_lemma = Column(String, index=True, nullable=False) # e.g. "final report" (SpaCy computed)
     
     context_note = Column(String, nullable=True) # e.g. "Bengo/BMZ specific"
-    
+
+    # Auto-glossary fields
+    origin = Column(String, default="manual", index=True)  # "manual" or "auto"
+    segment_id = Column(String, ForeignKey("segments.id", ondelete="CASCADE"), nullable=True, index=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationship
+    # Relationships
     project = relationship("Project")
+    segment = relationship("Segment", foreign_keys=[segment_id])
 
 class AiUsageLog(Base):
     __tablename__ = "ai_usage_logs"
