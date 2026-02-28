@@ -46,6 +46,24 @@
             "output_cost_per_m": 2.5
         },
         {
+            "id": "claude-opus-4-6",
+            "name": "Claude Opus 4.6",
+            "provider": "anthropic",
+            "usage": "mt",
+            "context_window": 200000,
+            "input_cost_per_m": 15.0,
+            "output_cost_per_m": 75.0
+        },
+        {
+            "id": "claude-sonnet-4-6",
+            "name": "Claude Sonnet 4.6",
+            "provider": "anthropic",
+            "usage": "mt",
+            "context_window": 200000,
+            "input_cost_per_m": 3.0,
+            "output_cost_per_m": 15.0
+        },
+        {
             "id": "voyage-3-large",
             "name": "Voyage 3 Large (Embedding)",
             "provider": "voyage",

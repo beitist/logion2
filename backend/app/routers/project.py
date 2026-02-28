@@ -204,6 +204,9 @@ async def sequential_translate(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    if project.rag_status == "processing":
+        raise HTTPException(status_code=409, detail="A workflow is already running for this project")
+
     from ..workflows.sequential_translate import run_background_sequential_translate
     background_tasks.add_task(run_background_sequential_translate, project_id)
     return {"status": "started", "message": "Sequential translation started in background"}

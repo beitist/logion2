@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getGlossaryTerms, addGlossaryTerm, updateGlossaryTerm, deleteGlossaryTerm, uploadGlossary } from '../../api/client';
-import { BookOpen, Plus, Upload, Download, Search, Pencil, Trash2, Check, X } from 'lucide-react';
+import { BookOpen, Plus, Upload, Download, Search, Pencil, Trash2, Check, X, Bot } from 'lucide-react';
 import { SettingsCard, SettingsSection } from './shared';
 
 /**
@@ -251,6 +251,7 @@ export function GlossarySettingsTab({ project }) {
                             <th className="px-4 py-3 border-b border-gray-100">Source Term</th>
                             <th className="px-4 py-3 border-b border-gray-100">Target Term</th>
                             <th className="px-4 py-3 border-b border-gray-100">Note</th>
+                            <th className="px-4 py-3 border-b border-gray-100 w-16 text-center">Origin</th>
                             <th className="px-4 py-3 border-b border-gray-100 w-20"></th>
                         </tr>
                     </thead>
@@ -284,6 +285,9 @@ export function GlossarySettingsTab({ project }) {
                                             placeholder="optional"
                                         />
                                     </td>
+                                    <td className="px-4 py-2 text-center">
+                                        {t.origin === 'auto' && <Bot size={14} className="inline text-emerald-500" />}
+                                    </td>
                                     <td className="px-4 py-2">
                                         <div className="flex items-center gap-1">
                                             <button
@@ -311,6 +315,12 @@ export function GlossarySettingsTab({ project }) {
                                     </td>
                                     <td className="px-4 py-3 text-gray-700">{t.target}</td>
                                     <td className="px-4 py-3 text-gray-500 italic text-xs">{t.note}</td>
+                                    <td className="px-4 py-3 text-center">
+                                        {t.origin === 'auto'
+                                            ? <Bot size={14} className="inline text-emerald-500" title="Auto-extracted" />
+                                            : <span className="text-[10px] text-gray-400">manual</span>
+                                        }
+                                    </td>
                                     <td className="px-4 py-3">
                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button
@@ -334,7 +344,7 @@ export function GlossarySettingsTab({ project }) {
                         ))}
                         {!loading && filteredTerms.length === 0 && (
                             <tr>
-                                <td colSpan="4" className="px-4 py-12 text-center text-gray-400 italic">
+                                <td colSpan="5" className="px-4 py-12 text-center text-gray-400 italic">
                                     {searchQuery ? 'No matching terms found' : 'No terms yet. Add your first term above.'}
                                 </td>
                             </tr>

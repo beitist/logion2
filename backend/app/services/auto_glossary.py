@@ -5,10 +5,11 @@ import asyncio
 import logging
 import os
 import google.generativeai as genai
+import anthropic
 from sqlalchemy.orm import Session
 from ..models import GlossaryEntry
 from ..glossary_service import get_nlp
-from ..config import get_default_model_id
+from ..config import get_default_model_id, get_ai_models_config
 
 logger = logging.getLogger("AutoGlossary")
 
@@ -125,6 +126,14 @@ class AutoGlossaryService:
             self.db.commit()
             logger.info(f"Auto-glossary: Deleted {deleted} old entries for segment {segment_id}")
 
+    def _get_provider(self, model_name: str) -> str:
+        """Looks up the provider for a model ID from ai_models.json."""
+        config = get_ai_models_config()
+        for m in config.get("models", []):
+            if m["id"] == model_name:
+                return m.get("provider", "google")
+        return "google"
+
     async def _extract_terms_via_ai(
         self,
         source_text: str,
@@ -135,7 +144,7 @@ class AutoGlossaryService:
         model_name: str = None,
     ) -> list[dict]:
         """
-        Calls Gemini to extract glossary-worthy term pairs.
+        Calls the configured AI model to extract glossary-worthy term pairs.
         Returns: [{"source": "...", "target": "..."}, ...]
         """
         if not model_name:
@@ -160,18 +169,12 @@ Rules:
 Output ONLY the JSON array, no explanation."""
 
         try:
-            gm = genai.GenerativeModel(model_name)
-            config = genai.GenerationConfig(temperature=0.1)
+            provider = self._get_provider(model_name)
 
-            if hasattr(gm, "generate_content_async"):
-                res = await gm.generate_content_async(prompt, generation_config=config)
+            if provider == "anthropic":
+                text = await self._call_claude(prompt, model_name)
             else:
-                loop = asyncio.get_event_loop()
-                res = await loop.run_in_executor(
-                    None, lambda: gm.generate_content(prompt, generation_config=config)
-                )
-
-            text = res.text.strip()
+                text = await self._call_gemini(prompt, model_name)
 
             # Parse JSON robustly
             match = re.search(r"\[.*\]", text, re.DOTALL)
@@ -185,3 +188,30 @@ Output ONLY the JSON array, no explanation."""
         except Exception as e:
             logger.error(f"Auto-glossary extraction failed: {e}")
             return []
+
+    async def _call_gemini(self, prompt: str, model_name: str) -> str:
+        gm = genai.GenerativeModel(model_name)
+        config = genai.GenerationConfig(temperature=0.1)
+
+        if hasattr(gm, "generate_content_async"):
+            res = await gm.generate_content_async(prompt, generation_config=config)
+        else:
+            loop = asyncio.get_event_loop()
+            res = await loop.run_in_executor(
+                None, lambda: gm.generate_content(prompt, generation_config=config)
+            )
+        return res.text.strip()
+
+    async def _call_claude(self, prompt: str, model_name: str) -> str:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY not set")
+
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        res = await client.messages.create(
+            model=model_name,
+            max_tokens=2048,
+            temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return res.content[0].text.strip()

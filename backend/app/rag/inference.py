@@ -3,12 +3,26 @@ import re
 import os
 import asyncio
 import google.generativeai as genai
+import anthropic
 from typing import Dict, Optional, List
 
 from .types import SegmentContext, GenerationResult
-from ..config import get_default_model_id
+from ..config import get_default_model_id, get_ai_models_config
 
 logger = logging.getLogger("RAG.Inference")
+
+# Cache provider lookup to avoid re-reading JSON on every call
+_provider_cache: Dict[str, str] = {}
+
+def _get_provider(model_name: str) -> str:
+    """Looks up the provider for a model ID from ai_models.json."""
+    if model_name in _provider_cache:
+        return _provider_cache[model_name]
+    config = get_ai_models_config()
+    for m in config.get("models", []):
+        _provider_cache[m["id"]] = m.get("provider", "google")
+    return _provider_cache.get(model_name, "google")
+
 
 class InferenceOrchestrator:
     def __init__(self, api_key: str = None):
@@ -17,6 +31,9 @@ class InferenceOrchestrator:
             logger.warning("GOOGLE_API_KEY not set for InferenceOrchestrator")
         else:
             genai.configure(api_key=self.api_key)
+
+        self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        self._anthropic_client = None
             
     async def generate_draft(
         self, 
@@ -139,7 +156,7 @@ Rules:
         prompt = f"{system_instruction}\n\nInput Data:\n{json.dumps(input_data, indent=2)}\n\nOutput JSON:"
         
         try:
-            response_text, usage = await self._call_gemini(prompt, model_name, temperature=0.2)
+            response_text, usage = await self._call_llm(prompt, model_name, temperature=0.2)
             
             # Robust JSON extraction
             import re
@@ -187,7 +204,7 @@ Rules:
         # We use a simplified context injection for Pass 1
         prompt_content = self._build_prompt_content(system_instruction, source, ctx)
         
-        return await self._call_gemini(prompt_content, model, temperature=0.2)
+        return await self._call_llm(prompt_content, model, temperature=0.2)
 
     async def _generate_pass_2_tags(self, original_source: str, plain_translation: str, model: str, custom_prompt: str):
         """Pass 2: Inject Tags into Translation"""
@@ -203,7 +220,7 @@ Rules:
         if custom_prompt:
              msg += f"\n\nConstraint: {custom_prompt}"
 
-        return await self._call_gemini(msg, model, temperature=0.1)
+        return await self._call_llm(msg, model, temperature=0.1)
 
     async def _generate_standard(self, source: str, s_lang: str, t_lang: str, ctx: SegmentContext, model: str, prompt: str):
         """Standard 1-Pass Translation"""
@@ -215,7 +232,7 @@ Rules:
             
         prompt_content = self._build_prompt_content(system_instruction, source, ctx)
         
-        return await self._call_gemini(prompt_content, model, temperature=0.3)
+        return await self._call_llm(prompt_content, model, temperature=0.3)
 
     def _build_prompt_content(self, system_instr, source, ctx: SegmentContext) -> str:
         out = system_instruction = system_instr
@@ -250,6 +267,14 @@ Rules:
              
         return out
 
+    async def _call_llm(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3) -> (str, Dict):
+        """Dispatch to the correct provider based on model ID."""
+        provider = _get_provider(model_name)
+        if provider == "anthropic":
+            return await self._call_claude(prompt, model_name, temperature, max_retries)
+        else:
+            return await self._call_gemini(prompt, model_name, temperature, max_retries)
+
     async def _call_gemini(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3) -> (str, Dict):
         gm = genai.GenerativeModel(model_name)
         config = genai.GenerationConfig(temperature=temperature)
@@ -274,6 +299,39 @@ Rules:
                 if is_transient and attempt < max_retries - 1:
                     wait = (attempt + 1) * 3  # 3s, 6s, 9s
                     logger.warning(f"Gemini transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                else:
+                    raise e
+
+    async def _call_claude(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3) -> (str, Dict):
+        if not self.anthropic_key:
+            raise ValueError("ANTHROPIC_API_KEY not set")
+
+        if not self._anthropic_client:
+            self._anthropic_client = anthropic.AsyncAnthropic(api_key=self.anthropic_key)
+
+        for attempt in range(max_retries):
+            try:
+                res = await self._anthropic_client.messages.create(
+                    model=model_name,
+                    max_tokens=8192,
+                    temperature=temperature,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                txt = res.content[0].text.strip()
+                usage = {
+                    "input_tokens": res.usage.input_tokens,
+                    "output_tokens": res.usage.output_tokens,
+                }
+                return txt, usage
+
+            except Exception as e:
+                err_str = str(e)
+                is_transient = any(code in err_str for code in ["500", "503", "529", "429", "overloaded"])
+                if is_transient and attempt < max_retries - 1:
+                    wait = (attempt + 1) * 3
+                    logger.warning(f"Claude transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
                     await asyncio.sleep(wait)
                 else:
                     raise e
