@@ -197,7 +197,7 @@ class SequentialTranslateRequest(BaseModel):
 async def sequential_translate(
     project_id: str,
     background_tasks: BackgroundTasks,
-    payload: SequentialTranslateRequest = SequentialTranslateRequest(),
+    payload: SequentialTranslateRequest,
     db: Session = Depends(get_db)
 ):
     """

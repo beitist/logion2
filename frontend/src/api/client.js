@@ -174,11 +174,10 @@ export async function tcBatchTranslate(projectId) {
 }
 
 export async function sequentialTranslate(projectId, segmentIds = null) {
-    const body = segmentIds ? { segment_ids: segmentIds } : {};
     const res = await fetch(`${API_BASE}/project/${projectId}/sequential-translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ segment_ids: segmentIds }),
     });
     if (!res.ok) throw new Error("Sequential translation failed");
     return res.json();
