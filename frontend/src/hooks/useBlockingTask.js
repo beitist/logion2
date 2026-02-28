@@ -266,6 +266,9 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
                 // Call Batch API (triggers async background processing)
                 await batchTranslate(projectId, batchIds, mode);
 
+                // Refresh project state so WorkflowIndicator picks up 'processing'
+                if (i === 0 && onRefresh) onRefresh();
+
                 // Poll for backend completion before moving to next batch
                 // The backend updates rag_progress as it processes each segment
                 let pollAttempts = 0;
@@ -359,6 +362,9 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
             // Trigger backend TC batch (processes all TC segments at once)
             await tcBatchTranslate(projectId);
 
+            // Refresh project state so WorkflowIndicator picks up 'processing' immediately
+            if (onRefresh) onRefresh();
+
             // Poll for backend completion
             let pollAttempts = 0;
             const maxPollAttempts = 600; // Up to 10 minutes
@@ -450,6 +456,9 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
             // Trigger backend sequential workflow (send segment_ids when file-filtered)
             const segmentIds = activeFileIdRef.current ? emptySegments.map(s => s.id) : null;
             await sequentialTranslate(projectId, segmentIds);
+
+            // Refresh project state so WorkflowIndicator picks up 'processing' immediately
+            if (onRefresh) onRefresh();
 
             // Poll for backend completion (longer timeout — 1 segment at a time)
             let pollAttempts = 0;

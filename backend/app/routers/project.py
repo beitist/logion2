@@ -212,6 +212,12 @@ async def sequential_translate(
     if project.rag_status == "processing":
         raise HTTPException(status_code=409, detail="A workflow is already running for this project")
 
+    # Set status BEFORE starting background task so frontend sees it immediately
+    project.rag_status = "processing"
+    project.rag_progress = 0
+    project.ingestion_logs = []
+    db.commit()
+
     from ..workflows.sequential_translate import run_background_sequential_translate
     background_tasks.add_task(run_background_sequential_translate, project_id, payload.segment_ids)
     return {"status": "started", "message": "Sequential translation started in background"}
