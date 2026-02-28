@@ -57,7 +57,7 @@ class BatchTranslateWorkflow(BaseWorkflow):
             # Batch Processing - Group by CONTIGUOUS segments first
             # This ensures isolated segments (e.g., segment 11 surrounded by translated segments)
             # get their own batch with proper context, rather than being mixed with distant segments.
-            BATCH_SIZE = 10
+            BATCH_SIZE = 5
             success_count = 0
             
             # Group segments into contiguous runs based on index

@@ -250,28 +250,30 @@ Rules:
              
         return out
 
-    async def _call_gemini(self, prompt: str, model_name: str, temperature: float) -> (str, Dict):
-        # Async wrapper for Google GenAI
-        # Note: genai.GenerativeModel is sync instantiation, generate_content is the call.
-        # Check if generate_content_async exists
-        
+    async def _call_gemini(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3) -> (str, Dict):
         gm = genai.GenerativeModel(model_name)
         config = genai.GenerationConfig(temperature=temperature)
-        
-        try:
-            if hasattr(gm, 'generate_content_async'):
-                res = await gm.generate_content_async(prompt, generation_config=config)
-            else:
-                # Fallback to sync in thread
-                loop = asyncio.get_event_loop()
-                res = await loop.run_in_executor(None, lambda: gm.generate_content(prompt, generation_config=config))
-                
-            txt = res.text.strip()
-            usage = {"input_tokens": 0, "output_tokens": 0}
-            if res.usage_metadata:
-                 usage["input_tokens"] = res.usage_metadata.prompt_token_count
-                 usage["output_tokens"] = res.usage_metadata.candidates_token_count
-            return txt, usage
-            
-        except Exception as e:
-            raise e
+
+        for attempt in range(max_retries):
+            try:
+                if hasattr(gm, 'generate_content_async'):
+                    res = await gm.generate_content_async(prompt, generation_config=config)
+                else:
+                    loop = asyncio.get_event_loop()
+                    res = await loop.run_in_executor(None, lambda: gm.generate_content(prompt, generation_config=config))
+
+                txt = res.text.strip()
+                usage = {"input_tokens": 0, "output_tokens": 0}
+                if res.usage_metadata:
+                     usage["input_tokens"] = res.usage_metadata.prompt_token_count
+                     usage["output_tokens"] = res.usage_metadata.candidates_token_count
+                return txt, usage
+
+            except Exception as e:
+                is_transient = any(code in str(e) for code in ["500", "503", "504", "429", "DEADLINE", "overloaded"])
+                if is_transient and attempt < max_retries - 1:
+                    wait = (attempt + 1) * 3  # 3s, 6s, 9s
+                    logger.warning(f"Gemini transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                else:
+                    raise e

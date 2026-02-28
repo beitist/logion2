@@ -241,6 +241,11 @@ class ExportWorkflow(BaseWorkflow):
             return tc_store[idx] if idx < len(tc_store) else ''
         cleaned_html = re.sub(r'__TC_(\d+)__', _restore_tc, cleaned_html)
 
+        # Unescape HTML entities that BS4 decode_contents() produces.
+        # Only targeted entities — full html.unescape() would break <1> tag parsing.
+        cleaned_html = cleaned_html.replace('&amp;', '&')
+        cleaned_html = cleaned_html.replace('&nbsp;', ' ')
+
         return cleaned_html
 
     def _generate_tmx_content(self, source_lang, target_lang, segments):
