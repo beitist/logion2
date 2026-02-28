@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered, CircleStop } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
-import { copySourceToTarget, clearDraftTargets } from '../../api/client';
+import { copySourceToTarget, clearDraftTargets, resetWorkflowStatus } from '../../api/client';
 import { SettingsCard, SettingsSection } from './shared';
 
 /**
@@ -53,6 +53,7 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
     };
 
     const [clearLoading, setClearLoading] = useState(false);
+    const [resetLoading, setResetLoading] = useState(false);
 
     const handleClearDrafts = async () => {
         if (!project) return;
@@ -66,6 +67,21 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
             alert("Failed to clear drafts: " + err.message);
         } finally {
             setClearLoading(false);
+        }
+    };
+
+    const handleResetWorkflow = async () => {
+        if (!project) return;
+        if (!confirm("Reset workflow status? Use this if a workflow is stuck in 'processing'.")) return;
+
+        try {
+            setResetLoading(true);
+            await resetWorkflowStatus(project.id);
+            if (onRefresh) onRefresh();
+        } catch (err) {
+            alert("Failed to reset: " + err.message);
+        } finally {
+            setResetLoading(false);
         }
     };
 
@@ -191,11 +207,11 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                         description="Reset and reprocessing options"
                         accentColor="text-gray-500"
                     >
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <button
                                 onClick={() => setIsReinitModalOpen(true)}
-                                className="flex items-center justify-center gap-2 px-4 py-2.5 
-                                           bg-gray-50 border border-gray-200 text-gray-700 
+                                className="flex items-center justify-center gap-2 px-4 py-2.5
+                                           bg-gray-50 border border-gray-200 text-gray-700
                                            rounded-xl text-xs font-medium hover:bg-gray-100 transition-colors"
                             >
                                 <RefreshCw size={14} />
@@ -204,8 +220,8 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
 
                             <button
                                 onClick={onReingest}
-                                className="flex items-center justify-center gap-2 px-4 py-2.5 
-                                           bg-gray-50 border border-gray-200 text-gray-700 
+                                className="flex items-center justify-center gap-2 px-4 py-2.5
+                                           bg-gray-50 border border-gray-200 text-gray-700
                                            rounded-xl text-xs font-medium hover:bg-gray-100 transition-colors"
                             >
                                 <Database size={14} />
@@ -215,13 +231,25 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
                             <button
                                 onClick={handleClearDrafts}
                                 disabled={clearLoading}
-                                className="flex items-center justify-center gap-2 px-4 py-2.5 
-                                           bg-red-50 border border-red-200 text-red-700 
+                                className="flex items-center justify-center gap-2 px-4 py-2.5
+                                           bg-red-50 border border-red-200 text-red-700
                                            rounded-xl text-xs font-medium hover:bg-red-100 transition-colors
                                            disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <Trash2 size={14} />
                                 {clearLoading ? "Clearing..." : "Clear Draft Targets"}
+                            </button>
+
+                            <button
+                                onClick={handleResetWorkflow}
+                                disabled={resetLoading}
+                                className="flex items-center justify-center gap-2 px-4 py-2.5
+                                           bg-amber-50 border border-amber-200 text-amber-700
+                                           rounded-xl text-xs font-medium hover:bg-amber-100 transition-colors
+                                           disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <CircleStop size={14} />
+                                {resetLoading ? "Resetting..." : "Reset Stuck Workflow"}
                             </button>
                         </div>
                     </SettingsSection>

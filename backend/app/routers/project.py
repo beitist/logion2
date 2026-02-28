@@ -216,6 +216,20 @@ async def sequential_translate(
     background_tasks.add_task(run_background_sequential_translate, project_id, payload.segment_ids)
     return {"status": "started", "message": "Sequential translation started in background"}
 
+@router.post("/{project_id}/reset-workflow-status")
+async def reset_workflow_status(project_id: str, db: Session = Depends(get_db)):
+    """
+    Resets a stuck workflow status back to 'ready'.
+    Use when a workflow crashes and leaves the project in 'processing' state.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.rag_status = "ready"
+    project.rag_progress = 100
+    db.commit()
+    return {"status": "reset", "message": "Workflow status reset to ready"}
+
 @router.post("/{project_id}/batch-translate")
 async def batch_translate(
     project_id: str,

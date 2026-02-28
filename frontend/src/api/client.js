@@ -183,6 +183,14 @@ export async function sequentialTranslate(projectId, segmentIds = null) {
     return res.json();
 }
 
+export async function resetWorkflowStatus(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/reset-workflow-status`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to reset workflow status");
+    return res.json();
+}
+
 // Glossary API
 
 export async function addGlossaryTerm(projectId, source, target, note) {
