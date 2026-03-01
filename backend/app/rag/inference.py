@@ -497,3 +497,92 @@ Rules:
                     await asyncio.sleep(wait)
                 else:
                     raise e
+
+    # ── Multi-turn Chat Methods ──────────────────────────────────────
+
+    async def call_chat(self, system_prompt: str, messages: list, model_name: str, temperature: float = 0.4) -> (str, Dict):
+        """Dispatch multi-turn chat to the correct provider."""
+        if not model_name:
+            model_name = get_default_model_id()
+        provider = _get_provider(model_name)
+        logger.info(f"Chat dispatch: model={model_name}, provider={provider}")
+        if provider == "anthropic":
+            return await self._call_claude_chat(system_prompt, messages, model_name, temperature)
+        else:
+            return await self._call_gemini_chat(system_prompt, messages, model_name, temperature)
+
+    async def _call_gemini_chat(self, system_prompt: str, messages: list, model_name: str, temperature: float, max_retries: int = 2) -> (str, Dict):
+        gm = genai.GenerativeModel(model_name, system_instruction=system_prompt)
+        config = genai.GenerationConfig(temperature=temperature)
+
+        gemini_history = [
+            {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
+            for m in messages[:-1]
+        ]
+        last_msg = messages[-1]["content"]
+        chat = gm.start_chat(history=gemini_history)
+
+        for attempt in range(max_retries):
+            try:
+                if hasattr(chat, 'send_message_async'):
+                    res = await chat.send_message_async(last_msg, generation_config=config)
+                else:
+                    loop = asyncio.get_event_loop()
+                    res = await loop.run_in_executor(None, lambda: chat.send_message(last_msg, generation_config=config))
+
+                txt = res.text.strip()
+                usage = {"input_tokens": 0, "output_tokens": 0}
+                if res.usage_metadata:
+                    usage["input_tokens"] = res.usage_metadata.prompt_token_count
+                    usage["output_tokens"] = res.usage_metadata.candidates_token_count
+                return txt, usage
+
+            except Exception as e:
+                err_str = str(e)
+                if _is_quota_exceeded(err_str):
+                    logger.error(f"Gemini chat quota exceeded: {e}")
+                    raise QuotaExceededError(f"API quota exceeded: {e}")
+                is_transient = any(code in err_str for code in ["500", "503", "504", "429", "DEADLINE", "overloaded"])
+                if is_transient and attempt < max_retries - 1:
+                    wait = (attempt + 1) * 3
+                    logger.warning(f"Gemini chat transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                else:
+                    raise e
+
+    async def _call_claude_chat(self, system_prompt: str, messages: list, model_name: str, temperature: float, max_retries: int = 2) -> (str, Dict):
+        if not self.anthropic_key:
+            raise ValueError("ANTHROPIC_API_KEY not set")
+        if not self._anthropic_client:
+            self._anthropic_client = anthropic.AsyncAnthropic(api_key=self.anthropic_key)
+
+        claude_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
+
+        for attempt in range(max_retries):
+            try:
+                res = await self._anthropic_client.messages.create(
+                    model=model_name,
+                    max_tokens=4096,
+                    temperature=temperature,
+                    system=system_prompt,
+                    messages=claude_messages,
+                )
+                txt = res.content[0].text.strip()
+                usage = {
+                    "input_tokens": res.usage.input_tokens,
+                    "output_tokens": res.usage.output_tokens,
+                }
+                return txt, usage
+
+            except Exception as e:
+                err_str = str(e)
+                if _is_quota_exceeded(err_str):
+                    logger.error(f"Claude chat quota exceeded: {e}")
+                    raise QuotaExceededError(f"API quota exceeded: {e}")
+                is_transient = any(code in err_str for code in ["500", "503", "529", "429", "overloaded"])
+                if is_transient and attempt < max_retries - 1:
+                    wait = (attempt + 1) * 3
+                    logger.warning(f"Claude chat transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                else:
+                    raise e

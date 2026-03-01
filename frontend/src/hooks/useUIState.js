@@ -10,6 +10,7 @@ export function useUIState(projectId) {
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showConsole, setShowConsole] = useState(false);
     const [showDebug, setShowDebug] = useState(false);
+    const [showChat, setShowChat] = useState(false);
 
     // Multi-File Filter: null = all files, otherwise file_id
     const [activeFileId, setActiveFileId] = useState(null);
@@ -64,6 +65,7 @@ export function useUIState(projectId) {
         showExportMenu, setShowExportMenu,
         showConsole, setShowConsole,
         showDebug, setShowDebug,
+        showChat, setShowChat,
         activeFileId, setActiveFileId,  // Multi-File Filter
         commentFilter, setCommentFilter,  // Comment Filter
         showGlossaryModal, setShowGlossaryModal,

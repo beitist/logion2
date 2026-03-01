@@ -313,3 +313,17 @@ export async function deleteProjectFile(projectId, fileId) {
     return res.json();
 }
 
+// Segment Chat
+export async function sendSegmentChat(projectId, segmentId, messages) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/segment/${segmentId}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages }),
+    });
+    if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Chat failed: ${res.status} - ${errorText}`);
+    }
+    return res.json();
+}
+

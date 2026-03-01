@@ -25,6 +25,9 @@ export function ShortcutsPanel({ onClose }) {
         // Formatting
         { keys: ["Tab"], desc: "Insert Tab Character", category: "Formatting" },
         { keys: ["⌘", "Ctrl", "Alt", "Space"], desc: "Insert NBSP", category: "Formatting" },
+
+        // UI
+        { keys: ["⌘/Ctrl", "Shift", "/"], desc: "Toggle Chat Panel", category: "UI" },
     ];
 
     return (

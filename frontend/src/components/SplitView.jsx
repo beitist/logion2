@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Terminal, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows } from 'lucide-react';
+import { Terminal, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows, MessageSquare } from 'lucide-react';
 import './TiptapStyles.css';
 
 import { RAGSettingsTab } from './settings/RAGSettingsTab';
@@ -16,8 +16,10 @@ import { LogConsole } from './LogConsole';
 import { ShortcutsPanel } from './ShortcutsPanel';
 import { BlockingModal } from './BlockingModal';
 import { WorkflowIndicator } from './WorkflowIndicator';
+import { ChatPanel } from './ChatPanel';
 
 import { useProjectWorkspace } from '../hooks/useProjectWorkspace';
+import { useSegmentChat } from '../hooks/useSegmentChat';
 import { SegmentRow } from './segment';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
@@ -32,6 +34,7 @@ export function SplitView({ projectId, onBack }) {
         showExportMenu, setShowExportMenu,
         showConsole, setShowConsole,
         showDebug, setShowDebug,
+        showChat, setShowChat,
         activeFileId, setActiveFileId,  // Multi-File Filter
         commentFilter, setCommentFilter,  // Comment Filter
         showGlossaryModal, setShowGlossaryModal,
@@ -68,6 +71,8 @@ export function SplitView({ projectId, onBack }) {
         refreshProject,
         setProject // Destructure setProject to allow updates
     } = useProjectWorkspace(projectId);
+
+    const chat = useSegmentChat(projectId);
 
     // Virtualization ref for scrollable container
     const parentRef = useRef(null);
@@ -108,6 +113,18 @@ export function SplitView({ projectId, onBack }) {
             rowVirtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
         }
     }, [activeSegmentId, filteredSegments, rowVirtualizer]);
+
+    // Global keyboard shortcut: Cmd+Shift+/ to toggle chat panel
+    useEffect(() => {
+        const handler = (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '/') {
+                e.preventDefault();
+                setShowChat(prev => !prev);
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, []);
 
     // Early return for loading state - AFTER all hooks
     if (loading) return <div className="p-8 text-center text-gray-500 animate-pulse">Loading Workspace...</div>;
@@ -217,6 +234,15 @@ export function SplitView({ projectId, onBack }) {
                         <Keyboard size={18} />
                     </button>
 
+                    {/* Chat Toggle */}
+                    <button
+                        onClick={() => setShowChat(!showChat)}
+                        className={`p-2 rounded-lg transition-colors ${showChat ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-gray-200 text-gray-600'}`}
+                        title="Chat with Segment (⌘⇧/)"
+                    >
+                        <MessageSquare size={18} />
+                    </button>
+
                     {/* Workflow Indicator */}
                     <WorkflowIndicator
                         project={project}
@@ -268,86 +294,102 @@ export function SplitView({ projectId, onBack }) {
                 <ShortcutsPanel onClose={() => setShowShortcuts(false)} />
             </div>
 
-            {/* Main Workspace - Virtualized */}
-            <main
-                ref={parentRef}
-                className="flex-1 overflow-auto bg-gray-50/50 p-4"
-            >
-                <div
-                    className="max-w-7xl mx-auto pb-24"
-                    style={{
-                        height: `${rowVirtualizer.getTotalSize()}px`,
-                        width: '100%',
-                        position: 'relative',
-                    }}
+            {/* Main Workspace + Chat Panel */}
+            <div className="flex-1 flex overflow-hidden">
+                <main
+                    ref={parentRef}
+                    className="flex-1 overflow-auto bg-gray-50/50 p-4"
                 >
-                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                        const seg = filteredSegments[virtualRow.index];
-                        const idx = virtualRow.index;
+                    <div
+                        className="max-w-7xl mx-auto pb-24"
+                        style={{
+                            height: `${rowVirtualizer.getTotalSize()}px`,
+                            width: '100%',
+                            position: 'relative',
+                        }}
+                    >
+                        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                            const seg = filteredSegments[virtualRow.index];
+                            const idx = virtualRow.index;
 
-                        // Check if we need a file separator (when showing all files)
-                        const prevSeg = idx > 0 ? filteredSegments[idx - 1] : null;
-                        const showFileSeparator = !activeFileId && sourceFiles.length > 1 &&
-                            prevSeg && seg.file_id !== prevSeg.file_id;
-                        const currentFile = sourceFiles.find(f => f.id === seg.file_id);
+                            // Check if we need a file separator (when showing all files)
+                            const prevSeg = idx > 0 ? filteredSegments[idx - 1] : null;
+                            const showFileSeparator = !activeFileId && sourceFiles.length > 1 &&
+                                prevSeg && seg.file_id !== prevSeg.file_id;
+                            const currentFile = sourceFiles.find(f => f.id === seg.file_id);
 
-                        return (
-                            <div
-                                key={seg.id}
-                                style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    width: '100%',
-                                    transform: `translateY(${virtualRow.start}px)`,
-                                }}
-                                ref={rowVirtualizer.measureElement}
-                                data-index={virtualRow.index}
-                            >
-                                {/* File Separator with filename */}
-                                {showFileSeparator && (
-                                    <div className="flex items-center gap-3 py-2 my-2">
-                                        <div className="flex-1 h-px bg-gray-300" />
-                                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            {currentFile?.filename || 'Unknown File'}
-                                        </span>
-                                        <div className="flex-1 h-px bg-gray-300" />
-                                    </div>
-                                )}
-                                {/* First file header (only in all-files view) */}
-                                {!activeFileId && sourceFiles.length > 1 && idx === 0 && (
-                                    <div className="flex items-center gap-3 py-2 mb-2">
-                                        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            {currentFile?.filename || 'Unknown File'}
-                                        </span>
-                                        <div className="flex-1 h-px bg-gray-300" />
-                                    </div>
-                                )}
-                                <SegmentRow
-                                    segment={seg}
-                                    project={project}
-                                    generatingSegments={generatingSegments}
-                                    flashingSegments={flashingSegments}
-                                    showDebug={showDebug}
-                                    onAiDraft={handleAiDraft}
-                                    onToggleFlag={handleToggleFlag}
-                                    onSave={handleSave}
-                                    onFocus={handleSegmentFocus}
-                                    onNavigate={handleNavigation}
-                                    onContextMenu={handleContextMenu}
-                                    registerEditor={(id, ed) => editorRefs.current[id] = ed}
-                                />
+                            return (
+                                <div
+                                    key={seg.id}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        transform: `translateY(${virtualRow.start}px)`,
+                                    }}
+                                    ref={rowVirtualizer.measureElement}
+                                    data-index={virtualRow.index}
+                                >
+                                    {/* File Separator with filename */}
+                                    {showFileSeparator && (
+                                        <div className="flex items-center gap-3 py-2 my-2">
+                                            <div className="flex-1 h-px bg-gray-300" />
+                                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                {currentFile?.filename || 'Unknown File'}
+                                            </span>
+                                            <div className="flex-1 h-px bg-gray-300" />
+                                        </div>
+                                    )}
+                                    {/* First file header (only in all-files view) */}
+                                    {!activeFileId && sourceFiles.length > 1 && idx === 0 && (
+                                        <div className="flex items-center gap-3 py-2 mb-2">
+                                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                {currentFile?.filename || 'Unknown File'}
+                                            </span>
+                                            <div className="flex-1 h-px bg-gray-300" />
+                                        </div>
+                                    )}
+                                    <SegmentRow
+                                        segment={seg}
+                                        project={project}
+                                        generatingSegments={generatingSegments}
+                                        flashingSegments={flashingSegments}
+                                        showDebug={showDebug}
+                                        onAiDraft={handleAiDraft}
+                                        onToggleFlag={handleToggleFlag}
+                                        onSave={handleSave}
+                                        onFocus={handleSegmentFocus}
+                                        onNavigate={handleNavigation}
+                                        onContextMenu={handleContextMenu}
+                                        registerEditor={(id, ed) => editorRefs.current[id] = ed}
+                                    />
+                                </div>
+                            );
+                        })}
+
+                        {filteredSegments.length === 0 && !loading && (
+                            <div className="text-center py-20 text-gray-400">
+                                No segments found.
                             </div>
-                        );
-                    })}
+                        )}
+                    </div>
+                </main>
 
-                    {filteredSegments.length === 0 && !loading && (
-                        <div className="text-center py-20 text-gray-400">
-                            No segments found.
-                        </div>
-                    )}
-                </div>
-            </main>
+                {/* Chat Panel - Right Sidebar */}
+                {showChat && (
+                    <div className="w-80 border-l border-gray-200 flex-shrink-0 overflow-hidden">
+                        <ChatPanel
+                            segment={segments.find(s => s.id === activeSegmentId)}
+                            messages={chat.getMessages(activeSegmentId)}
+                            isLoading={chat.isLoading}
+                            onSendMessage={chat.sendMessage}
+                            onClearChat={chat.clearChat}
+                            onClose={() => setShowChat(false)}
+                        />
+                    </div>
+                )}
+            </div>
 
             {/* Log Console Layer */}
             {showConsole && (

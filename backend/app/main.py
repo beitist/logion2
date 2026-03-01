@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import project, translate, segment, glossary
+from .routers import project, translate, segment, glossary, chat
 from .database import engine, Base
 from .logger import main_logger, correlation_id_ctx
 import uuid
@@ -107,6 +107,7 @@ app.include_router(project.router)
 app.include_router(translate.router)
 app.include_router(segment.router)
 app.include_router(glossary.router)
+app.include_router(chat.router)
 
 @app.get("/")
 def read_root():

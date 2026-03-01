@@ -1,0 +1,127 @@
+import logging
+from pydantic import BaseModel
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..models import Segment, Project, AiUsageLog
+from ..rag.inference import InferenceOrchestrator
+from ..config import get_default_model_id
+
+logger = logging.getLogger("ChatRouter")
+router = APIRouter(prefix="/project", tags=["chat"])
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    usage: dict
+
+
+def _build_chat_system_prompt(segment: Segment, project: Project, custom_prompt: str) -> str:
+    source_lang = project.source_lang or "en"
+    target_lang = project.target_lang or "de"
+
+    prompt = f"""You are a professional translation assistant for {source_lang} to {target_lang} translation.
+You are helping a translator with a specific segment. Answer questions, suggest alternatives, explain terminology, or adjust style as requested.
+
+## Current Segment
+Source ({source_lang}): {segment.source_content}
+"""
+
+    if segment.target_content:
+        prompt += f"Current Translation ({target_lang}): {segment.target_content}\n"
+    else:
+        prompt += f"Current Translation ({target_lang}): (not yet translated)\n"
+
+    # Include pre-computed context from metadata_json
+    meta = segment.metadata_json or {}
+    context_matches = meta.get("context_matches", [])
+
+    # TM matches (exclude mt and glossary types)
+    tm_hits = [m for m in context_matches if m.get("type") not in ("mt", "glossary")]
+    if tm_hits:
+        prompt += "\n## Reference Translations (Translation Memory)\n"
+        for hit in tm_hits[:3]:
+            src = hit.get("source_text", "")
+            tgt = hit.get("content", "")
+            score = hit.get("score", 0)
+            prompt += f"- Source: {src}\n  Target: {tgt} (Match: {score}%)\n"
+
+    # Glossary
+    glossary_hits = [m for m in context_matches if m.get("type") == "glossary"]
+    if glossary_hits:
+        prompt += "\n## Glossary Terms (mandatory)\n"
+        for g in glossary_hits:
+            prompt += f"- {g.get('source_text', '')} -> {g.get('content', '')}"
+            if g.get("note"):
+                prompt += f" ({g['note']})"
+            prompt += "\n"
+
+    # Custom prompt / style guide
+    if custom_prompt:
+        prompt += f"\n## Style Guide\n{custom_prompt}\n"
+
+    prompt += """
+## Instructions
+- Answer in the language the user writes in.
+- When suggesting translations, respect glossary terms.
+- Keep responses concise and practical.
+- If asked for alternatives, provide 2-3 options with brief explanations.
+"""
+    return prompt
+
+
+@router.post("/{project_id}/segment/{segment_id}/chat", response_model=ChatResponse)
+async def segment_chat(
+    project_id: str,
+    segment_id: str,
+    payload: ChatRequest,
+    db: Session = Depends(get_db),
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    segment = db.query(Segment).filter(Segment.id == segment_id, Segment.project_id == project_id).first()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    if not payload.messages:
+        raise HTTPException(status_code=400, detail="Messages list cannot be empty")
+
+    # Model from editor settings
+    ai_settings = (project.config or {}).get("ai_settings", {})
+    model_name = ai_settings.get("model") or get_default_model_id()
+    custom_prompt = ai_settings.get("custom_prompt", "")
+
+    system_prompt = _build_chat_system_prompt(segment, project, custom_prompt)
+    messages = [{"role": m.role, "content": m.content} for m in payload.messages]
+
+    orchestrator = InferenceOrchestrator()
+    reply_text, usage = await orchestrator.call_chat(system_prompt, messages, model_name)
+
+    # Log usage
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    if input_tokens > 0 or output_tokens > 0:
+        db.add(AiUsageLog(
+            project_id=project_id,
+            segment_id=segment_id,
+            model=model_name,
+            trigger_type="segment_chat",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        ))
+        db.commit()
+
+    return ChatResponse(reply=reply_text, usage=usage)
