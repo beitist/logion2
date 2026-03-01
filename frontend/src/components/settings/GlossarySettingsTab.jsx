@@ -35,9 +35,11 @@ export function GlossarySettingsTab({ project }) {
         setLoading(true);
         try {
             const data = await getGlossaryTerms(project.id);
-            setTerms(data);
+            console.log(`Glossary loaded: ${Array.isArray(data) ? data.length : 'non-array'} entries`);
+            setTerms(Array.isArray(data) ? data : []);
         } catch (e) {
-            console.error(e);
+            console.error("Glossary load failed:", e);
+            setTerms([]);
         } finally {
             setLoading(false);
         }
@@ -112,12 +114,18 @@ export function GlossarySettingsTab({ project }) {
         a.remove();
     };
 
+    // Pagination
+    const PAGE_SIZE = 50;
+    const [page, setPage] = useState(0);
+
     // Filter terms by search query
     const filteredTerms = terms.filter(t =>
         t.source?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.target?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.note?.toLowerCase().includes(searchQuery.toLowerCase())
     );
+    const totalPages = Math.ceil(filteredTerms.length / PAGE_SIZE);
+    const pagedTerms = filteredTerms.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
     return (
         <div className="h-full flex flex-col gap-5">
@@ -236,7 +244,7 @@ export function GlossarySettingsTab({ project }) {
                     type="text"
                     placeholder="Search terms..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }}
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl
                                focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400
                                text-sm transition-all"
@@ -256,7 +264,7 @@ export function GlossarySettingsTab({ project }) {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                        {filteredTerms.map(t => (
+                        {pagedTerms.map(t => (
                             editing?.id === t.id ? (
                                 <tr key={t.id} className="bg-amber-50/50">
                                     <td className="px-4 py-2">
@@ -352,6 +360,33 @@ export function GlossarySettingsTab({ project }) {
                     </tbody>
                 </table>
             </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+                <div className="flex items-center justify-between px-1 pt-1">
+                    <span className="text-xs text-gray-400">
+                        {filteredTerms.length} terms — page {page + 1} of {totalPages}
+                    </span>
+                    <div className="flex gap-1">
+                        <button
+                            onClick={() => setPage(p => Math.max(0, p - 1))}
+                            disabled={page === 0}
+                            className="px-3 py-1 text-xs border border-gray-200 rounded-lg hover:bg-gray-50
+                                       disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                            Prev
+                        </button>
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                            disabled={page >= totalPages - 1}
+                            className="px-3 py-1 text-xs border border-gray-200 rounded-lg hover:bg-gray-50
+                                       disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                            Next
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

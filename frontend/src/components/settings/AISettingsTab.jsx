@@ -40,6 +40,8 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
     const [settings, setSettings] = useState({
         model: '',
         workflow_model: '',
+        glossary_model: '',
+        auto_glossary_on_edit: false,
         custom_prompt: '',
         topic_description: '',
         pre_translate_count: 0,
@@ -66,6 +68,8 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
             setSettings({
                 model: ai.model || '',
                 workflow_model: ai.workflow_model || '',
+                glossary_model: ai.glossary_model || '',
+                auto_glossary_on_edit: ai.auto_glossary_on_edit || false,
                 // Fall back to the default translation prompt if none is configured yet
                 custom_prompt: ai.custom_prompt !== undefined ? ai.custom_prompt : DEFAULT_CUSTOM_PROMPT,
                 topic_description: ai.topic_description || '',
@@ -100,6 +104,11 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                         const fallbackId = hasDefault ? DEFAULT_MODEL_ID : (mtModels[0]?.id || '');
                         if (!newS.model) newS.model = fallbackId;
                         if (!newS.workflow_model) newS.workflow_model = fallbackId;
+                        // Default glossary model to cheapest Flash model
+                        if (!newS.glossary_model) {
+                            const flash = mtModels.find(m => m.id.includes('flash'));
+                            newS.glossary_model = flash?.id || fallbackId;
+                        }
                         return newS;
                     });
                 }
@@ -168,12 +177,12 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                         description="Choose AI models for different workflows"
                         accentColor="text-purple-500"
                     >
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             {/* Editor Model */}
                             <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1.5">
                                     Editor Model
-                                    <span className="text-gray-400 font-normal ml-1">(Manual & Shortcuts)</span>
+                                    <span className="text-gray-400 font-normal ml-1">(Manual)</span>
                                 </label>
                                 {loadingModels ? (
                                     <div className="h-10 bg-gray-100 rounded-lg animate-pulse" />
@@ -181,8 +190,8 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                                     <select
                                         value={settings.model}
                                         onChange={(e) => setSettings({ ...settings, model: e.target.value })}
-                                        className="w-full px-3 py-2.5 border border-gray-200 rounded-xl bg-white 
-                                                   focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400 
+                                        className="w-full px-3 py-2.5 border border-gray-200 rounded-xl bg-white
+                                                   focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400
                                                    shadow-sm text-sm transition-all"
                                     >
                                         {availableModels.map(m => (
@@ -196,7 +205,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                             <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1.5">
                                     Workflow Model
-                                    <span className="text-gray-400 font-normal ml-1">(Batch Operations)</span>
+                                    <span className="text-gray-400 font-normal ml-1">(Batch)</span>
                                 </label>
                                 {loadingModels ? (
                                     <div className="h-10 bg-gray-100 rounded-lg animate-pulse" />
@@ -204,8 +213,31 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                                     <select
                                         value={settings.workflow_model}
                                         onChange={(e) => setSettings({ ...settings, workflow_model: e.target.value })}
-                                        className="w-full px-3 py-2.5 border border-gray-200 rounded-xl bg-white 
-                                                   focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400 
+                                        className="w-full px-3 py-2.5 border border-gray-200 rounded-xl bg-white
+                                                   focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400
+                                                   shadow-sm text-sm transition-all"
+                                    >
+                                        {availableModels.map(m => (
+                                            <option key={m.id} value={m.id}>{m.name}</option>
+                                        ))}
+                                    </select>
+                                )}
+                            </div>
+
+                            {/* Glossary Model */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                                    Glossary Model
+                                    <span className="text-gray-400 font-normal ml-1">(Extraction)</span>
+                                </label>
+                                {loadingModels ? (
+                                    <div className="h-10 bg-gray-100 rounded-lg animate-pulse" />
+                                ) : (
+                                    <select
+                                        value={settings.glossary_model}
+                                        onChange={(e) => setSettings({ ...settings, glossary_model: e.target.value })}
+                                        className="w-full px-3 py-2.5 border border-gray-200 rounded-xl bg-white
+                                                   focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400
                                                    shadow-sm text-sm transition-all"
                                     >
                                         {availableModels.map(m => (
@@ -281,6 +313,23 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                                     checked={guiSettings.auto_fetch_mt_on_focus}
                                     onChange={(val) => setGuiSettings({ ...guiSettings, auto_fetch_mt_on_focus: val })}
                                     accentColor="bg-indigo-500"
+                                />
+                            </div>
+
+                            {/* Auto-Glossary on Edit */}
+                            <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100">
+                                <div className="flex-1">
+                                    <div className="text-sm font-medium text-gray-800">
+                                        Auto-Glossary on single MT
+                                    </div>
+                                    <div className="text-xs text-gray-500 mt-0.5">
+                                        Extract glossary terms after each manual/auto-fetch translation
+                                    </div>
+                                </div>
+                                <SettingsToggle
+                                    checked={settings.auto_glossary_on_edit}
+                                    onChange={(val) => setSettings({ ...settings, auto_glossary_on_edit: val })}
+                                    accentColor="bg-teal-500"
                                 />
                             </div>
 

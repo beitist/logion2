@@ -51,7 +51,7 @@ export function WorkflowIndicator({ project, projectId, blockingTask, onCancel, 
         return () => clearInterval(timer);
     }, [isActive, project?.rag_progress, project?.ingestion_logs?.length]);
 
-    // Detect completion: processing → ready
+    // Detect completion: processing → ready, or processing → error (auto-open popover)
     useEffect(() => {
         const prev = prevStatusRef.current;
         const curr = project?.rag_status;
@@ -61,6 +61,11 @@ export function WorkflowIndicator({ project, projectId, blockingTask, onCancel, 
             setJustCompleted(true);
             const timer = setTimeout(() => setJustCompleted(false), 5000);
             return () => clearTimeout(timer);
+        }
+
+        // Auto-open popover on error (e.g. quota exceeded)
+        if (prev === 'processing' && curr === 'error') {
+            setShowPopover(true);
         }
     }, [project?.rag_status]);
 
@@ -114,6 +119,9 @@ export function WorkflowIndicator({ project, projectId, blockingTask, onCancel, 
                 {/* Active indicator dot */}
                 {isActive && (
                     <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white animate-pulse" />
+                )}
+                {isError && (
+                    <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />
                 )}
                 {justCompleted && (
                     <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
@@ -195,32 +203,51 @@ export function WorkflowIndicator({ project, projectId, blockingTask, onCancel, 
                         </div>
                     ) : isError ? (
                         /* Error State */
-                        <div className="p-4">
-                            <div className="flex items-center gap-3 mb-3">
-                                <div className="p-2 bg-red-50 rounded-lg">
-                                    <AlertCircle size={16} className="text-red-500" />
-                                </div>
-                                <div className="flex-1">
-                                    <div className="text-sm font-semibold text-gray-800">Workflow Failed</div>
-                                    <div className="text-xs text-gray-500">Check logs for details</div>
-                                </div>
-                            </div>
-                            {recentLogs.length > 0 && (
-                                <div className="bg-gray-900 rounded-lg p-2.5 mb-3 max-h-24 overflow-y-auto">
-                                    {recentLogs.map((log, i) => (
-                                        <div key={i} className="text-[10px] font-mono text-red-400 leading-relaxed truncate">
-                                            {log}
+                        (() => {
+                            const isQuota = logs.some(l => l.toLowerCase().includes('quota exceeded'));
+                            return (
+                                <div className="p-4">
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className={`p-2 rounded-lg ${isQuota ? 'bg-orange-50' : 'bg-red-50'}`}>
+                                            <AlertCircle size={16} className={isQuota ? 'text-orange-500' : 'text-red-500'} />
                                         </div>
-                                    ))}
+                                        <div className="flex-1">
+                                            <div className="text-sm font-semibold text-gray-800">
+                                                {isQuota ? 'API Quota Exceeded' : 'Workflow Failed'}
+                                            </div>
+                                            <div className="text-xs text-gray-500">
+                                                {isQuota
+                                                    ? 'Daily API limit reached. Try again tomorrow or switch providers.'
+                                                    : 'Check logs for details'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {isQuota && (
+                                        <div className="bg-orange-50 border border-orange-200 rounded-lg p-2.5 mb-3">
+                                            <div className="text-[11px] font-medium text-orange-700">
+                                                The API provider has rejected further requests for today.
+                                                Translated segments so far have been saved.
+                                            </div>
+                                        </div>
+                                    )}
+                                    {recentLogs.length > 0 && (
+                                        <div className="bg-gray-900 rounded-lg p-2.5 mb-3 max-h-24 overflow-y-auto">
+                                            {recentLogs.map((log, i) => (
+                                                <div key={i} className="text-[10px] font-mono text-red-400 leading-relaxed truncate">
+                                                    {log}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <button
+                                        onClick={() => setShowPopover(false)}
+                                        className="w-full px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-200 transition-colors"
+                                    >
+                                        Dismiss
+                                    </button>
                                 </div>
-                            )}
-                            <button
-                                onClick={() => setShowPopover(false)}
-                                className="w-full px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-200 transition-colors"
-                            >
-                                Dismiss
-                            </button>
-                        </div>
+                            );
+                        })()
                     ) : (
                         /* Idle State */
                         <div className="p-4 text-center">

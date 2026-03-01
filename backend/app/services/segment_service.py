@@ -206,7 +206,28 @@ class SegmentService:
             
             self.db.commit()
             self.db.refresh(segment)
-            
+
+            # Optional: Auto-glossary extraction for single-segment MT
+            if target_text and not skip_ai and ai_settings.get("auto_glossary_on_edit"):
+                try:
+                    from .auto_glossary import AutoGlossaryService, hash_content
+                    glossary_model_name = ai_settings.get("glossary_model") or model_name
+                    topic = ai_settings.get("topic_description", "")
+                    glossary_svc = AutoGlossaryService(str(project.id), self.db)
+                    new_entries = await glossary_svc.extract_and_store(
+                        segment_id=str(segment.id),
+                        source_text=segment.source_content,
+                        target_text=target_text,
+                        topic=topic,
+                        source_lang=project.source_lang,
+                        target_lang=project.target_lang,
+                        model_name=glossary_model_name,
+                    )
+                    if new_entries:
+                        logger.info(f"Auto-glossary (single MT): +{len(new_entries)} terms for segment {segment.id}")
+                except Exception as gloss_err:
+                    logger.warning(f"Auto-glossary (single MT) failed: {gloss_err}")
+
             # Format Response
             resp_dict = segment.__dict__.copy()
             resp_dict.pop('embedding', None) # Exclude large vector

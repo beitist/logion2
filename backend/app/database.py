@@ -20,7 +20,16 @@ SQLALCHEMY_DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}
 
 
 # Der Motor der Datenbank
-engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+# Increased pool size: background workflows hold long-lived sessions
+# while the user + auto-polling need concurrent connections.
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=60,
+    pool_recycle=1800,
+)
 
 # Die Session-Fabrik (jedes Request bekommt eine eigene Session)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

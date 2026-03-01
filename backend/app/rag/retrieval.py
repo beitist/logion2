@@ -42,7 +42,13 @@ class RetrievalEngine:
             # Local reranker is fine to keep for now unless specified.
             # It's small.
             device = "cpu"
-            self._cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1', device=device)
+            model_name = 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1'
+            try:
+                # Try offline first (avoids HuggingFace HEAD request timeouts)
+                self._cross_encoder = CrossEncoder(model_name, device=device, local_files_only=True)
+            except Exception:
+                # First run: download from HuggingFace
+                self._cross_encoder = CrossEncoder(model_name, device=device)
             
             logger.info("✅ Retrieval Models Loaded (Voyage AI + CrossEncoder).")
         except Exception as e:

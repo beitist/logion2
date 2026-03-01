@@ -11,6 +11,21 @@ from ..config import get_default_model_id, get_ai_models_config
 
 logger = logging.getLogger("RAG.Inference")
 
+
+class QuotaExceededError(Exception):
+    """Raised when API daily quota is exhausted. Workflows should stop, not retry."""
+    pass
+
+
+def _is_quota_exceeded(error_str: str) -> bool:
+    """Detects quota-exceeded 429s (vs transient rate limits)."""
+    lower = error_str.lower()
+    return "429" in error_str and any(kw in lower for kw in [
+        "quota", "daily", "exceeded", "exhausted", "resource has been",
+        "billing", "limit for the day",
+    ])
+
+
 # Cache provider lookup to avoid re-reading JSON on every call
 _provider_cache: Dict[str, str] = {}
 
@@ -122,14 +137,14 @@ Rules:
 2. Preserve XML-like tags (e.g. <1>, <b>) exactly as they appear in source.
 3. TM match handling by score (HIGHEST PRIORITY — overrides Style Guide):
    - Score >= 95: MANDATORY. Copy the TM target verbatim. The ONLY permitted change: if the current source differs from the TM source, adjust minimally to reflect that specific difference — nothing else.
-   - Score 70-94: STRONG. Start by copying the TM target AS-IS. Then compare the current source with the TM source word by word. ONLY replace words/phrases in the TM target that directly correspond to differences in the source. Keep ALL other words, terminology, and phrasing from the TM target unchanged. Do NOT rephrase, do NOT substitute synonyms, do NOT apply style guide rules to TM-derived parts.
-   - Score < 70: Weak reference. Translate freely following the style guide, but consider the TM terminology.
+   - Score 87-94: STRONG. Start by copying the TM target AS-IS. Then compare the current source with the TM source word by word. ONLY replace words/phrases in the TM target that directly correspond to differences in the source. Keep ALL other words, terminology, and phrasing from the TM target unchanged. Do NOT rephrase, do NOT substitute synonyms, do NOT apply style guide rules to TM-derived parts.
+   - Score < 87: Weak reference. Translate freely following the style guide, but consider the TM terminology for consistency.
 4. ALWAYS use glossary terms over your own word choices. Glossary entries are mandatory.
 5. Maintain style consistency across the batch.
 """
 
         if custom_prompt:
-            system_instruction += f"\nStyle Guide (applies to free translations and weak TM matches only — do NOT override TM matches with score >= 95):\n{custom_prompt}\n"
+            system_instruction += f"\nStyle Guide (applies to free translations and weak TM matches below 87 only — do NOT override TM matches with score >= 87):\n{custom_prompt}\n"
             
         # Construct JSON Input
         # "context_window": { "preceding": [...], "following": [...] }
@@ -393,9 +408,12 @@ Rules:
 
     async def _call_llm(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3, json_mode: bool = False) -> (str, Dict):
         """Dispatch to the correct provider based on model ID."""
+        if not model_name:
+            model_name = get_default_model_id()
         provider = _get_provider(model_name)
+        logger.info(f"LLM dispatch: model={model_name}, provider={provider}, json_mode={json_mode}")
         if provider == "anthropic":
-            return await self._call_claude(prompt, model_name, temperature, max_retries)
+            return await self._call_claude(prompt, model_name, temperature, max_retries, json_mode=json_mode)
         else:
             return await self._call_gemini(prompt, model_name, temperature, max_retries, json_mode=json_mode)
 
@@ -422,7 +440,12 @@ Rules:
                 return txt, usage
 
             except Exception as e:
-                is_transient = any(code in str(e) for code in ["500", "503", "504", "429", "DEADLINE", "overloaded"])
+                err_str = str(e)
+                # Quota exceeded → stop immediately, don't retry
+                if _is_quota_exceeded(err_str):
+                    logger.error(f"Gemini quota exceeded: {e}")
+                    raise QuotaExceededError(f"API quota exceeded: {e}")
+                is_transient = any(code in err_str for code in ["500", "503", "504", "429", "DEADLINE", "overloaded"])
                 if is_transient and attempt < max_retries - 1:
                     wait = (attempt + 1) * 3  # 3s, 6s, 9s
                     logger.warning(f"Gemini transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
@@ -430,7 +453,7 @@ Rules:
                 else:
                     raise e
 
-    async def _call_claude(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3) -> (str, Dict):
+    async def _call_claude(self, prompt: str, model_name: str, temperature: float, max_retries: int = 3, json_mode: bool = False) -> (str, Dict):
         if not self.anthropic_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
 
@@ -439,14 +462,22 @@ Rules:
 
         for attempt in range(max_retries):
             try:
+                messages = [{"role": "user", "content": prompt}]
+                # Prefill assistant response with "[" to force JSON array output
+                if json_mode:
+                    messages.append({"role": "assistant", "content": "["})
+
                 res = await self._anthropic_client.messages.create(
                     model=model_name,
                     max_tokens=8192,
                     temperature=temperature,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=messages,
                 )
 
                 txt = res.content[0].text.strip()
+                # Restore the prefilled "[" that Claude continues from
+                if json_mode:
+                    txt = "[" + txt
                 usage = {
                     "input_tokens": res.usage.input_tokens,
                     "output_tokens": res.usage.output_tokens,
@@ -455,6 +486,10 @@ Rules:
 
             except Exception as e:
                 err_str = str(e)
+                # Quota exceeded → stop immediately, don't retry
+                if _is_quota_exceeded(err_str):
+                    logger.error(f"Claude quota exceeded: {e}")
+                    raise QuotaExceededError(f"API quota exceeded: {e}")
                 is_transient = any(code in err_str for code in ["500", "503", "529", "429", "overloaded"])
                 if is_transient and attempt < max_retries - 1:
                     wait = (attempt + 1) * 3

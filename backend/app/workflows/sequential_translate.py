@@ -6,6 +6,7 @@ from ..rag.manager import RAGManager
 from ..database import SessionLocal
 from .base import BaseWorkflow
 from ..config import get_default_model_id
+from ..rag.inference import QuotaExceededError
 from ..services.auto_glossary import AutoGlossaryService, hash_content
 
 from typing import List, Optional
@@ -58,6 +59,7 @@ class SequentialTranslateWorkflow(BaseWorkflow):
             ai_settings = config.get("ai_settings", {})
             custom_prompt = ai_settings.get("custom_prompt", "Translate the following text accurately.")
             model_name = ai_settings.get("workflow_model")
+            glossary_model = ai_settings.get("glossary_model") or model_name
             topic = ai_settings.get("topic_description", "")
 
             success_count = 0
@@ -146,7 +148,7 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                             topic=topic,
                             source_lang=self.project.source_lang,
                             target_lang=self.project.target_lang,
-                            model_name=model_name,
+                            model_name=glossary_model,
                         )
                         if new_entries:
                             self.log(f"Segment {seg.index}: +{len(new_entries)} auto-glossary terms")
@@ -166,6 +168,10 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                     progress = int(((idx + 1) / total) * 100)
                     self.update_progress(progress, status="processing")
 
+                except QuotaExceededError as qe:
+                    self.log(f"API quota exceeded — stopping workflow. {success_count}/{total} segments translated before quota hit.")
+                    self.fail(qe)
+                    return
                 except Exception as seg_err:
                     self.log(f"Segment {seg.index}: Failed — {seg_err}")
                     import traceback

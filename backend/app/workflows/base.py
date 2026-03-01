@@ -28,6 +28,22 @@ class BaseWorkflow:
     def update_progress(self, progress: int, status: str = None):
         """Updates the project's RAG status and progress."""
         if self.project:
+            # Safety: when finishing (ready/error), refresh from DB first to avoid
+            # overwriting a NEW workflow that started after this one was cancelled.
+            if status in ('ready', 'error'):
+                self.db.refresh(self.project)
+                if self.project.rag_status == "processing":
+                    # We're the active workflow — safe to finish
+                    pass
+                elif status == 'ready' and self.project.rag_status == 'ready':
+                    # Already cancelled/reset — just log and skip
+                    logger.info(f"[{self.project_id}] Workflow finished but status already '{self.project.rag_status}', skipping update.")
+                    return
+                else:
+                    # Status was changed externally (e.g. new workflow or manual reset)
+                    logger.warning(f"[{self.project_id}] Workflow finished but status is '{self.project.rag_status}', not overwriting.")
+                    return
+
             self.project.rag_progress = int(progress)
             if status:
                 self.project.rag_status = status
@@ -49,6 +65,11 @@ class BaseWorkflow:
         """Logs failure and updates status."""
         self.log(f"Workflow Failed: {str(error)}")
         if self.project:
+            # Refresh to check if another workflow took over
+            self.db.refresh(self.project)
+            if self.project.rag_status != "processing":
+                logger.warning(f"[{self.project_id}] Workflow failed but status is '{self.project.rag_status}', not overwriting.")
+                return
             self.project.rag_status = "error"
             from sqlalchemy.orm.attributes import flag_modified
             config = dict(self.project.config or {})

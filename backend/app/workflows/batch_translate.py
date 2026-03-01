@@ -6,6 +6,7 @@ from ..rag.manager import RAGManager
 from ..database import SessionLocal
 from .base import BaseWorkflow
 from ..config import get_default_model_id
+from ..rag.inference import QuotaExceededError
 
 from typing import List, Optional
 
@@ -231,13 +232,17 @@ class BatchTranslateWorkflow(BaseWorkflow):
                     progress = int(((batch_idx + 1) / total_batches) * 100)
                     self.update_progress(progress, status="processing")
                     
+                except QuotaExceededError as qe:
+                    self.log(f"API quota exceeded — stopping workflow. {success_count} segments translated before quota hit.")
+                    self.fail(qe)
+                    return
                 except Exception as e:
                     self.log(f"Batch {batch_idx + 1}/{total_batches} failed with exception: {str(e)}")
                     import traceback
                     print(traceback.format_exc())
-            
+
             self.update_progress(100, status="ready")
             self.log(f"Batch Translation Complete. Updated {success_count} segments.")
-            
+
         except Exception as e:
             self.fail(e)

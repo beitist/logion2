@@ -79,13 +79,22 @@ class AutoGlossaryService:
         ).all():
             existing_auto.add(src.lower().strip())
 
-        # 5. Store new entries
+        # 5. Store new entries (with strict filtering)
         new_entries = []
         for pair in term_pairs:
             source = pair.get("source", "").strip()
             target = pair.get("target", "").strip()
 
             if not source or not target:
+                continue
+            # Skip if source and target are identical (same word in both languages)
+            if source.lower() == target.lower():
+                continue
+            # Skip single-word entries that are too short (likely abbreviations/acronyms)
+            if source.upper() == source and target.upper() == target and len(source) <= 6:
+                continue  # Identical abbreviations (e.g. GIZ→GIZ, BMZ→BMZ)
+            # Skip very short terms (1-2 chars) — rarely useful
+            if len(source) <= 2:
                 continue
             if source.lower() in existing_manual:
                 continue  # Don't shadow manual entries
@@ -158,13 +167,15 @@ Source ({source_lang}): {source_text}
 Target ({target_lang}): {target_text}{topic_line}
 
 Rules:
-1. Extract ONLY domain-specific or technical terms, NOT common words.
+1. Extract ONLY domain-specific or technical terms that a translator would need to know. NOT common words, NOT generic verbs, NOT obvious translations.
 2. Return terms in their SINGULAR / INFINITIVE base form (e.g., "report" not "reports", "implement" not "implementing").
 3. Include multi-word terms (e.g., "final report", "project implementation").
 4. Each term pair must be a direct translation equivalent.
-5. Maximum 5 term pairs per segment.
-6. Return valid JSON array: [{{"source": "term_{source_lang}", "target": "term_{target_lang}"}}]
-7. If no glossary-worthy terms exist, return an empty array: []
+5. Maximum 3 term pairs per segment. Be very selective — only terms where consistency across a document matters.
+6. SKIP terms where source and target are identical (abbreviations, proper nouns that stay the same).
+7. SKIP generic terms like "project", "report", "country", "government", "year" etc.
+8. Return valid JSON array: [{{"source": "term_{source_lang}", "target": "term_{target_lang}"}}]
+9. If no glossary-worthy terms exist, return an empty array: []
 
 Output ONLY the JSON array, no explanation."""
 
@@ -186,32 +197,48 @@ Output ONLY the JSON array, no explanation."""
             return []
 
         except Exception as e:
+            # Re-raise quota errors so the workflow can stop
+            from ..rag.inference import QuotaExceededError
+            if isinstance(e, QuotaExceededError):
+                raise
             logger.error(f"Auto-glossary extraction failed: {e}")
             return []
 
     async def _call_gemini(self, prompt: str, model_name: str) -> str:
+        from ..rag.inference import QuotaExceededError, _is_quota_exceeded
         gm = genai.GenerativeModel(model_name)
         config = genai.GenerationConfig(temperature=0.1)
 
-        if hasattr(gm, "generate_content_async"):
-            res = await gm.generate_content_async(prompt, generation_config=config)
-        else:
-            loop = asyncio.get_event_loop()
-            res = await loop.run_in_executor(
-                None, lambda: gm.generate_content(prompt, generation_config=config)
-            )
-        return res.text.strip()
+        try:
+            if hasattr(gm, "generate_content_async"):
+                res = await gm.generate_content_async(prompt, generation_config=config)
+            else:
+                loop = asyncio.get_event_loop()
+                res = await loop.run_in_executor(
+                    None, lambda: gm.generate_content(prompt, generation_config=config)
+                )
+            return res.text.strip()
+        except Exception as e:
+            if _is_quota_exceeded(str(e)):
+                raise QuotaExceededError(f"API quota exceeded: {e}")
+            raise
 
     async def _call_claude(self, prompt: str, model_name: str) -> str:
+        from ..rag.inference import QuotaExceededError, _is_quota_exceeded
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
 
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        res = await client.messages.create(
-            model=model_name,
-            max_tokens=2048,
-            temperature=0.1,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return res.content[0].text.strip()
+        try:
+            client = anthropic.AsyncAnthropic(api_key=api_key)
+            res = await client.messages.create(
+                model=model_name,
+                max_tokens=2048,
+                temperature=0.1,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return res.content[0].text.strip()
+        except Exception as e:
+            if _is_quota_exceeded(str(e)):
+                raise QuotaExceededError(f"API quota exceeded: {e}")
+            raise

@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm.attributes import flag_modified
 
 from ..models import Project, Segment, AiUsageLog
-from ..rag.inference import InferenceOrchestrator
+from ..rag.inference import InferenceOrchestrator, QuotaExceededError
 from ..database import SessionLocal
 from ..utils.tc_diff import (
     generate_tc_markup,
@@ -90,6 +90,10 @@ class TCBatchWorkflow(BaseWorkflow):
                 self.update_progress(100, status="ready")
                 return
 
+            if self.is_cancelled():
+                self.log("Workflow cancelled before starting.")
+                return
+
             # ── Determine mode ────────────────────────────────────
             config = self.project.config or {}
             tc_settings = config.get("tc_settings", {})
@@ -106,6 +110,9 @@ class TCBatchWorkflow(BaseWorkflow):
             else:
                 await self._run_first_last(tc_segments, model_name, custom_prompt, regular_segments)
 
+        except QuotaExceededError as qe:
+            self.log("API quota exceeded — stopping workflow.")
+            self.fail(qe)
         except Exception as e:
             self.fail(e)
 
@@ -287,6 +294,10 @@ class TCBatchWorkflow(BaseWorkflow):
         max_depth = max(len(stages) for _, stages in proper) if proper else 0
 
         for level in range(1, max_depth):
+            if self.is_cancelled():
+                self.log(f"Workflow cancelled at chain level {level}.")
+                return
+
             level_items = []
 
             for sid, st in seg_state.items():
@@ -320,6 +331,10 @@ class TCBatchWorkflow(BaseWorkflow):
 
             progress = int(40 + (level / max(max_depth - 1, 1)) * 40)
             self.update_progress(min(progress, 85), status="processing")
+
+        if self.is_cancelled():
+            self.log("Workflow cancelled before applying results.")
+            return
 
         self.update_progress(85, status="processing")
 
@@ -464,6 +479,10 @@ class TCBatchWorkflow(BaseWorkflow):
             }
 
         for level in range(1, max_depth):
+            if self.is_cancelled():
+                self.log(f"Workflow cancelled at stage {level}.")
+                return
+
             level_items = []
 
             for sid, st in seg_state.items():
@@ -501,6 +520,10 @@ class TCBatchWorkflow(BaseWorkflow):
 
             progress = int(30 + (level / max(max_depth - 1, 1)) * 60)
             self.update_progress(min(progress, 95), status="processing")
+
+        if self.is_cancelled():
+            self.log("Workflow cancelled before storing results.")
+            return
 
         # ── Store results ─────────────────────────────────────────
         # target_content = accumulated TC document (all stages' marks layered).
@@ -606,6 +629,11 @@ class TCBatchWorkflow(BaseWorkflow):
         total_chunks = len(chunks)
 
         for chunk_idx, chunk in enumerate(chunks):
+            # Check for cancellation between chunks
+            if self.is_cancelled():
+                self.log(f"Workflow cancelled during batch translation (chunk {chunk_idx}/{total_chunks}).")
+                return all_translations
+
             self.log(f"Translating chunk {chunk_idx + 1}/{total_chunks} ({len(chunk)} items)...")
 
             try:
@@ -623,6 +651,8 @@ class TCBatchWorkflow(BaseWorkflow):
                 total_usage["input_tokens"] += usage.get("input_tokens", 0)
                 total_usage["output_tokens"] += usage.get("output_tokens", 0)
 
+            except QuotaExceededError:
+                raise  # Propagate up — workflow must stop
             except Exception as e:
                 self.log(f"Chunk {chunk_idx + 1} failed: {e}")
                 import traceback
