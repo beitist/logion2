@@ -43,7 +43,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
     };
 
     const handleAiDraft = async (segmentId, isAuto = false, mode = "translate", isWorkflow = false, forceRefresh = false, tcParams = null) => {
-        if (!isWorkflow) mode = "draft";
+        if (!isWorkflow && mode !== "analyze") mode = "draft";
         if (generatingSegmentsRef.current[segmentId]) return;
 
         generatingSegmentsRef.current[segmentId] = true;

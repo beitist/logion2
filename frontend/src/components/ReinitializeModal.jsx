@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { Upload, X, RefreshCw, FileText, AlertTriangle } from 'lucide-react';
 
 export function ReinitializeModal({ isOpen, onClose, onConfirm, projectFilename }) {
-    if (!isOpen) return null;
-
     const [file, setFile] = useState(null);
+
+    if (!isOpen) return null;
 
     const handleFileChange = (e) => {
         if (e.target.files && e.target.files[0]) {

@@ -1,8 +1,7 @@
-import React, { useState, useRef } from 'react';
-import { Upload, FileText, Trash2, RefreshCw, ChevronDown, ChevronUp, AlertCircle, CheckCircle, FolderOpen } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, FileText, Trash2, RefreshCw, AlertCircle, CheckCircle, FolderOpen, HardDrive } from 'lucide-react';
 import { SettingsCard, SettingsSection } from './shared';
-import { getProjectFiles, addProjectFile, replaceProjectFile, deleteProjectFile } from '../../api/client';
-import { ReinitializeModal } from '../ReinitializeModal';
+import { getProjectFiles, addProjectFile, replaceProjectFile, deleteProjectFile, getStorageInfo } from '../../api/client';
 
 /**
  * FilesSettingsTab - Manages project files across all categories.
@@ -13,11 +12,14 @@ import { ReinitializeModal } from '../ReinitializeModal';
  * - files: Array of ProjectFile objects from API
  * - onRefresh: Callback to refresh project data after file operations
  */
-export const FilesSettingsTab = ({ project, files, onRefresh, onFullReinit }) => {
+export const FilesSettingsTab = ({ project, files, onRefresh }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [actionStatus, setActionStatus] = useState(null); // {type: 'success'|'error', message: string}
-    // Controls the Reinitialize modal for source file replacement
-    const [isReinitModalOpen, setIsReinitModalOpen] = useState(false);
+    const [storageInfo, setStorageInfo] = useState(null);
+
+    useEffect(() => {
+        getStorageInfo().then(setStorageInfo).catch(() => {});
+    }, []);
 
     // Group files by category for display
     const groupedFiles = {
@@ -118,6 +120,16 @@ export const FilesSettingsTab = ({ project, files, onRefresh, onFullReinit }) =>
                 </div>
             )}
 
+            {/* Storage Info */}
+            {storageInfo && (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-gray-500 bg-gray-50 rounded-lg border border-gray-100">
+                    <HardDrive size={13} className="text-gray-400" />
+                    <span className="font-mono truncate">{storageInfo.storage_root}</span>
+                    <span className="text-gray-300">|</span>
+                    <span>{storageInfo.disk_free_gb} GB free</span>
+                </div>
+            )}
+
             {/* Category Sections */}
             {categories.map(cat => (
                 <SettingsCard key={cat.id}>
@@ -135,16 +147,7 @@ export const FilesSettingsTab = ({ project, files, onRefresh, onFullReinit }) =>
                                         key={file.id}
                                         file={file}
                                         accept={cat.accept}
-                                        isSource={cat.id === 'source'}
-                                        onReplace={(newFile) => {
-                                            // Source files: use Reinitialize workflow to preserve translations
-                                            if (cat.id === 'source') {
-                                                setIsReinitModalOpen(true);
-                                            } else {
-                                                // Legal/Background: direct replace is safe (no segments)
-                                                handleReplaceFile(file.id, newFile);
-                                            }
-                                        }}
+                                        onReplace={(newFile) => handleReplaceFile(file.id, newFile)}
                                         onDelete={() => handleDeleteFile(file.id, file.filename)}
                                         disabled={isLoading}
                                     />
@@ -165,16 +168,6 @@ export const FilesSettingsTab = ({ project, files, onRefresh, onFullReinit }) =>
                 </SettingsCard>
             ))}
 
-            {/* Reinitialize Modal — opened when user clicks replace on a source file */}
-            <ReinitializeModal
-                isOpen={isReinitModalOpen}
-                onClose={() => setIsReinitModalOpen(false)}
-                onConfirm={(file) => {
-                    setIsReinitModalOpen(false);
-                    if (onFullReinit) onFullReinit(file);
-                }}
-                projectFilename={project?.filename}
-            />
         </div>
     );
 };
@@ -182,7 +175,7 @@ export const FilesSettingsTab = ({ project, files, onRefresh, onFullReinit }) =>
 /**
  * FileRow - Displays a single file with Replace/Delete actions.
  */
-const FileRow = ({ file, accept, isSource, onReplace, onDelete, disabled }) => {
+const FileRow = ({ file, accept, onReplace, onDelete, disabled }) => {
     const replaceInputRef = useRef(null);
 
     return (
@@ -198,23 +191,22 @@ const FileRow = ({ file, accept, isSource, onReplace, onDelete, disabled }) => {
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
-                {/* Replace Button */}
-                {/* For source files: no file picker needed, the Reinitialize modal handles upload.
-                   For legal/background: use hidden file input to pick the replacement file. */}
-                {!isSource && (
-                    <input
-                        ref={replaceInputRef}
-                        type="file"
-                        accept={accept}
-                        className="hidden"
-                        onChange={(e) => onReplace(e.target.files[0])}
-                    />
-                )}
+                {/* Replace: hidden file input for all file types */}
+                <input
+                    ref={replaceInputRef}
+                    type="file"
+                    accept={accept}
+                    className="hidden"
+                    onChange={(e) => {
+                        if (e.target.files[0]) onReplace(e.target.files[0]);
+                        e.target.value = '';
+                    }}
+                />
                 <button
-                    onClick={() => isSource ? onReplace() : replaceInputRef.current?.click()}
+                    onClick={() => replaceInputRef.current?.click()}
                     disabled={disabled}
                     className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
-                    title={isSource ? "Reinitialize source file" : "Replace file"}
+                    title="Replace file"
                 >
                     <RefreshCw size={14} />
                 </button>

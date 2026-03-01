@@ -32,7 +32,7 @@ class BaseWorkflow:
             # overwriting a NEW workflow that started after this one was cancelled.
             if status in ('ready', 'error'):
                 self.db.refresh(self.project)
-                if self.project.rag_status == "processing":
+                if self.project.rag_status in ("processing", "ingesting"):
                     # We're the active workflow — safe to finish
                     pass
                 elif status == 'ready' and self.project.rag_status == 'ready':
@@ -67,7 +67,7 @@ class BaseWorkflow:
         if self.project:
             # Refresh to check if another workflow took over
             self.db.refresh(self.project)
-            if self.project.rag_status != "processing":
+            if self.project.rag_status not in ("processing", "ingesting"):
                 logger.warning(f"[{self.project_id}] Workflow failed but status is '{self.project.rag_status}', not overwriting.")
                 return
             self.project.rag_status = "error"

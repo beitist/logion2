@@ -249,6 +249,15 @@ export async function getAiModels() {
 // =========================================================================
 
 /**
+ * Get storage info (path, disk space).
+ */
+export async function getStorageInfo() {
+    const res = await fetch(`${API_BASE}/project/storage/info`);
+    if (!res.ok) return null;
+    return res.json();
+}
+
+/**
  * Get all files for a project with their metadata and segment counts.
  */
 export async function getProjectFiles(projectId) {

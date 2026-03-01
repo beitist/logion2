@@ -52,6 +52,7 @@ resource/*
 resource
 
 backend/uploads/*
+backend/projectdata/
 
 *.txt
 *.db

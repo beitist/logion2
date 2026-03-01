@@ -68,10 +68,10 @@ Source ({source_lang}): {source_clean}
             score = hit.get("score", 0)
             prompt += f"- Source: {src}\n  Target: {tgt} (Similarity: {score}%)\n"
 
-    # Glossary
+    # Glossary — informational, not prescriptive
     glossary_hits = [m for m in context_matches if m.get("type") == "glossary"]
     if glossary_hits:
-        prompt += "\n## Glossary Terms (mandatory)\n"
+        prompt += "\n## Project Glossary (for reference — use your judgement whether terms fit this context)\n"
         for g in glossary_hits:
             prompt += f"- {g.get('source_text', '')} -> {g.get('content', '')}"
             if g.get("note"):
@@ -85,7 +85,7 @@ Source ({source_lang}): {source_clean}
     prompt += """
 ## Instructions
 - Answer in the language the user writes in.
-- When suggesting translations, respect glossary terms.
+- Glossary terms are suggestions, not rules. If a glossary term doesn't fit the context, say so and suggest a better alternative.
 - Keep responses concise and practical.
 - If asked for alternatives, provide 2-3 options with brief explanations.
 """

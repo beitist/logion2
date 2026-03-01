@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form, Depends, HTTPException, BackgroundTasks, Body
@@ -289,6 +290,21 @@ def export_project(project_id: str, service: ExportService = Depends(get_export_
 @router.get("/{project_id}/export/tmx")
 async def export_project_tmx(project_id: str, service: ExportService = Depends(get_export_service)):
     return service.export_project_tmx(project_id)
+
+# =========================================================================
+# Storage Info
+# =========================================================================
+
+@router.get("/storage/info")
+def get_storage_info():
+    """Returns current storage configuration."""
+    from ..storage import STORAGE_ROOT
+    import shutil
+    total, used, free = shutil.disk_usage(STORAGE_ROOT if os.path.exists(STORAGE_ROOT) else "/")
+    return {
+        "storage_root": os.path.abspath(STORAGE_ROOT),
+        "disk_free_gb": round(free / (1024**3), 1),
+    }
 
 # =========================================================================
 # File Management Endpoints (Multi-File Support)

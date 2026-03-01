@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from ..models import Project, ProjectFile, ProjectFileCategory, Segment, GlossaryEntry, TranslationUnit, AiUsageLog
-from ..storage import upload_file, download_file
+from ..storage import upload_file, download_file, delete_project_folder
 from ..document.parser import parse_document
 from ..logger import get_logger
 from ..workflows.reingest import run_background_reingest
@@ -182,6 +182,12 @@ class ProjectService:
         
         self.db.delete(project)
         self.db.commit()
+
+        # Clean up project files from local storage
+        try:
+            delete_project_folder(project_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete project folder: {e}")
 
     def duplicate_project(self, project_id: str) -> Project:
         original = self.get_project(project_id)
@@ -465,14 +471,13 @@ class ProjectService:
             self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
         
-        # For source files: re-parse
+        # For source files: re-parse segments from new file
         if category == ProjectFileCategory.source:
             await self._parse_source_file(project, file_record)
-        
-        # For legal/background: trigger reingest
-        if category in [ProjectFileCategory.legal, ProjectFileCategory.background]:
-            from ..workflows.reingest import run_background_reingest
-            background_tasks.add_task(run_background_reingest, project_id)
+
+        # Always reingest: source replacement changes segment vectors,
+        # legal/background replacement changes TM/context chunks.
+        background_tasks.add_task(run_background_reingest, project_id)
         
         self.db.refresh(file_record)
         return file_record
@@ -513,10 +518,18 @@ class ProjectService:
                 AiUsageLog.segment_id.in_(segment_ids)
             ).delete(synchronize_session='fetch')
         
-        # Delete file (cascade handles segments via relationship)
+        # Delete file from storage and DB
         filename = file_record.filename
+        file_path = file_record.file_path
         self.db.delete(file_record)
         self.db.commit()
+
+        # Clean up from filesystem
+        from ..storage import delete_file as storage_delete
+        try:
+            storage_delete(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete file from storage: {e}")
         
         logger.info(f"Deleted file {filename} with {segment_count} segments")
         
