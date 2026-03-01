@@ -123,7 +123,13 @@ export function SplitView({ projectId, onBack }) {
         prevActiveRef.current = activeSegmentId;
         const idx = filteredSegments.findIndex(s => s.id === activeSegmentId);
         if (idx >= 0) {
-            rowVirtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
+            // First: tell virtualizer to render the row (it may be off-screen)
+            rowVirtualizer.scrollToIndex(idx, { align: 'center' });
+            // Then: use DOM anchor for pixel-accurate scroll after render
+            requestAnimationFrame(() => {
+                const el = document.getElementById(`segment-${activeSegmentId}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
         }
     }, [activeSegmentId, filteredSegments, rowVirtualizer]);
 
@@ -334,6 +340,7 @@ export function SplitView({ projectId, onBack }) {
                             return (
                                 <div
                                     key={seg.id}
+                                    id={`segment-${seg.id}`}
                                     style={{
                                         position: 'absolute',
                                         top: 0,
