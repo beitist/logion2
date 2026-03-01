@@ -35,7 +35,8 @@ export const SegmentRow = memo(({
     onFocus,
     onNavigate,
     onContextMenu,
-    registerEditor
+    registerEditor,
+    onGlossaryUpdate
 }) => {
     // Use custom hook to process and sort matches
     const {
@@ -155,6 +156,7 @@ export const SegmentRow = memo(({
                 onToggleFlag={onToggleFlag}
                 registerEditor={registerEditor}
                 showDebug={showDebug}
+                onGlossaryUpdate={onGlossaryUpdate}
                 tcMode={tcMode}
                 activeTCStage={activeTCStage}
                 baseStage={baseStage}

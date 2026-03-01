@@ -66,7 +66,7 @@ class ContextAssembler:
                  category="term",
                  score=100,
                  note=g['note'],
-                 metadata={"origin": origin},
+                 metadata={"origin": origin, "entry_id": g.get("entry_id")},
              ))
              
         # 5. Unit Conversion Facts

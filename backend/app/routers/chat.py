@@ -1,4 +1,5 @@
 import logging
+import re
 from pydantic import BaseModel
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,19 +28,29 @@ class ChatResponse(BaseModel):
     usage: dict
 
 
+def _strip_tags(text: str) -> str:
+    """Remove XML-like formatting tags (e.g. <1>, </b>, <n>) from segment text."""
+    if not text:
+        return text
+    return re.sub(r'</?[^>]+>', '', text).strip()
+
+
 def _build_chat_system_prompt(segment: Segment, project: Project, custom_prompt: str) -> str:
     source_lang = project.source_lang or "en"
     target_lang = project.target_lang or "de"
+
+    source_clean = _strip_tags(segment.source_content)
+    target_clean = _strip_tags(segment.target_content)
 
     prompt = f"""You are a professional translation assistant for {source_lang} to {target_lang} translation.
 You are helping a translator with a specific segment. Answer questions, suggest alternatives, explain terminology, or adjust style as requested.
 
 ## Current Segment
-Source ({source_lang}): {segment.source_content}
+Source ({source_lang}): {source_clean}
 """
 
-    if segment.target_content:
-        prompt += f"Current Translation ({target_lang}): {segment.target_content}\n"
+    if target_clean:
+        prompt += f"Current Translation ({target_lang}): {target_clean}\n"
     else:
         prompt += f"Current Translation ({target_lang}): (not yet translated)\n"
 
@@ -47,15 +58,15 @@ Source ({source_lang}): {segment.source_content}
     meta = segment.metadata_json or {}
     context_matches = meta.get("context_matches", [])
 
-    # TM matches (exclude mt and glossary types)
-    tm_hits = [m for m in context_matches if m.get("type") not in ("mt", "glossary")]
+    # TM matches — exclude mt, glossary, and history (history = neighboring segments, not real TM)
+    tm_hits = [m for m in context_matches if m.get("type") not in ("mt", "glossary", "history")]
     if tm_hits:
-        prompt += "\n## Reference Translations (Translation Memory)\n"
+        prompt += "\n## Similar Segments from Translation Memory (for reference only, not authoritative)\n"
         for hit in tm_hits[:3]:
-            src = hit.get("source_text", "")
-            tgt = hit.get("content", "")
+            src = _strip_tags(hit.get("source_text", ""))
+            tgt = _strip_tags(hit.get("content", ""))
             score = hit.get("score", 0)
-            prompt += f"- Source: {src}\n  Target: {tgt} (Match: {score}%)\n"
+            prompt += f"- Source: {src}\n  Target: {tgt} (Similarity: {score}%)\n"
 
     # Glossary
     glossary_hits = [m for m in context_matches if m.get("type") == "glossary"]

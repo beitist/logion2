@@ -96,6 +96,7 @@ class GlossaryMatcher:
             entry = self.entries_data.get(string_id)
             if entry:
                 results.append({
+                    "entry_id": string_id,
                     "source": entry["source_term"],
                     "target": entry["target_term"],
                     "note": entry["context_note"],

@@ -11,12 +11,7 @@ export function ChatPanel({ segment, messages, isLoading, onSendMessage, onClear
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isLoading]);
 
-    // Focus textarea when segment changes (only if panel is visible)
-    useEffect(() => {
-        if (segment?.id) {
-            setTimeout(() => textareaRef.current?.focus(), 100);
-        }
-    }, [segment?.id]);
+
 
     const handleSend = () => {
         if (!input.trim() || isLoading || !segment) return;

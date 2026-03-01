@@ -20,6 +20,7 @@ import { ChatPanel } from './ChatPanel';
 
 import { useProjectWorkspace } from '../hooks/useProjectWorkspace';
 import { useSegmentChat } from '../hooks/useSegmentChat';
+import { updateGlossaryTerm } from '../api/client';
 import { SegmentRow } from './segment';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
@@ -73,6 +74,18 @@ export function SplitView({ projectId, onBack }) {
     } = useProjectWorkspace(projectId);
 
     const chat = useSegmentChat(projectId);
+
+    // Glossary inline edit handler
+    const handleGlossaryUpdate = async (entryId, updates) => {
+        try {
+            await updateGlossaryTerm(projectId, entryId, {
+                target_term: updates.target_term,
+                context_note: updates.context_note,
+            });
+        } catch (err) {
+            console.error('Glossary update failed:', err);
+        }
+    };
 
     // Virtualization ref for scrollable container
     const parentRef = useRef(null);
@@ -363,6 +376,7 @@ export function SplitView({ projectId, onBack }) {
                                         onNavigate={handleNavigation}
                                         onContextMenu={handleContextMenu}
                                         registerEditor={(id, ed) => editorRefs.current[id] = ed}
+                                        onGlossaryUpdate={handleGlossaryUpdate}
                                     />
                                 </div>
                             );

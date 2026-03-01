@@ -39,6 +39,7 @@ export function TargetColumn({
     onToggleFlag,
     registerEditor,
     showDebug,
+    onGlossaryUpdate,
     tcMode = null,
     activeTCStage = 0,
     baseStage = 0,
@@ -225,7 +226,7 @@ export function TargetColumn({
                         </div>
                         <div className="space-y-1">
                             {glossaryMatches.map((match, idx) => (
-                                <GlossaryCard key={idx} match={match} />
+                                <GlossaryCard key={idx} match={match} onUpdate={onGlossaryUpdate} />
                             ))}
                         </div>
                     </div>

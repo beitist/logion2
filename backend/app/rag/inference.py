@@ -463,9 +463,6 @@ Rules:
         for attempt in range(max_retries):
             try:
                 messages = [{"role": "user", "content": prompt}]
-                # Prefill assistant response with "[" to force JSON array output
-                if json_mode:
-                    messages.append({"role": "assistant", "content": "["})
 
                 res = await self._anthropic_client.messages.create(
                     model=model_name,
@@ -475,9 +472,6 @@ Rules:
                 )
 
                 txt = res.content[0].text.strip()
-                # Restore the prefilled "[" that Claude continues from
-                if json_mode:
-                    txt = "[" + txt
                 usage = {
                     "input_tokens": res.usage.input_tokens,
                     "output_tokens": res.usage.output_tokens,

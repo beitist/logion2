@@ -143,13 +143,23 @@ class SegmentService:
             inner_meta = current_meta.get("metadata", {})
             if not isinstance(inner_meta, dict): inner_meta = {}
             
-            current_meta['context_matches'] = context_matches
-            
+            # Merge new context_matches, preserving old MT card if inference returned nothing
+            if context_matches:
+                current_meta['context_matches'] = context_matches
+            else:
+                # Retrieval returned nothing — keep existing matches intact
+                logger.warning(f"Segment {segment.id}: No context_matches from retrieval, preserving existing")
+
             if mode == "translate":
-                segment.target_content = target_text
-                inner_meta['ai_draft'] = target_text
+                if target_text:
+                    segment.target_content = target_text
+                    inner_meta['ai_draft'] = target_text
+                else:
+                    # Inference failed or returned empty — don't wipe existing translation
+                    logger.warning(f"Segment {segment.id}: Empty target_text, preserving existing translation")
             elif mode == "draft":
-                inner_meta['ai_draft'] = target_text
+                if target_text:
+                    inner_meta['ai_draft'] = target_text
             
             # 5. Log Usage (LLM + Retrieval)
             usages_to_log = []
