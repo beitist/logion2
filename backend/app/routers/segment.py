@@ -18,7 +18,12 @@ async def update_segment(segment_id: str, update: SegmentUpdate, background_task
     segment = db.query(Segment).filter(Segment.id == segment_id).first()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
-    
+
+    # Lock check: reject content edits on locked segments
+    _meta = segment.metadata_json or {}
+    if _meta.get("metadata", {}).get("locked") and update.target_content is not None:
+        raise HTTPException(status_code=423, detail="Segment is locked")
+
     if update.target_content is not None:
         segment.target_content = update.target_content
 
@@ -72,6 +77,36 @@ async def update_segment(segment_id: str, update: SegmentUpdate, background_task
     res.pop('embedding', None)
     res.pop('_sa_instance_state', None)
     return res
+
+
+@router.post("/{segment_id}/propagate")
+async def propagate_to_repetitions(segment_id: str, db: Session = Depends(get_db)):
+    """Propagate target_content + status to all segments with identical source_content."""
+    segment = db.query(Segment).filter(Segment.id == segment_id).first()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+    if not segment.target_content:
+        raise HTTPException(status_code=400, detail="Segment has no translation to propagate")
+
+    repetitions = db.query(Segment).filter(
+        Segment.project_id == segment.project_id,
+        Segment.source_content == segment.source_content,
+        Segment.id != segment.id
+    ).all()
+
+    updated = 0
+    skipped_locked = 0
+    for rep in repetitions:
+        meta = rep.metadata_json or {}
+        if meta.get("metadata", {}).get("locked"):
+            skipped_locked += 1
+            continue
+        rep.target_content = segment.target_content
+        rep.status = segment.status
+        updated += 1
+
+    db.commit()
+    return {"propagated": updated, "skipped_locked": skipped_locked}
 
 
 async def _trigger_auto_glossary_re_extract(segment_id: str, project_id: str):

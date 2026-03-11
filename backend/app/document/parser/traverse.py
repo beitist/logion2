@@ -244,6 +244,8 @@ def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict, list]:
         'superscript', 'subscript',
         # Structural elements that carry content/annotation
         'comment', 'shape',
+        # Reference elements (must round-trip to preserve footnote/endnote anchors)
+        'footnote', 'endnote',
     }
 
     if not source_text:
@@ -541,28 +543,13 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
                 if len(stages) >= 2:
                     location['revision_stages'] = stages
 
-    # Whitespace Handling (Preservation)
-    leading_ws = ""
-    trailing_ws = ""
-
-    match_leading = re.match(r'^(\s+)', final_content)
-    if match_leading:
-        leading_ws = match_leading.group(1)
-
-    match_trailing = re.search(r'(\s+)$', final_content)
-    if match_trailing:
-        trailing_ws = match_trailing.group(1)
-
+    # Pre-strip: extract outer whitespace for empty-check, but per-segment
+    # whitespace is extracted AFTER tag-stripping (see below) so that spaces
+    # hidden inside wrapper tags are correctly captured.
     clean_content = final_content.strip()
     if not clean_content:
          if not "[SHAPE]" in final_content:
              return []
-
-    ws_meta = {}
-    if leading_ws: ws_meta['leading'] = leading_ws
-    if trailing_ws: ws_meta['trailing'] = trailing_ws
-
-    location['whitespaces'] = ws_meta
 
     # Segmentation — skip sentence splitting for TC paragraphs to avoid
     # duplicating full-paragraph revision_stages across sub-segments.
@@ -573,6 +560,7 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
     repaired_parts = repair_tags(parts)
 
     final_segments = []
+    num_parts = len(repaired_parts)
 
     for i, part in enumerate(repaired_parts):
         seg_loc = location.copy()
@@ -587,6 +575,45 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
         # Store wrapper tag IDs in metadata for the export assembler
         if wrapper_tag_ids:
             seg_loc['wrapper_tags'] = wrapper_tag_ids
+
+        # Whitespace Handling (Preservation)
+        # Extract AFTER tag-stripping so that spaces originally inside wrapper
+        # tags (e.g. '<1>Text </1>' → 'Text ') are correctly detected.
+        # For multi-sentence paragraphs: leading ws on first segment,
+        # trailing ws on last segment, inner segments get per-part ws only.
+        leading_ws = ""
+        trailing_ws = ""
+
+        # Per-part whitespace (spaces exposed after tag stripping)
+        match_leading = re.match(r'^(\s+)', clean_part)
+        if match_leading:
+            leading_ws = match_leading.group(1)
+
+        match_trailing = re.search(r'(\s+)$', clean_part)
+        if match_trailing:
+            trailing_ws = match_trailing.group(1)
+
+        # Paragraph-level outer whitespace: only first/last segment
+        if i == 0:
+            outer_leading = re.match(r'^(\s+)', final_content)
+            if outer_leading:
+                # Use outer leading if it's longer (covers both inner + outer)
+                if len(outer_leading.group(1)) > len(leading_ws):
+                    leading_ws = outer_leading.group(1)
+
+        if i == num_parts - 1:
+            outer_trailing = re.search(r'(\s+)$', final_content)
+            if outer_trailing:
+                if len(outer_trailing.group(1)) > len(trailing_ws):
+                    trailing_ws = outer_trailing.group(1)
+
+        ws_meta = {}
+        if leading_ws: ws_meta['leading'] = leading_ws
+        if trailing_ws: ws_meta['trailing'] = trailing_ws
+        seg_loc['whitespaces'] = ws_meta
+
+        # Strip the whitespace from the stored text (editor works without it)
+        clean_part = clean_part.strip()
 
         final_segments.append(SegmentInternal(
             id=str(uuid.uuid4()),

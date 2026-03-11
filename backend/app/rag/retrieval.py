@@ -332,7 +332,104 @@ class RetrievalEngine:
                 chunk_index=chunk.chunk_index,
                 file_id=file.id
             ))
+
+        # Log how many context chunks were found and from which categories.
+        # This helps diagnose why mandatory/optional matches may not appear in the UI.
+        if matches:
+            cats = {}
+            for m in matches:
+                cats[m.category] = cats.get(m.category, 0) + 1
+            logger.info(f"Vector search: {len(matches)} chunks found for project {project_id} — by category: {cats}")
+        else:
+            logger.warning(f"Vector search: 0 chunks found for project {project_id}. "
+                           f"Check if legal/background files have been ingested (ContextChunk table).")
+
         return matches, current_tokens
+
+    def search_internal_tm(self, db: Session, project_id: str, segment_id: str,
+                           limit: int = 3, min_score: int = 50) -> List[TranslationMatch]:
+        """
+        Search for similar already-translated segments in the same project.
+        1. Cosine pre-filter via pgvector to get candidates
+        2. Voyage AI rerank for accurate scoring
+        3. Filter by min_score threshold
+        """
+        segment = db.query(Segment).filter(Segment.id == segment_id).first()
+        if not segment or segment.embedding is None:
+            return []
+
+        query_vec = segment.embedding
+        if hasattr(query_vec, 'tolist'):
+            query_vec = query_vec.tolist()
+
+        # Cosine pre-filter: fetch generous candidate pool for reranking
+        dist_col = Segment.embedding.cosine_distance(query_vec).label("dist")
+        results = db.query(Segment, dist_col).filter(
+            Segment.project_id == project_id,
+            Segment.id != segment_id,
+            Segment.target_content.isnot(None),
+            Segment.target_content != "",
+            Segment.status.in_(["translated", "mt_draft"]),
+            Segment.embedding.isnot(None),
+        ).order_by("dist").limit(20).all()
+
+        # Skip exact repetitions
+        candidates = []
+        for r, dist in results:
+            if dist > 0.5:  # Very loose pre-filter (50% cosine similarity)
+                break
+            if r.source_content == segment.source_content:
+                continue
+            candidates.append(TranslationMatch(
+                id=f"internal-{r.id}",
+                content=r.target_content,
+                source_text=r.source_content,
+                type="internal",
+                category="tm",
+                score=0,
+                filename="Project TM",
+            ))
+
+        if not candidates:
+            return []
+
+        # Rerank with Voyage AI for accurate scoring
+        scored, _ = self._rerank_internal_tm(segment.source_content, candidates)
+
+        # Filter by min_score and limit
+        return [m for m in scored if m.score >= min_score][:limit]
+
+    def _rerank_internal_tm(self, query: str, candidates: List[TranslationMatch]) -> tuple[List[TranslationMatch], int]:
+        """Rerank internal TM candidates using Voyage AI rerank-2.5."""
+        if not candidates:
+            return [], 0
+
+        if not self._client:
+            # Fallback: rough cosine-based score
+            for m in candidates:
+                m.score = 60
+            return candidates, 0
+
+        clean_query = self.clean_tags(query)
+        docs = [self.clean_tags(c.source_text) for c in candidates]
+
+        try:
+            reranking = self._client.rerank(
+                query=clean_query,
+                documents=docs,
+                model="rerank-2.5",
+                top_k=len(docs)
+            )
+
+            for r in reranking.results:
+                candidates[r.index].score = int(r.relevance_score * 100)
+
+            candidates.sort(key=lambda x: x.score, reverse=True)
+            return candidates, reranking.total_tokens
+
+        except Exception as e:
+            logger.error(f"Internal TM Rerank Failed: {e}")
+            return candidates, 0
 
     def _rerank(self, query: str, candidates: List[TranslationMatch]) -> List[TranslationMatch]:
         # Legacy method kept for interface compatibility if needed, but we use _rerank_and_score now internally

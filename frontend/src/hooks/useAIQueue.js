@@ -46,8 +46,8 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
         if (!isWorkflow && mode !== "analyze") mode = "draft";
         if (generatingSegmentsRef.current[segmentId]) return;
 
-        generatingSegmentsRef.current[segmentId] = true;
-        setGeneratingSegments(prev => ({ ...prev, [segmentId]: true }));
+        generatingSegmentsRef.current[segmentId] = mode;
+        setGeneratingSegments(prev => ({ ...prev, [segmentId]: mode }));
 
         const seg = segmentsRef.current.find(s => s.id === segmentId);
         if (!isAuto) log(`Generating draft (${mode}${tcParams ? ' +TC' : ''}) for segment #${seg?.index + 1}...`, 'info', { segmentId });

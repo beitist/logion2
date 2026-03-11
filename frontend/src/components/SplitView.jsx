@@ -52,6 +52,7 @@ export function SplitView({ projectId, onBack }) {
 
         // Handlers
         handleToggleFlag,
+        handleToggleLock,
         handleFullReinit,
         handleAutoTranslate,
         handleBatchProcess,
@@ -378,6 +379,7 @@ export function SplitView({ projectId, onBack }) {
                                         showDebug={showDebug}
                                         onAiDraft={handleAiDraft}
                                         onToggleFlag={handleToggleFlag}
+                                        onToggleLock={handleToggleLock}
                                         onSave={handleSave}
                                         onFocus={handleSegmentFocus}
                                         onNavigate={handleNavigation}
@@ -523,7 +525,12 @@ export function SplitView({ projectId, onBack }) {
                                     {activeSettingsTab === 'workflows' && (
                                         <WorkflowsTab
                                             project={project}
-                                            segments={segments}
+                                            // Pass filteredSegments (already filtered by activeFileId dropdown)
+                                            // so that batch workflows only process the currently visible file.
+                                            segments={filteredSegments}
+                                            // Provide file context so WorkflowsTab can show an info banner
+                                            activeFileId={activeFileId}
+                                            activeFileName={activeFileName}
                                             onQueueAll={queueSegments}
                                             onBatchProcess={handleBatchProcess} // Allow Blocking Workflows
                                             onTCBatch={handleTCBatch} // TC Step-by-Step

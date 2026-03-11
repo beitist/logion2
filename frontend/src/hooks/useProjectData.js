@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
     getSegments, getProject, updateSegment, downloadProject, downloadProjectTMX,
-    deleteProject
+    deleteProject, propagateTranslation
 } from "../api/client";
 import { serializeContent } from '../utils/editorTransforms';
 
@@ -110,6 +110,29 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
             const duration = Math.round(performance.now() - start);
             setSegments(prev => prev.map(s => s.id === id ? { ...s, target_content: serialized, status: newStatus } : s));
             log(`Segment saved in ${duration}ms`, 'success');
+
+            // Propagation dialog for repetitions
+            if (seg.metadata?.repetition_count > 1 && !isEmpty) {
+                const count = seg.metadata.repetition_count - 1;
+                if (confirm(`Soll ich ${count} gleiche Segment(e) gleich übersetzen?`)) {
+                    try {
+                        const res = await propagateTranslation(id);
+                        if (res.propagated > 0) {
+                            setSegments(prev => prev.map(s =>
+                                s.source_content === seg.source_content && s.id !== id && !s.metadata?.locked
+                                    ? { ...s, target_content: serialized, status: newStatus }
+                                    : s
+                            ));
+                            log(`${res.propagated} repetition(s) updated`, 'success');
+                        }
+                        if (res.skipped_locked > 0) {
+                            log(`${res.skipped_locked} locked segment(s) skipped`, 'info');
+                        }
+                    } catch (propErr) {
+                        log(`Propagation failed: ${propErr.message}`, 'error');
+                    }
+                }
+            }
         } catch (err) {
             log(`Save failed: ${err.message}`, 'error');
             console.error("Save failed", err);
@@ -128,6 +151,25 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
             console.error("Failed to toggle flag", err);
             setSegments(prev => prev.map(s => s.id === segmentId ? { ...s, metadata: { ...(s.metadata || {}), flagged: currentFlag } } : s));
             alert("Failed to update flag");
+        }
+    };
+
+    const handleToggleLock = async (segmentId, currentLock) => {
+        const newLock = !currentLock;
+        setSegments(prev => prev.map(s =>
+            s.id === segmentId
+                ? { ...s, metadata: { ...(s.metadata || {}), locked: newLock } }
+                : s
+        ));
+        try {
+            await updateSegment(segmentId, undefined, undefined, { locked: newLock });
+        } catch (err) {
+            console.error("Failed to toggle lock", err);
+            setSegments(prev => prev.map(s =>
+                s.id === segmentId
+                    ? { ...s, metadata: { ...(s.metadata || {}), locked: currentLock } }
+                    : s
+            ));
         }
     };
 
@@ -189,6 +231,7 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         editorRefs,
         handleSave,
         handleToggleFlag,
+        handleToggleLock,
         handleEditorUpdate,
         handleExport,
         handleTmXExport,

@@ -90,7 +90,7 @@ async def delete_project(project_id: str, service: ProjectService = Depends(get_
 @router.post("/{project_id}/duplicate", response_model=ProjectResponse)
 def duplicate_project(project_id: str, service: ProjectService = Depends(get_project_service)):
     """
-    Creates a deep copy of the project.
+    Creates a deep copy of the project including context chunks and TM units.
     """
     return service.duplicate_project(project_id)
 

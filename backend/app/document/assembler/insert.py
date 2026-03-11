@@ -31,15 +31,15 @@ def get_merged_content(segs_for_para):
     segs_for_para.sort(key=lambda x: x.metadata.get("sub_index", 0))
     for s in segs_for_para:
         text = s.target_content if s.target_content is not None else s.source_text
-        
-        # 1. Restore Wrapper Tags
+
+        # 1. Restore whitespaces FIRST (so they end up inside wrapper tags)
+        text = _restore_whitespaces(text, s.metadata)
+
+        # 2. Restore Wrapper Tags (wraps the content including whitespace)
         wrappers = s.metadata.get("wrapper_tags", [])
         if wrappers:
             for tid in reversed(wrappers):
                 text = f"<{tid}>{text}</{tid}>"
-
-        # 2. Restore whitespaces
-        text = _restore_whitespaces(text, s.metadata)
         
         full_text += text
         if s.tags:

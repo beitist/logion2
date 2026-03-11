@@ -66,13 +66,30 @@ const TagNode = Node.create({
     },
 })
 
-const MenuBar = ({ editor, availableTags, onAiDraft }) => {
+const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, onToggleLock }) => {
     if (!editor) {
         return null
     }
 
     return (
         <div className="flex flex-wrap items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 rounded-t-md">
+            {/* Lock Toggle Button */}
+            {onToggleLock && (
+                <button
+                    tabIndex="-1"
+                    onClick={onToggleLock}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className={`px-2 py-1 text-xs rounded border mr-1 ${
+                        isLocked
+                            ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                            : "bg-gray-50 text-gray-400 border-gray-300 hover:bg-gray-100"
+                    }`}
+                    title={isLocked ? "Unlock segment" : "Lock segment"}
+                >
+                    {isLocked ? "🔒" : "🔓"}
+                </button>
+            )}
+
             {/* AI Action Button */}
             {onAiDraft && (
                 <>
@@ -89,50 +106,45 @@ const MenuBar = ({ editor, availableTags, onAiDraft }) => {
                 </>
             )}
 
-            {/* Tag Buttons: INSERT NODE */}
-            {/* 1. Generic Tab Button REMOVED (User Request) */}
-            {/* But we replace it with NBSP button? Or just add NBSP button next to it? */}
-            {/* User requested to remove TAB button. Let's add NBSP instead. */}
-
-            <button
-                tabIndex="-1"
-                onClick={() => editor.chain().focus().insertContent('\u00A0').run()}
-                onMouseDown={(e) => e.preventDefault()}
-                className="px-2 py-1 text-xs font-mono rounded border bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100 active:bg-gray-200 min-w-[24px]"
-                title="Insert Non-Breaking Space (Cmd+Opt+Ctrl+Space)"
-            >
-                ␣
-            </button>
-
-            {/* 2. Specific ID Buttons (excluding Tabs and Comments) */}
-            {availableTags && Object.keys(availableTags).map(tid => {
-                const tag = availableTags[tid];
-                if (!tag) return null;
-
-                // Only skip 'tab' (generic button) and 'comment' (not needed as button)
-                // We SHOW bold/italic/underline as chips because the user expects them as numbered tags.
-                if (['tab', 'comment'].includes(tag.type)) return null;
-
-                // Determine Label
-                let label = tid;
-                let display = tid;
-                let title = `Tag ${tid}`;
-
-                return (
+            {/* Tag Buttons: only shown when not locked */}
+            {!isLocked && (
+                <>
                     <button
-                        key={tid}
                         tabIndex="-1"
-                        onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: tid, label: label } }).run()}
+                        onClick={() => editor.chain().focus().insertContent('\u00A0').run()}
                         onMouseDown={(e) => e.preventDefault()}
-                        className="px-2 py-1 text-xs font-mono rounded border bg-white text-gray-600 border-gray-300 hover:bg-blue-50 active:bg-blue-100 min-w-[24px]"
-                        title={title}
+                        className="px-2 py-1 text-xs font-mono rounded border bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100 active:bg-gray-200 min-w-[24px]"
+                        title="Insert Non-Breaking Space (Cmd+Opt+Ctrl+Space)"
                     >
-                        {display}
+                        ␣
                     </button>
-                )
-            })}
 
-            {!availableTags && <span className="text-xs text-gray-400">No tags</span>}
+                    {availableTags && Object.keys(availableTags).map(tid => {
+                        const tag = availableTags[tid];
+                        if (!tag) return null;
+                        if (['tab', 'comment'].includes(tag.type)) return null;
+
+                        let label = tid;
+                        let display = tid;
+                        let title = `Tag ${tid}`;
+
+                        return (
+                            <button
+                                key={tid}
+                                tabIndex="-1"
+                                onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: tid, label: label } }).run()}
+                                onMouseDown={(e) => e.preventDefault()}
+                                className="px-2 py-1 text-xs font-mono rounded border bg-white text-gray-600 border-gray-300 hover:bg-blue-50 active:bg-blue-100 min-w-[24px]"
+                                title={title}
+                            >
+                                {display}
+                            </button>
+                        )
+                    })}
+
+                    {!availableTags && <span className="text-xs text-gray-400">No tags</span>}
+                </>
+            )}
         </div>
     )
 }
@@ -175,7 +187,7 @@ class NbspCharacter extends InvisibleCharacter {
     }
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false, trackChangesEnabled = false, trackChangesUser = null }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, isLocked = false, onToggleLock, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false, trackChangesEnabled = false, trackChangesUser = null }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
@@ -557,7 +569,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
 
     return (
         <div id={`editor-${segmentId}`} className={containerClasses}>
-            {!isReadOnly && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={() => onAiDraft && segmentId ? onAiDraft(segmentId) : null} />}
+            {(!isReadOnly || isLocked) && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={!isLocked ? (() => onAiDraft && segmentId ? onAiDraft(segmentId) : null) : null} isLocked={isLocked} onToggleLock={onToggleLock} />}
             <EditorContent editor={editor} className={editorContentClasses} />
         </div>
     )

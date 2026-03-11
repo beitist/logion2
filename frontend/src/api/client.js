@@ -45,7 +45,10 @@ export async function updateSegment(segmentId, content, status, metadata) {
         },
         body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error("Failed to update segment");
+    if (!res.ok) {
+        if (res.status === 423) throw new Error("Segment is locked");
+        throw new Error("Failed to update segment");
+    }
     return res.json();
 }
 
@@ -319,6 +322,16 @@ export async function deleteProjectFile(projectId, fileId) {
         method: "DELETE",
     });
     if (!res.ok) throw new Error("Failed to delete file");
+    return res.json();
+}
+
+// Propagate translation to all identical segments
+export async function propagateTranslation(segmentId) {
+    const res = await fetch(`${API_BASE}/segment/${segmentId}/propagate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new Error("Failed to propagate");
     return res.json();
 }
 

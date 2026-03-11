@@ -2,7 +2,7 @@
 
 import os
 import datetime
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -42,11 +42,25 @@ class SegmentService:
 
     def get_segments(self, project_id: str) -> List[Segment]:
         """
-        Returns all segments for a project. 
-        Note: The Segment model has properties for tags, metadata, and context_matches 
+        Returns all segments for a project.
+        Note: The Segment model has properties for tags, metadata, and context_matches
         that map to metadata_json, allowing direct Pydantic serialization.
+        Injects repetition_count on-the-fly for segments with identical source_content.
         """
-        return self.db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
+        segments = self.db.query(Segment).filter(Segment.project_id == project_id).order_by(Segment.index).all()
+
+        # Count repetitions per source_content (on-the-fly, no DB write)
+        source_counts = Counter(s.source_content for s in segments)
+        for seg in segments:
+            count = source_counts[seg.source_content]
+            if count > 1:
+                meta = dict(seg.metadata_json or {})
+                if "metadata" not in meta:
+                    meta["metadata"] = {}
+                meta["metadata"]["repetition_count"] = count
+                seg.metadata_json = meta
+
+        return segments
 
     async def generate_and_log_draft(self, segment_id: str, mode: str = "translate", is_workflow: bool = False, force_refresh: bool = False, tc_params=None) -> Dict[str, Any]:
         """

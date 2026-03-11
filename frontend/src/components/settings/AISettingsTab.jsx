@@ -298,40 +298,32 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                         title="Automation Behavior"
                         description="Control how and when MT drafts are generated"
                     >
-                        <div className="space-y-4">
+                        <div className="space-y-2">
                             {/* Auto-fetch on Focus Toggle */}
-                            <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100">
-                                <div className="flex-1">
-                                    <div className="text-sm font-medium text-gray-800">
-                                        Auto-fetch MT on focus
-                                    </div>
-                                    <div className="text-xs text-gray-500 mt-0.5">
-                                        When enabled, focusing an empty segment triggers MT generation
-                                    </div>
-                                </div>
+                            <label className="flex items-center gap-3 px-3 py-2 bg-white rounded-lg border border-gray-100 cursor-pointer">
                                 <SettingsToggle
                                     checked={guiSettings.auto_fetch_mt_on_focus}
                                     onChange={(val) => setGuiSettings({ ...guiSettings, auto_fetch_mt_on_focus: val })}
                                     accentColor="bg-indigo-500"
                                 />
-                            </div>
+                                <div className="min-w-0">
+                                    <span className="text-sm font-medium text-gray-800">Auto-fetch MT on focus</span>
+                                    <span className="text-xs text-gray-400 ml-1.5">— generates draft when focusing empty segment</span>
+                                </div>
+                            </label>
 
                             {/* Auto-Glossary on Edit */}
-                            <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100">
-                                <div className="flex-1">
-                                    <div className="text-sm font-medium text-gray-800">
-                                        Auto-Glossary on single MT
-                                    </div>
-                                    <div className="text-xs text-gray-500 mt-0.5">
-                                        Extract glossary terms after each manual/auto-fetch translation
-                                    </div>
-                                </div>
+                            <label className="flex items-center gap-3 px-3 py-2 bg-white rounded-lg border border-gray-100 cursor-pointer">
                                 <SettingsToggle
                                     checked={settings.auto_glossary_on_edit}
                                     onChange={(val) => setSettings({ ...settings, auto_glossary_on_edit: val })}
                                     accentColor="bg-teal-500"
                                 />
-                            </div>
+                                <div className="min-w-0">
+                                    <span className="text-sm font-medium text-gray-800">Auto-Glossary on single MT</span>
+                                    <span className="text-xs text-gray-400 ml-1.5">— extracts terms after each translation</span>
+                                </div>
+                            </label>
 
                             {/* Batch Size */}
                             <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100">

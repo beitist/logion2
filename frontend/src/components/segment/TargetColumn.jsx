@@ -37,6 +37,7 @@ export function TargetColumn({
     onFocus,
     onNavigate,
     onToggleFlag,
+    onToggleLock,
     registerEditor,
     showDebug,
     onGlossaryUpdate,
@@ -50,6 +51,7 @@ export function TargetColumn({
 }) {
     const [localEditor, setLocalEditor] = React.useState(null);
     const isFlagged = segment.metadata?.flagged || false;
+    const isLocked = segment.metadata?.locked || false;
     const glossaryMatches = sortedMatches.filter(m => m.type === 'glossary');
 
     // TC base state: slider is at the base stage (translate original/base, TC off)
@@ -106,7 +108,7 @@ export function TargetColumn({
                             : 'Target (DE)';
 
     return (
-        <div className={`p-5 rounded-r-xl flex flex-col relative group ${bgClass}`}>
+        <div className={`p-5 rounded-r-xl flex flex-col relative group ${bgClass} ${isLocked ? 'ring-1 ring-red-200' : ''}`}>
             {/* Header row with labels and badges */}
             <div className="text-xs text-gray-400 font-mono mb-2 uppercase tracking-wider flex justify-between items-center select-none">
                 <div className="flex items-center gap-2">
@@ -168,7 +170,9 @@ export function TargetColumn({
                     availableTags={segment.tags}
                     contextMatches={sortedMatches}
                     onSave={onSave}
-                    isReadOnly={editorLocked}
+                    isReadOnly={editorLocked || isLocked}
+                    isLocked={isLocked}
+                    onToggleLock={onToggleLock ? () => onToggleLock(segment.id, isLocked) : null}
                     aiSettings={aiSettings}
                     onAiDraft={(id) => onAiDraft(id)}
                     onFocus={() => onFocus(segment.id)}

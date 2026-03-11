@@ -131,20 +131,21 @@ class ReingestWorkflow(BaseWorkflow):
             self.update_progress(100, status="ready")
             return
 
-        # 1. Chunks
+        # Phase 2: Vectorize Context Chunks
+        self.log(f"Phase 2: Vectorizing {total_chunks} context chunks...")
         total_tokens = 0
-        
+
         for i in range(0, total_chunks, BATCH_SIZE):
             batch = all_chunks_to_persist[i : i+BATCH_SIZE]
             texts = [engine.clean_tags(b['text']) for b in batch]
-            
+
             try:
                 embeddings, tokens = engine.embed_batch(texts, input_type="document")
                 total_tokens += tokens
             except Exception as e:
                 self.log(f"Embedding error: {e}")
                 continue
-                
+
             db_objs = []
             for b, vec in zip(batch, embeddings):
                 db_objs.append(ContextChunk(
@@ -154,39 +155,46 @@ class ReingestWorkflow(BaseWorkflow):
                     embedding=vec,
                     chunk_index=b['index']
                 ))
-            
+
             self.db.add_all(db_objs)
             self.db.commit()
-            
+
             processed += len(batch)
             progress = int((processed / total_work) * 100)
             self.update_progress(progress)
-            
+
             if i % (BATCH_SIZE * 5) == 0:
                 self.log(f"Vectorized {processed}/{total_work} items...")
-        
-        # 2. Segments (Phase 3) - Same logic as ReinitializeWorkflow.embed_segments
-        self.log("Starting Phase 3: Pre-vectorizing Source Segments...")
-        
+
+        self.log(f"Phase 2 Complete. {total_chunks} chunks vectorized.")
+
+        # Phase 3: Vectorize Source Segments
+        self.log(f"Phase 3: Vectorizing {total_segments} source segments...")
+
         for i in range(0, total_segments, BATCH_SIZE):
             batch_segs = segments[i : i+BATCH_SIZE]
             texts = [engine.clean_tags(s.source_content) for s in batch_segs]
-            
+
             try:
                 embeddings, tokens = engine.embed_batch(texts, input_type="document")
                 total_tokens += tokens
-                
+
                 for s, vec in zip(batch_segs, embeddings):
                     s.embedding = vec
-                
-                self.db.commit() # Save updates
-                
+
+                self.db.commit()
+
                 processed += len(batch_segs)
                 progress = int((processed / total_work) * 100)
                 self.update_progress(progress)
-                
+
+                if i % (BATCH_SIZE * 5) == 0:
+                    self.log(f"Vectorized {processed}/{total_work} items...")
+
             except Exception as e:
                 self.log(f"Segment embedding error: {e}")
+
+        self.log(f"Phase 3 Complete. {total_segments} segments vectorized.")
     
         # Update Usage Stats
         if total_tokens > 0:

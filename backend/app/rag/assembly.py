@@ -3,7 +3,7 @@ from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from ..models import Segment, SegmentStatus
+from ..models import Segment, SegmentStatus, Project
 from .types import SegmentContext, TranslationMatch
 from .retrieval import RetrievalEngine
 from ..glossary_service import GlossaryMatcher
@@ -15,6 +15,9 @@ class ContextAssembler:
         self.db = db
         self.retrieval = RetrievalEngine()
         self.glossary = GlossaryMatcher(project_id, db)
+        # Load project config for thresholds
+        project = db.query(Project).filter(Project.id == project_id).first()
+        self._ai_settings = (project.config or {}).get("ai_settings", {}) if project else {}
         
     def assemble_context(self, segment: Segment) -> SegmentContext:
         """
@@ -32,6 +35,16 @@ class ContextAssembler:
             segment_id=segment.id
         )
         
+        # 1b. Internal Project TM (cosine pre-filter + Voyage rerank)
+        internal_tm_threshold = self._ai_settings.get("threshold_internal_tm", 50)
+        internal_tm = self.retrieval.search_internal_tm(
+            db=self.db,
+            project_id=self.project_id,
+            segment_id=segment.id,
+            min_score=internal_tm_threshold,
+        )
+        matches.extend(internal_tm)
+
         # 2. Neighbors (Source File Context)
         # We need the file_id and chunk_index.
         # Segment is linked to Project, but not directly to ContextChunk easily unless we trace it back.

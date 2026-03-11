@@ -1,5 +1,6 @@
 import os
 import re
+import html
 import shutil
 from collections import defaultdict
 import openpyxl
@@ -40,8 +41,9 @@ def reassemble_xlsx(input_path: str, output_path: str, segments) -> None:
         parts = []
         for s in segs:
             text = s.target_content if s.target_content else s.source_text
-            # Strip any remaining HTML tags from tiptap
+            # Strip any remaining HTML tags from tiptap, then decode entities
             text = re.sub(r'<[^>]+>', '', text)
+            text = html.unescape(text)
             parts.append(text.strip())
 
         cell_text = " ".join(parts)

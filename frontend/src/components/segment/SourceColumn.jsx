@@ -52,6 +52,7 @@ export function SourceColumn({
     // Threshold values for filtering matches
     const tMandatory = aiSettings.threshold_mandatory ?? 60;
     const tOptional = aiSettings.threshold_optional ?? 40;
+    const tInternalTm = aiSettings.threshold_internal_tm ?? 50;
 
     // Extract glossary matches for inline highlighting
     const glossaryMatches = useMemo(() => {
@@ -238,21 +239,21 @@ export function SourceColumn({
                             Translation Memory / Context
                         </h4>
                         <div className="flex gap-1">
-                            {/* Search/Refresh matches (cheap) */}
+                            {/* Search/Refresh matches (cheap - retrieval only, no LLM) */}
                             <button
                                 onClick={() => onAiDraft(segment.id, false, "analyze", false, true)}
-                                className={`text-gray-400 hover:text-blue-600 transition-colors ${generatingSegments[segment.id] ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                className={`text-gray-400 hover:text-blue-600 transition-colors ${generatingSegments[segment.id] === 'analyze' ? 'animate-pulse text-blue-500' : generatingSegments[segment.id] ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 title="Search Matches (Refresh) - Cheap"
-                                disabled={generatingSegments[segment.id]}
+                                disabled={!!generatingSegments[segment.id]}
                             >
                                 <Search size={14} />
                             </button>
                             {/* Regenerate translation (uses tokens) */}
                             <button
                                 onClick={() => onAiDraft(segment.id, false, "translate", false, true)}
-                                className={`text-gray-400 hover:text-indigo-600 transition-colors ${generatingSegments[segment.id] ? 'animate-spin text-indigo-500' : ''}`}
+                                className={`text-gray-400 hover:text-indigo-600 transition-colors ${generatingSegments[segment.id] && generatingSegments[segment.id] !== 'analyze' ? 'animate-spin text-indigo-500' : ''}`}
                                 title="Regenerate Translation (Force Refresh) - Uses Tokens"
-                                disabled={generatingSegments[segment.id]}
+                                disabled={!!generatingSegments[segment.id]}
                             >
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -275,7 +276,7 @@ export function SourceColumn({
 
                         {/* Skeleton loader: shown while generating and no MT match exists yet.
                            Mimics the look of an MT MatchCard with pulsing placeholder lines. */}
-                        {generatingSegments[segment.id] && !sortedMatches.some(m => m.type === 'mt') && (
+                        {generatingSegments[segment.id] && generatingSegments[segment.id] !== 'analyze' && !sortedMatches.some(m => m.type === 'mt') && (
                             <div className="p-2.5 rounded-lg border-l-4 border-l-orange-500 border border-gray-200/50 bg-orange-50 animate-pulse">
                                 <div className="flex justify-between items-center mb-2">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-orange-700 flex items-center gap-1">

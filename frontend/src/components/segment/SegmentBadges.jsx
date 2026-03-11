@@ -3,12 +3,13 @@ import { Bug } from 'lucide-react';
 
 /**
  * Displays segment metadata badges and status indicators.
- * 
+ *
  * Badge Types:
  * - H: Header segment
  * - Tb: Table cell segment
  * - Status: draft/translated/error
- * 
+ * - Repetition count (×N)
+ *
  * @param {Object} segment - Segment with metadata and status
  * @param {boolean} isFlagged - Whether segment is flagged for review
  * @param {Function} onToggleFlag - Callback to toggle flag state
@@ -24,6 +25,16 @@ export function SegmentBadges({ segment, isFlagged, onToggleFlag }) {
             >
                 <Bug size={14} className={isFlagged ? "fill-yellow-500" : ""} />
             </button>
+
+            {/* Repetition badge */}
+            {segment.metadata?.repetition_count > 1 && (
+                <span
+                    className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-slate-100 text-slate-500 border border-slate-200"
+                    title={`${segment.metadata.repetition_count} identical segments`}
+                >
+                    ×{segment.metadata.repetition_count}
+                </span>
+            )}
 
             {/* Status badge */}
             <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${segment.status === 'draft' ? 'bg-yellow-50 text-yellow-600 border-yellow-100' :

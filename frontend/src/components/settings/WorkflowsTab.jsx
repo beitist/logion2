@@ -15,22 +15,24 @@ import { SettingsCard, SettingsSection } from './shared';
  * - Reinitialize source file
  * - Re-ingest context
  */
-export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onSequentialTranslate, onFullReinit }) {
+export function WorkflowsTab({ project, segments, activeFileId, activeFileName, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onSequentialTranslate, onFullReinit }) {
+    // activeFileId: set when user has selected a specific file in the header dropdown.
+    // activeFileName: display name of the selected file (e.g. "report.docx").
+    // When activeFileId is set, `segments` already contains only that file's segments
+    // (filtered in SplitView), so all workflows naturally operate on the subset.
     const [copyLoading, setCopyLoading] = useState(false);
     const [isReinitModalOpen, setIsReinitModalOpen] = useState(false);
 
     const handleRun = (mode) => {
         if (!segments) return;
 
-        // Blocking Batch Workflows
-        if (onBatchProcess && (mode === 'draft' || mode === 'translate')) {
-            if (confirm(`Start Blocking Workflow: ${mode.toUpperCase()} for ${segments.length} segments?`)) {
-                onBatchProcess(mode);
-            }
+        // All modes go through the backend batch workflow
+        if (onBatchProcess) {
+            onBatchProcess(mode);
             return;
         }
 
-        // Background Queue for analyze
+        // Fallback: Background Queue
         const ids = segments.map(s => s.id);
         if (confirm(`Queue ${ids.length} segments for ${mode} (Background)?`)) {
             onQueueAll(ids, mode, true);
@@ -131,6 +133,19 @@ export function WorkflowsTab({ project, segments, onQueueAll, onReingest, onRefr
 
             {/* Scrollable Content */}
             <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+
+                {/* File-scope banner: shown when user has filtered to a specific file */}
+                {activeFileId && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+                        {/* FileText icon inline — lucide already imported in header area */}
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                        <span>
+                            {/* Inform user that all workflows below only target the selected file's segments */}
+                            Workflows affect <strong>{segments.length} segment{segments.length !== 1 ? 's' : ''}</strong> from:{' '}
+                            <span className="font-medium">{activeFileName || 'selected file'}</span>
+                        </span>
+                    </div>
+                )}
 
                 {/* Main Workflows Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

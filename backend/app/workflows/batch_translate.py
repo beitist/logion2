@@ -27,29 +27,35 @@ async def run_background_batch_translate(project_id: str, segment_ids: Optional[
 class BatchTranslateWorkflow(BaseWorkflow):
     async def run(self, segment_ids: Optional[List[str]] = None):
         try:
-            self.log(f"Starting Batch Translation (Async)...")
-            
+            # Read mode from workflow config (set by process_batch_translation)
+            config = self.project.config or {}
+            wf_config = config.get("workflow", {})
+            active_mode = wf_config.get("active_mode", "draft")
+            is_analyze = (active_mode == "analyze")
+
+            mode_label = "Pre-Analysis" if is_analyze else "Batch Translation"
+            self.log(f"Starting {mode_label} (Async)...")
+
             # Fetch segments
             query = self.db.query(Segment).filter(Segment.project_id == self.project_id)
             if segment_ids:
                 query = query.filter(Segment.id.in_(segment_ids))
-            
+
             # Order by index for consistent processing
             segments = query.order_by(Segment.index).all()
             if not segments:
                 self.log("No segments found.")
                 return
-                
+
             total_segments = len(segments)
-            self.log(f"Translating {total_segments} segments...")
-            
+            self.log(f"Processing {total_segments} segments...")
+
             self.update_progress(0, status="processing")
 
             # Init Manager
             manager = RAGManager(self.project_id, self.db)
-            
+
             # Prompt Config
-            config = self.project.config or {}
             ai_settings = config.get("ai_settings", {})
             custom_prompt = ai_settings.get("custom_prompt", "Translate the following text accurately.")
             wf_types = config.get("workflow_types", {})
@@ -58,7 +64,8 @@ class BatchTranslateWorkflow(BaseWorkflow):
             # Batch Processing - Group by CONTIGUOUS segments first
             # This ensures isolated segments (e.g., segment 11 surrounded by translated segments)
             # get their own batch with proper context, rather than being mixed with distant segments.
-            BATCH_SIZE = 5
+            # Analyze mode uses larger batches since no LLM inference is needed.
+            BATCH_SIZE = 20 if is_analyze else 5
             success_count = 0
             
             # Group segments into contiguous runs based on index
@@ -109,8 +116,9 @@ class BatchTranslateWorkflow(BaseWorkflow):
                         segment_ids=batch_ids,
                         source_lang=self.project.source_lang,
                         target_lang=self.project.target_lang,
-                        model_name=model_name, 
-                        custom_prompt=custom_prompt
+                        model_name=model_name,
+                        custom_prompt=custom_prompt,
+                        skip_ai=is_analyze
                     )
                     
                     # Debug: Log batch usage
@@ -159,40 +167,45 @@ class BatchTranslateWorkflow(BaseWorkflow):
                         if result.error:
                             self.log(f"Segment {seg_id} failed: {result.error}")
                             continue
-                        
+
                         # Find segment (already attached to session)
                         seg = next((s for s in segments if s.id == seg_id), None)
                         if seg:
-                            # 1. Update Target Content logic: Only if empty
-                            # Use 'mt_draft' status for batch MT - user must review to change to 'translated'
-                            updated_target = False
-                            if not seg.target_content:
-                                seg.target_content = result.target_text
-                                seg.status = "mt_draft"  # Awaiting user review
-                                updated_target = True
-                            
-                            # 2. Update Metadata
                             meta = seg.metadata_json or {}
-                            meta['ai_draft'] = result.target_text
 
-                            # 3. Context Matches & Glossary & MT Hit
+                            if not is_analyze:
+                                # 1. Update Target Content logic: Only if empty
+                                updated_target = False
+                                if not seg.target_content:
+                                    seg.target_content = result.target_text
+                                    seg.status = "mt_draft"
+                                    updated_target = True
+
+                                # 2. Update Metadata
+                                meta['ai_draft'] = result.target_text
+
+                            # 3. Context Matches & Glossary (always saved)
                             if result.context_used:
                                 matches = result.context_used.matches or []
                                 gloss = result.context_used.glossary_hits or []
                                 serialized_ctx = [m.model_dump() for m in matches] + [m.model_dump() for m in gloss]
-                                
+
                                 # Insert MT Result as a "Hit"
-                                mt_hit = {
-                                    "id": f"mt-result-{seg.id}",
-                                    "content": result.target_text,
-                                    "source_text": seg.source_content,
-                                    "type": "mt",
-                                    "category": "ai",
-                                    "score": 100,
-                                    "filename": "Machine Translation"
-                                }
-                                serialized_ctx.insert(0, mt_hit)
-                                
+                                # For translate/draft: use the new AI result
+                                # For analyze: reuse existing target_content as MT tile (no LLM cost)
+                                mt_text = result.target_text if not is_analyze else seg.target_content
+                                if mt_text:
+                                    mt_hit = {
+                                        "id": f"mt-result-{seg.id}",
+                                        "content": mt_text,
+                                        "source_text": seg.source_content,
+                                        "type": "mt",
+                                        "category": "ai",
+                                        "score": 100,
+                                        "filename": "Machine Translation"
+                                    }
+                                    serialized_ctx.insert(0, mt_hit)
+
                                 meta['context_matches'] = serialized_ctx
                                 
                                 # Log Retrieval Usage (Per Segment)
@@ -222,16 +235,14 @@ class BatchTranslateWorkflow(BaseWorkflow):
 
                             seg.metadata_json = dict(meta)
                             flag_modified(seg, "metadata_json")
-                            
-                            if updated_target:
-                                success_count += 1
-                                
+                            success_count += 1
+
                     self.db.commit()
-                    
+
                     # Update Progress - based on batches completed
                     progress = int(((batch_idx + 1) / total_batches) * 100)
                     self.update_progress(progress, status="processing")
-                    
+
                 except QuotaExceededError as qe:
                     self.log(f"API quota exceeded — stopping workflow. {success_count} segments translated before quota hit.")
                     self.fail(qe)
@@ -242,7 +253,10 @@ class BatchTranslateWorkflow(BaseWorkflow):
                     print(traceback.format_exc())
 
             self.update_progress(100, status="ready")
-            self.log(f"Batch Translation Complete. Updated {success_count} segments.")
+            if is_analyze:
+                self.log(f"Pre-Analysis Complete. Processed {total_segments} segments.")
+            else:
+                self.log(f"Batch Translation Complete. Updated {success_count} segments.")
 
         except Exception as e:
             self.fail(e)

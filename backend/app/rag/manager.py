@@ -3,7 +3,7 @@ import asyncio
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any, Tuple
 
-from .types import GenerationResult
+from .types import GenerationResult, TranslationMatch, SegmentContext
 from .assembly import ContextAssembler
 from .inference import InferenceOrchestrator
 from ..models import Segment
@@ -69,7 +69,8 @@ class RAGManager:
         source_lang: str,
         target_lang: str,
         model_name: str = None,
-        custom_prompt: str = ""
+        custom_prompt: str = "",
+        skip_ai: bool = False
     ) -> Tuple[Dict[str, GenerationResult], Dict[str, int]]:
         """
         Batch Generation with Windowed Context.
@@ -152,8 +153,10 @@ class RAGManager:
                             score=hit.get("score", 0),
                             note=hit.get("note")
                         ))
-                    except Exception:
-                        pass  # Skip malformed hits
+                    except Exception as e:
+                        # Log malformed hits so we can diagnose serialization issues.
+                        # Previously this was a silent pass, hiding potential bugs.
+                        logger.warning(f"Skipping malformed context_match entry for segment {seg.id}: {e} | hit={hit}")
                 
                 if reused_matches:
                     existing_matches = reused_matches
@@ -201,8 +204,17 @@ class RAGManager:
                 "glossary_matches": glossary
             })
             
-        # 4. Inference
-        if batch_items:
+        # 4. Inference (skip when analyze-only)
+        if batch_items and skip_ai:
+            # Analyze mode: return context without LLM inference
+            for item in batch_items:
+                sid = item['id']
+                results[sid] = GenerationResult(
+                    target_text="",
+                    context_used=context_map.get(sid),
+                    retrieval_usage=context_map.get(sid).retrieval_usage if context_map.get(sid) else {}
+                )
+        elif batch_items:
             translations, batch_usage = await self.orchestrator.generate_structured_batch(
                 preceding_context=preceding_ctx,
                 following_context=following_ctx,
@@ -212,10 +224,10 @@ class RAGManager:
                 model_name=model_name,
                 custom_prompt=custom_prompt
             )
-            
+
             total_usage["input_tokens"] += batch_usage.get("input_tokens", 0)
             total_usage["output_tokens"] += batch_usage.get("output_tokens", 0)
-            
+
             # Merge Results
             for item in batch_items:
                 sid = item['id']
@@ -232,5 +244,5 @@ class RAGManager:
                         context_used=context_map.get(sid),
                         error="Missing from AI response"
                     )
-                    
+
         return results, total_usage

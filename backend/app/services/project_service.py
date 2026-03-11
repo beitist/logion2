@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from ..models import Project, ProjectFile, ProjectFileCategory, Segment, GlossaryEntry, TranslationUnit, AiUsageLog
+from ..models import Project, ProjectFile, ProjectFileCategory, Segment, GlossaryEntry, TranslationUnit, AiUsageLog, ContextChunk
 from ..storage import upload_file, download_file, delete_project_folder
 from ..document.parser import parse_document
 from ..logger import get_logger
@@ -200,7 +200,7 @@ class ProjectService:
             name=f"Copy of {original.name}",
             filename=original.filename,
             status=original.status, 
-            rag_status="created", 
+            rag_status=original.rag_status,
             source_lang=original.source_lang,
             target_lang=original.target_lang,
             use_ai=original.use_ai,
@@ -231,11 +231,26 @@ class ProjectService:
             except Exception as e:
                 logger.error(f"Failed to copy file {f.filename}: {e}")
 
+        # Flush so the new ProjectFile rows are visible to queries
+        self.db.flush()
+
+        # Build old_file_id -> new_file_id mapping for segment linkage
+        file_id_map = {}
+        for f in original.files:
+            new_file = self.db.query(ProjectFile).filter(
+                ProjectFile.project_id == new_id,
+                ProjectFile.filename == f.filename,
+                ProjectFile.category == f.category
+            ).first()
+            if new_file:
+                file_id_map[f.id] = new_file.id
+
         # 2. Duplicate Segments
         for seg in original.segments:
             new_seg = Segment(
                 id=str(uuid.uuid4()),
                 project_id=new_id,
+                file_id=file_id_map.get(seg.file_id) if seg.file_id else None,
                 index=seg.index,
                 source_content=seg.source_content,
                 target_content=seg.target_content,
@@ -257,6 +272,37 @@ class ProjectService:
             )
             self.db.add(new_entry)
 
+        # 4. Duplicate Context Chunks (RAG embeddings for legal/background files)
+        for old_file_id, new_file_id in file_id_map.items():
+            chunks = self.db.query(ContextChunk).filter(ContextChunk.file_id == old_file_id).all()
+            for chunk in chunks:
+                new_chunk = ContextChunk(
+                    id=str(uuid.uuid4()),
+                    file_id=new_file_id,
+                    content=chunk.content,
+                    rich_content=chunk.rich_content,
+                    embedding=chunk.embedding,
+                    chunk_index=chunk.chunk_index,
+                    source_segment=chunk.source_segment,
+                    target_segment=chunk.target_segment,
+                    alignment_score=chunk.alignment_score,
+                    alignment_type=chunk.alignment_type,
+                )
+                self.db.add(new_chunk)
+
+        # 5. Duplicate Translation Units (TM entries)
+        tu_entries = self.db.query(TranslationUnit).filter(TranslationUnit.project_id == project_id).all()
+        for tu in tu_entries:
+            new_tu = TranslationUnit(
+                project_id=new_id,
+                source_hash=tu.source_hash,
+                source_text=tu.source_text,
+                target_text=tu.target_text,
+                origin_type=tu.origin_type,
+                context_prev=tu.context_prev,
+                context_next=tu.context_next,
+            )
+            self.db.add(new_tu)
 
         self.db.commit()
         self.db.refresh(new_project)

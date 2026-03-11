@@ -31,6 +31,7 @@ export const SegmentRow = memo(({
     showDebug,
     onAiDraft,
     onToggleFlag,
+    onToggleLock,
     onSave,
     onFocus,
     onNavigate,
@@ -154,6 +155,7 @@ export const SegmentRow = memo(({
                 onFocus={onFocus}
                 onNavigate={onNavigate}
                 onToggleFlag={onToggleFlag}
+                onToggleLock={onToggleLock}
                 registerEditor={registerEditor}
                 showDebug={showDebug}
                 onGlossaryUpdate={onGlossaryUpdate}

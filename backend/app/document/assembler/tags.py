@@ -1,5 +1,6 @@
 import re
 import copy
+import html
 import docx
 from docx.oxml.ns import qn
 from docx.oxml.shared import OxmlElement
@@ -311,6 +312,8 @@ class AssemblerContext:
 
     def add_styled_run(self, content: str):
         """Create a run with the current active formatting style."""
+        # Decode HTML entities from Tiptap (e.g. &amp; → &, &quot; → ", &nbsp; → NBSP)
+        content = html.unescape(content)
         if self.tc_wrapper is not None:
             self._add_tc_run(content)
         elif 'hyperlink_el' in self.active_style:

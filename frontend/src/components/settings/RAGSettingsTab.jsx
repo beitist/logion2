@@ -13,7 +13,8 @@ export function RAGSettingsTab({ project, onUpdate }) {
     const [settings, setSettings] = useState({
         threshold_mandatory: 60,
         threshold_optional: 40,
-        threshold_tm: 60
+        threshold_tm: 60,
+        threshold_internal_tm: 50
     });
     const [saving, setSaving] = useState(false);
 
@@ -23,7 +24,8 @@ export function RAGSettingsTab({ project, onUpdate }) {
             setSettings({
                 threshold_mandatory: ai.threshold_mandatory !== undefined ? ai.threshold_mandatory : 60,
                 threshold_optional: ai.threshold_optional !== undefined ? ai.threshold_optional : 40,
-                threshold_tm: ai.threshold_tm !== undefined ? ai.threshold_tm : 60
+                threshold_tm: ai.threshold_tm !== undefined ? ai.threshold_tm : 60,
+                threshold_internal_tm: ai.threshold_internal_tm !== undefined ? ai.threshold_internal_tm : 50
             });
         }
     }, [project]);
@@ -125,23 +127,13 @@ export function RAGSettingsTab({ project, onUpdate }) {
                                 color="blue"
                             />
 
-                            {/* Coming Soon Placeholder */}
-                            <div className="relative">
-                                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm rounded-xl flex items-center justify-center z-10">
-                                    <span className="bg-gray-800 text-white text-xs px-3 py-1.5 rounded-full shadow-lg font-medium">
-                                        Coming Soon
-                                    </span>
-                                </div>
-                                <div className="opacity-40 pointer-events-none">
-                                    <ThresholdSlider
-                                        label="Translation Memory (TM)"
-                                        emoji="🧠"
-                                        value={settings.threshold_tm}
-                                        field="threshold_tm"
-                                        color="green"
-                                    />
-                                </div>
-                            </div>
+                            <ThresholdSlider
+                                label="Project TM (Internal)"
+                                emoji="🔄"
+                                value={settings.threshold_internal_tm}
+                                field="threshold_internal_tm"
+                                color="green"
+                            />
                         </div>
                     </SettingsSection>
                 </SettingsCard>

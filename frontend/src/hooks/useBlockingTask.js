@@ -171,18 +171,20 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         const fileLabel = getFileLabel();
         const scope = fileLabel ? ` for '${fileLabel}'` : '';
 
-        const modeLabel = mode === 'draft' ? "Pre-Translate" : "Machine Translation";
-
-        if (!confirm(`Start ${modeLabel}${scope}?\n\nModel: ${workflowModel}`)) return;
+        const modeLabel = mode === 'analyze' ? "Pre-Analysis" : mode === 'draft' ? "Pre-Translate" : "Machine Translation";
 
         // Filter Candidates (respect file dropdown)
+        // analyze + draft = all segments; translate = only empty
         const base = getFilteredSegments();
-        let candidates = mode === 'draft' ? base : base.filter(s => !s.target_content);
+        let candidates = mode === 'translate' ? base.filter(s => !s.target_content) : base;
 
         if (candidates.length === 0) {
             alert("No applicable segments found.");
             return;
         }
+
+        const modelInfo = mode === 'analyze' ? 'Retrieval only (no LLM)' : `Model: ${workflowModel}`;
+        if (!confirm(`Start ${modeLabel}${scope}?\n\nSegments: ${candidates.length}\n${modelInfo}`)) return;
 
         stopRef.current = false;
         setBlockingTask({

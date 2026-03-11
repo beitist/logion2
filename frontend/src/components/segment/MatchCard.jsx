@@ -26,6 +26,7 @@ export function MatchCard({ match, shortcutLabel, isFlashing, project }) {
     const isMandatory = match.type === 'mandatory';
     const isMT = match.type === 'mt';
     const isUser = match.type === 'user';
+    const isInternal = match.type === 'internal';
 
     // Check if penalty display is enabled in GUI settings
     const showPenalties = project?.config?.gui_settings?.show_match_penalties || false;
@@ -43,6 +44,11 @@ export function MatchCard({ match, shortcutLabel, isFlashing, project }) {
         bgClass = isFlashing ? 'animate-flash-orange' : 'bg-orange-50';
         textClass = 'text-orange-700';
         label = '🤖 Machine Translation';
+    } else if (isInternal) {
+        borderClass = 'border-l-violet-400';
+        bgClass = 'bg-violet-50';
+        textClass = 'text-violet-700';
+        label = '🔄 Project TM';
     } else if (isUser) {
         borderClass = 'border-l-indigo-500';
         bgClass = 'bg-indigo-50';
@@ -95,6 +101,14 @@ export function MatchCard({ match, shortcutLabel, isFlashing, project }) {
                     </span>
                 </div>
             </div>
+
+            {/* Source text preview for internal TM (shows the similar source) */}
+            {isInternal && match.source_text && (
+                <div
+                    className="text-[11px] text-violet-500/70 leading-snug mb-1 italic"
+                    dangerouslySetInnerHTML={{ __html: formatSourceContent(match.source_text, null, false) }}
+                />
+            )}
 
             {/* Match content (rendered with tag formatting) */}
             <div
