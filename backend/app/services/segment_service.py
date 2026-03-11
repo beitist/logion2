@@ -238,7 +238,7 @@ class SegmentService:
                     glossary_model_name = ai_settings.get("glossary_model") or model_name
                     topic = ai_settings.get("topic_description", "")
                     glossary_svc = AutoGlossaryService(str(project.id), self.db)
-                    new_entries = await glossary_svc.extract_and_store(
+                    new_entries, gloss_usage = await glossary_svc.extract_and_store(
                         segment_id=str(segment.id),
                         source_text=segment.source_content,
                         target_text=target_text,
@@ -249,6 +249,18 @@ class SegmentService:
                     )
                     if new_entries:
                         logger.info(f"Auto-glossary (single MT): +{len(new_entries)} terms for segment {segment.id}")
+                    if gloss_usage and gloss_usage.get("input_tokens"):
+                        current_config = dict(project.config or {})
+                        usage_stats = current_config.get("usage_stats", {})
+                        g_model = gloss_usage["model"]
+                        m_stats = usage_stats.get(g_model, {"input_tokens": 0, "output_tokens": 0})
+                        m_stats["input_tokens"] += gloss_usage["input_tokens"]
+                        m_stats["output_tokens"] += gloss_usage["output_tokens"]
+                        usage_stats[g_model] = m_stats
+                        current_config["usage_stats"] = usage_stats
+                        project.config = current_config
+                        flag_modified(project, "config")
+                        self.db.commit()
                 except Exception as gloss_err:
                     logger.warning(f"Auto-glossary (single MT) failed: {gloss_err}")
 

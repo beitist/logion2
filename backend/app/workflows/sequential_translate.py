@@ -141,7 +141,7 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                     # 5. Auto-Glossary extraction (after commit so data is persisted)
                     try:
                         glossary_svc = AutoGlossaryService(self.project_id, self.db)
-                        new_entries = await glossary_svc.extract_and_store(
+                        new_entries, gloss_usage = await glossary_svc.extract_and_store(
                             segment_id=seg.id,
                             source_text=seg.source_content,
                             target_text=result.target_text,
@@ -152,6 +152,28 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                         )
                         if new_entries:
                             self.log(f"Segment {seg.index}: +{len(new_entries)} auto-glossary terms")
+                        if gloss_usage and gloss_usage.get("input_tokens"):
+                            self.db.add(AiUsageLog(
+                                project_id=self.project_id,
+                                segment_id=seg.id,
+                                model=gloss_usage["model"],
+                                trigger_type="auto_glossary",
+                                input_tokens=gloss_usage["input_tokens"],
+                                output_tokens=gloss_usage["output_tokens"],
+                            ))
+                            # Update project usage_stats
+                            self.db.refresh(self.project)
+                            current_config = dict(self.project.config or {})
+                            u_stats = current_config.get("usage_stats", {})
+                            g_model = gloss_usage["model"]
+                            g_m_stats = u_stats.get(g_model, {"input_tokens": 0, "output_tokens": 0})
+                            g_m_stats["input_tokens"] += gloss_usage["input_tokens"]
+                            g_m_stats["output_tokens"] += gloss_usage["output_tokens"]
+                            u_stats[g_model] = g_m_stats
+                            current_config["usage_stats"] = u_stats
+                            self.project.config = current_config
+                            flag_modified(self.project, "config")
+                            self.db.commit()
                     except Exception as gloss_err:
                         self.log(f"Segment {seg.index}: Auto-glossary failed — {gloss_err}")
 

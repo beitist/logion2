@@ -124,7 +124,7 @@ async def _trigger_auto_glossary_re_extract(segment_id: str, project_id: str):
         model_name = ai_settings.get("workflow_model") or ai_settings.get("model")
 
         service = AutoGlossaryService(project_id, db)
-        await service.extract_and_store(
+        _, gloss_usage = await service.extract_and_store(
             segment_id=segment.id,
             source_text=segment.source_content,
             target_text=segment.target_content,
@@ -133,6 +133,19 @@ async def _trigger_auto_glossary_re_extract(segment_id: str, project_id: str):
             target_lang=project.target_lang,
             model_name=model_name,
         )
+
+        # Log auto-glossary usage
+        if gloss_usage and gloss_usage.get("input_tokens"):
+            current_config = dict(project.config or {})
+            usage_stats = current_config.get("usage_stats", {})
+            g_model = gloss_usage["model"]
+            m_stats = usage_stats.get(g_model, {"input_tokens": 0, "output_tokens": 0})
+            m_stats["input_tokens"] += gloss_usage["input_tokens"]
+            m_stats["output_tokens"] += gloss_usage["output_tokens"]
+            usage_stats[g_model] = m_stats
+            current_config["usage_stats"] = usage_stats
+            project.config = current_config
+            flag_modified(project, "config")
 
         # Update hash
         meta = dict(segment.metadata_json or {})

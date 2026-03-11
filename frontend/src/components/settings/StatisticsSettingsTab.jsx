@@ -24,7 +24,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
     }, []);
 
     const stats = useMemo(() => {
-        if (!project) return { chars: 0, words: 0, tokens: 0, usage: {} };
+        if (!project) return { chars: 0, words: 0, usage: {} };
 
         let totalChars = 0;
         let totalWords = 0;
@@ -37,9 +37,8 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
         });
 
         const usageStats = project.config?.usage_stats || {};
-        const estimatedTokens = Math.ceil(totalChars / 4);
 
-        return { chars: totalChars, words: totalWords, tokens: estimatedTokens, usage: usageStats };
+        return { chars: totalChars, words: totalWords, usage: usageStats };
     }, [project]);
 
     // Calculate costs table
@@ -129,19 +128,15 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
                         title="Project Size"
                         accentColor="text-gray-500"
                     >
-                        <div className="grid grid-cols-3 gap-3">
-                            <StatCard
-                                value={stats.chars.toLocaleString()}
-                                label="Characters"
-                            />
+                        <div className="grid grid-cols-2 gap-3">
                             <StatCard
                                 value={stats.words.toLocaleString()}
                                 label="Words"
+                                highlight
                             />
                             <StatCard
-                                value={`~${stats.tokens.toLocaleString()}`}
-                                label="Est. Tokens"
-                                highlight
+                                value={stats.chars.toLocaleString()}
+                                label="Characters"
                             />
                         </div>
                     </SettingsSection>
@@ -168,7 +163,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
                                                 <th className="px-4 py-2.5 text-left text-xs">Model</th>
                                                 <th className="px-4 py-2.5 text-right text-xs">Input</th>
                                                 <th className="px-4 py-2.5 text-right text-xs">Output</th>
-                                                <th className="px-4 py-2.5 text-right text-xs">Est. Cost</th>
+                                                <th className="px-4 py-2.5 text-right text-xs">Kosten (ca.)</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
@@ -182,7 +177,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
                                                         {row.output.toLocaleString()}
                                                     </td>
                                                     <td className="px-4 py-2.5 text-right text-emerald-600 font-bold">
-                                                        ${row.cost.toFixed(4)}
+                                                        {row.cost.toFixed(4)} €
                                                     </td>
                                                 </tr>
                                             ))}
@@ -195,7 +190,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
                                                     {usageTable.rows.reduce((acc, r) => acc + r.output, 0).toLocaleString()}
                                                 </td>
                                                 <td className="px-4 py-2.5 text-right text-emerald-700">
-                                                    ${usageTable.totalCost.toFixed(4)}
+                                                    {usageTable.totalCost.toFixed(4)} €
                                                 </td>
                                             </tr>
                                         </tbody>
@@ -204,7 +199,7 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
 
                                 <div className="flex justify-between items-center mt-4">
                                     <p className="text-[10px] text-gray-400 italic">
-                                        * Costs estimated based on configured rates
+                                        * Kosten geschätzt auf Basis konfigurierter Preise
                                     </p>
                                     <button
                                         onClick={handleReset}

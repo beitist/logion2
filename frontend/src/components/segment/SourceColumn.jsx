@@ -110,6 +110,7 @@ export function SourceColumn({
         if (match.type === 'glossary') return false;
         if (match.type === 'mt') return true;
         if (match.type === 'mandatory') return match.score >= tMandatory;
+        if (match.type === 'internal') return match.score >= tInternalTm;
         return match.score >= tOptional;
     };
 

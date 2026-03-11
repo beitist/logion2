@@ -38,11 +38,11 @@ class AutoGlossaryService:
         source_lang: str = "en",
         target_lang: str = "de",
         model_name: str = None,
-    ) -> list[GlossaryEntry]:
+    ) -> tuple[list[GlossaryEntry], dict]:
         """
         Extract glossary-worthy terms from a confirmed/pseudo-confirmed segment.
         Deletes previous auto-entries for this segment, stores new ones.
-        Returns list of newly created GlossaryEntry objects.
+        Returns (list of newly created GlossaryEntry objects, usage dict).
         """
         # 1. Delete old auto-entries for this segment
         self._delete_auto_entries_for_segment(segment_id)
@@ -52,15 +52,15 @@ class AutoGlossaryService:
         clean_target = re.sub(r"<[^>]+>", "", target_text).strip()
 
         if not clean_source or not clean_target:
-            return []
+            return [], {}
 
         # 3. Extract terms via AI
-        term_pairs = await self._extract_terms_via_ai(
+        term_pairs, usage = await self._extract_terms_via_ai(
             clean_source, clean_target, topic, source_lang, target_lang, model_name
         )
 
         if not term_pairs:
-            return []
+            return [], usage
 
         # 4. Deduplicate against existing manual entries
         existing_manual = set()
@@ -121,7 +121,7 @@ class AutoGlossaryService:
             self.db.commit()
             logger.info(f"Auto-glossary: Stored {len(new_entries)} terms for segment {segment_id}")
 
-        return new_entries
+        return new_entries, usage
 
     def _delete_auto_entries_for_segment(self, segment_id: str):
         """Delete all auto-glossary entries linked to a specific segment."""
@@ -151,10 +151,10 @@ class AutoGlossaryService:
         source_lang: str,
         target_lang: str,
         model_name: str = None,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], dict]:
         """
         Calls the configured AI model to extract glossary-worthy term pairs.
-        Returns: [{"source": "...", "target": "..."}, ...]
+        Returns: ([{"source": "...", "target": "..."}, ...], usage_dict)
         """
         if not model_name:
             model_name = get_default_model_id()
@@ -183,18 +183,18 @@ Output ONLY the JSON array, no explanation."""
             provider = self._get_provider(model_name)
 
             if provider == "anthropic":
-                text = await self._call_claude(prompt, model_name)
+                text, usage = await self._call_claude(prompt, model_name)
             else:
-                text = await self._call_gemini(prompt, model_name)
+                text, usage = await self._call_gemini(prompt, model_name)
 
             # Parse JSON robustly
             match = re.search(r"\[.*\]", text, re.DOTALL)
             if match:
                 data = json.loads(match.group(0))
                 if isinstance(data, list):
-                    return data
+                    return data, usage
 
-            return []
+            return [], usage
 
         except Exception as e:
             # Re-raise quota errors so the workflow can stop
@@ -202,9 +202,9 @@ Output ONLY the JSON array, no explanation."""
             if isinstance(e, QuotaExceededError):
                 raise
             logger.error(f"Auto-glossary extraction failed: {e}")
-            return []
+            return [], {}
 
-    async def _call_gemini(self, prompt: str, model_name: str) -> str:
+    async def _call_gemini(self, prompt: str, model_name: str) -> tuple[str, dict]:
         from ..rag.inference import QuotaExceededError, _is_quota_exceeded
         gm = genai.GenerativeModel(model_name)
         config = genai.GenerationConfig(temperature=0.1)
@@ -217,13 +217,20 @@ Output ONLY the JSON array, no explanation."""
                 res = await loop.run_in_executor(
                     None, lambda: gm.generate_content(prompt, generation_config=config)
                 )
-            return res.text.strip()
+            usage = {}
+            if hasattr(res, 'usage_metadata') and res.usage_metadata:
+                usage = {
+                    "model": model_name,
+                    "input_tokens": getattr(res.usage_metadata, 'prompt_token_count', 0),
+                    "output_tokens": getattr(res.usage_metadata, 'candidates_token_count', 0),
+                }
+            return res.text.strip(), usage
         except Exception as e:
             if _is_quota_exceeded(str(e)):
                 raise QuotaExceededError(f"API quota exceeded: {e}")
             raise
 
-    async def _call_claude(self, prompt: str, model_name: str) -> str:
+    async def _call_claude(self, prompt: str, model_name: str) -> tuple[str, dict]:
         from ..rag.inference import QuotaExceededError, _is_quota_exceeded
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
@@ -237,7 +244,12 @@ Output ONLY the JSON array, no explanation."""
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
-            return res.content[0].text.strip()
+            usage = {
+                "model": model_name,
+                "input_tokens": res.usage.input_tokens,
+                "output_tokens": res.usage.output_tokens,
+            }
+            return res.content[0].text.strip(), usage
         except Exception as e:
             if _is_quota_exceeded(str(e)):
                 raise QuotaExceededError(f"API quota exceeded: {e}")
