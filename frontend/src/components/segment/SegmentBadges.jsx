@@ -36,6 +36,13 @@ export function SegmentBadges({ segment, isFlagged, onToggleFlag }) {
                 </span>
             )}
 
+            {/* Skip badge */}
+            {segment.metadata?.skip && (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-50 text-orange-500 border border-orange-200">
+                    SKIP
+                </span>
+            )}
+
             {/* Status badge */}
             <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${segment.status === 'draft' ? 'bg-yellow-50 text-yellow-600 border-yellow-100' :
                     segment.status === 'mt_draft' ? 'bg-purple-50 text-purple-600 border-purple-100' :

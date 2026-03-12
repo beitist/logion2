@@ -35,7 +35,7 @@ def _strip_tags(text: str) -> str:
     return re.sub(r'</?[^>]+>', '', text).strip()
 
 
-def _build_chat_system_prompt(segment: Segment, project: Project, custom_prompt: str) -> str:
+def _build_chat_system_prompt(segment: Segment, project: Project, custom_prompt: str, preceding_segment: Segment = None) -> str:
     source_lang = project.source_lang or "en"
     target_lang = project.target_lang or "de"
 
@@ -44,7 +44,18 @@ def _build_chat_system_prompt(segment: Segment, project: Project, custom_prompt:
 
     prompt = f"""You are a professional translation assistant for {source_lang} to {target_lang} translation.
 You are helping a translator with a specific segment. Answer questions, suggest alternatives, explain terminology, or adjust style as requested.
+"""
 
+    # Add preceding sentence from same paragraph for reading flow
+    if preceding_segment:
+        prev_src = _strip_tags(preceding_segment.source_content)
+        prev_tgt = _strip_tags(preceding_segment.target_content)
+        prompt += f"\n## Preceding Sentence (same paragraph)\n"
+        prompt += f"Source: {prev_src}\n"
+        if prev_tgt:
+            prompt += f"Translation: {prev_tgt}\n"
+
+    prompt += f"""
 ## Current Segment
 Source ({source_lang}): {source_clean}
 """
@@ -115,13 +126,26 @@ async def segment_chat(
     model_name = ai_settings.get("model") or get_default_model_id()
     custom_prompt = ai_settings.get("custom_prompt", "")
 
-    system_prompt = _build_chat_system_prompt(segment, project, custom_prompt)
+    # Find preceding segment in same paragraph for context
+    preceding_segment = None
+    if segment.index is not None and segment.index > 0:
+        prev = db.query(Segment).filter(
+            Segment.project_id == project_id,
+            Segment.index == segment.index - 1
+        ).first()
+        if prev:
+            cur_p = (segment.metadata_json or {}).get("metadata", {}).get("p_index")
+            prev_p = (prev.metadata_json or {}).get("metadata", {}).get("p_index")
+            if cur_p is not None and cur_p == prev_p:
+                preceding_segment = prev
+
+    system_prompt = _build_chat_system_prompt(segment, project, custom_prompt, preceding_segment)
     messages = [{"role": m.role, "content": m.content} for m in payload.messages]
 
     orchestrator = InferenceOrchestrator()
     reply_text, usage = await orchestrator.call_chat(system_prompt, messages, model_name)
 
-    # Log usage
+    # Log usage to DB + project config
     input_tokens = usage.get("input_tokens", 0)
     output_tokens = usage.get("output_tokens", 0)
     if input_tokens > 0 or output_tokens > 0:
@@ -133,6 +157,19 @@ async def segment_chat(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         ))
+
+        # Update project.config.usage_stats (same pattern as segment_service)
+        from sqlalchemy.orm.attributes import flag_modified
+        current_config = dict(project.config or {})
+        usage_stats = current_config.get("usage_stats", {})
+        m_stats = usage_stats.get(model_name, {"input_tokens": 0, "output_tokens": 0})
+        m_stats["input_tokens"] += input_tokens
+        m_stats["output_tokens"] += output_tokens
+        usage_stats[model_name] = m_stats
+        current_config["usage_stats"] = usage_stats
+        project.config = current_config
+        flag_modified(project, "config")
+
         db.commit()
 
     return ChatResponse(reply=reply_text, usage=usage)

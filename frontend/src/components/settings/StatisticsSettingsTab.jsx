@@ -25,20 +25,11 @@ export function StatisticsSettingsTab({ project, onProjectUpdate }) {
 
     const stats = useMemo(() => {
         if (!project) return { chars: 0, words: 0, usage: {} };
-
-        let totalChars = 0;
-        let totalWords = 0;
-
-        const segments = project.segments || [];
-        segments.forEach(seg => {
-            const txt = seg.source_content || "";
-            totalChars += txt.length;
-            totalWords += txt.split(/\s+/).filter(w => w.length > 0).length;
-        });
-
-        const usageStats = project.config?.usage_stats || {};
-
-        return { chars: totalChars, words: totalWords, usage: usageStats };
+        return {
+            chars: project.char_count || 0,
+            words: project.word_count || 0,
+            usage: project.config?.usage_stats || {},
+        };
     }, [project]);
 
     // Calculate costs table

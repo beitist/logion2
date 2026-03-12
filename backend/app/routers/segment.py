@@ -19,9 +19,10 @@ async def update_segment(segment_id: str, update: SegmentUpdate, background_task
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    # Lock check: reject content edits on locked segments
+    # Lock/skip check: reject content edits on locked or skipped segments
     _meta = segment.metadata_json or {}
-    if _meta.get("metadata", {}).get("locked") and update.target_content is not None:
+    _inner = _meta.get("metadata", {})
+    if (_inner.get("locked") or _inner.get("skip")) and update.target_content is not None:
         raise HTTPException(status_code=423, detail="Segment is locked")
 
     if update.target_content is not None:
@@ -99,7 +100,7 @@ async def propagate_to_repetitions(segment_id: str, db: Session = Depends(get_db
     for rep in repetitions:
         meta = rep.metadata_json or {}
         inner = meta.get("metadata", {})
-        if inner.get("locked") or inner.get("propagation_excluded"):
+        if inner.get("locked") or inner.get("propagation_excluded") or inner.get("skip"):
             skipped += 1
             continue
         rep.target_content = segment.target_content

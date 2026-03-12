@@ -38,6 +38,7 @@ export function TargetColumn({
     onNavigate,
     onToggleFlag,
     onToggleLock,
+    onToggleSkip,
     registerEditor,
     showDebug,
     onGlossaryUpdate,
@@ -52,6 +53,7 @@ export function TargetColumn({
     const [localEditor, setLocalEditor] = React.useState(null);
     const isFlagged = segment.metadata?.flagged || false;
     const isLocked = segment.metadata?.locked || false;
+    const isSkipped = segment.metadata?.skip || false;
     const glossaryMatches = sortedMatches.filter(m => m.type === 'glossary');
 
     // TC base state: slider is at the base stage (translate original/base, TC off)
@@ -108,7 +110,7 @@ export function TargetColumn({
                             : 'Target (DE)';
 
     return (
-        <div className={`p-5 rounded-r-xl flex flex-col relative group ${bgClass} ${isLocked ? 'ring-1 ring-red-200' : ''}`}>
+        <div className={`p-5 rounded-r-xl flex flex-col relative group ${bgClass} ${isSkipped ? 'ring-1 ring-orange-200 opacity-50' : isLocked ? 'ring-1 ring-red-200' : ''}`}>
             {/* Header row with labels and badges */}
             <div className="text-xs text-gray-400 font-mono mb-2 uppercase tracking-wider flex justify-between items-center select-none">
                 <div className="flex items-center gap-2">
@@ -170,9 +172,11 @@ export function TargetColumn({
                     availableTags={segment.tags}
                     contextMatches={sortedMatches}
                     onSave={onSave}
-                    isReadOnly={editorLocked || isLocked}
+                    isReadOnly={editorLocked || isLocked || isSkipped}
                     isLocked={isLocked}
                     onToggleLock={onToggleLock ? () => onToggleLock(segment.id, isLocked) : null}
+                    isSkipped={isSkipped}
+                    onToggleSkip={onToggleSkip ? () => onToggleSkip(segment.id, isSkipped) : null}
                     aiSettings={aiSettings}
                     onAiDraft={(id) => onAiDraft(id)}
                     onFocus={() => onFocus(segment.id)}

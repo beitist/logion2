@@ -33,8 +33,10 @@ class Project(Base):
     use_ai = Column(Boolean, default=False)
     file_hash = Column(String, nullable=True) 
     config = Column(JSON, nullable=True) 
-    ingestion_logs = Column(JSON, default=[]) # List of log strings 
-    rag_progress = Column(Integer, default=0) # percent 0-100 
+    ingestion_logs = Column(JSON, default=[]) # List of log strings
+    rag_progress = Column(Integer, default=0) # percent 0-100
+    archived = Column(Boolean, default=False)
+    archive_folder = Column(String, nullable=True)  # Grouping label in archive view
 
     segments = relationship("Segment", back_populates="project", cascade="all, delete-orphan")
     files = relationship("ProjectFile", back_populates="project", cascade="all, delete-orphan")

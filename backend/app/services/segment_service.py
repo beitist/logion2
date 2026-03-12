@@ -74,6 +74,11 @@ class SegmentService:
         if not segment:
             raise HTTPException(status_code=404, detail="Segment not found")
 
+        # Skip segments marked as intentionally empty
+        _inner = (segment.metadata_json or {}).get("metadata", {})
+        if _inner.get("skip"):
+            return {"target_text": "", "segment_id": segment_id, "skipped": True}
+
         project = self.db.query(Project).filter(Project.id == segment.project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")

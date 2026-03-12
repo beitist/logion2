@@ -5,6 +5,7 @@ import Link from '@tiptap/extension-link'
 import Underline from '@tiptap/extension-underline'
 import InvisibleCharacters, { InvisibleCharacter, SpaceCharacter, HardBreakNode, ParagraphNode } from '@tiptap/extension-invisible-characters'
 import { Node, Extension, mergeAttributes, createNodeFromContent } from '@tiptap/core'
+import { Ban } from 'lucide-react'
 import TrackChangeExtension from 'track-change-extension'
 
 import './TiptapStyles.css';
@@ -66,7 +67,7 @@ const TagNode = Node.create({
     },
 })
 
-const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, onToggleLock }) => {
+const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, onToggleLock, isSkipped, onToggleSkip }) => {
     if (!editor) {
         return null
     }
@@ -87,6 +88,24 @@ const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, onToggleLock }) =
                     title={isLocked ? "Unlock segment" : "Lock segment"}
                 >
                     {isLocked ? "🔒" : "🔓"}
+                </button>
+            )}
+
+            {/* Skip (Leave Empty) Toggle Button */}
+            {onToggleSkip && (
+                <button
+                    tabIndex="-1"
+                    onClick={onToggleSkip}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className={`px-2 py-1 text-xs rounded border mr-1 flex items-center gap-1 ${
+                        isSkipped
+                            ? "bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100"
+                            : "bg-gray-50 text-gray-400 border-gray-300 hover:bg-gray-100"
+                    }`}
+                    title={isSkipped ? "Unskip segment" : "Leave empty (skip)"}
+                >
+                    <Ban size={11} />
+                    {isSkipped && <span>Skip</span>}
                 </button>
             )}
 
@@ -210,7 +229,7 @@ class NbHyphenCharacter extends InvisibleCharacter {
     }
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, isLocked = false, onToggleLock, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false, trackChangesEnabled = false, trackChangesUser = null }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, isLocked = false, onToggleLock, isSkipped = false, onToggleSkip, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false, trackChangesEnabled = false, trackChangesUser = null }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
@@ -599,7 +618,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
 
     return (
         <div id={`editor-${segmentId}`} className={containerClasses}>
-            {(!isReadOnly || isLocked) && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={!isLocked ? (() => onAiDraft && segmentId ? onAiDraft(segmentId) : null) : null} isLocked={isLocked} onToggleLock={onToggleLock} />}
+            {(!isReadOnly || isLocked || isSkipped) && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={!isLocked && !isSkipped ? (() => onAiDraft && segmentId ? onAiDraft(segmentId) : null) : null} isLocked={isLocked} onToggleLock={onToggleLock} isSkipped={isSkipped} onToggleSkip={onToggleSkip} />}
             <EditorContent editor={editor} className={editorContentClasses} />
         </div>
     )

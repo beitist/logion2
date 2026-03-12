@@ -53,6 +53,7 @@ export function SplitView({ projectId, onBack }) {
         // Handlers
         handleToggleFlag,
         handleToggleLock,
+        handleToggleSkip,
         handleFullReinit,
         handleAutoTranslate,
         handleBatchProcess,
@@ -380,6 +381,7 @@ export function SplitView({ projectId, onBack }) {
                                         onAiDraft={handleAiDraft}
                                         onToggleFlag={handleToggleFlag}
                                         onToggleLock={handleToggleLock}
+                                        onToggleSkip={handleToggleSkip}
                                         onSave={handleSave}
                                         onFocus={handleSegmentFocus}
                                         onNavigate={handleNavigation}

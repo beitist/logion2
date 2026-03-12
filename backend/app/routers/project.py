@@ -73,11 +73,27 @@ async def create_project(
     )
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(project_id: str, service: ProjectService = Depends(get_project_service)):
+def get_project(project_id: str, service: ProjectService = Depends(get_project_service), db: Session = Depends(get_db)):
     project = service.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return project
+
+    # Compute word/char counts from source segments
+    import re
+    segments = db.query(Segment.source_content).filter(Segment.project_id == project_id).all()
+    total_chars = 0
+    total_words = 0
+    for (src,) in segments:
+        if not src:
+            continue
+        clean = re.sub(r'</?[^>]+>', '', src).strip()
+        total_chars += len(clean)
+        total_words += len(clean.split())
+
+    resp = ProjectResponse.model_validate(project)
+    resp.word_count = total_words
+    resp.char_count = total_chars
+    return resp
 
 @router.delete("/{project_id}")
 async def delete_project(project_id: str, service: ProjectService = Depends(get_project_service)):

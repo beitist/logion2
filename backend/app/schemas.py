@@ -20,6 +20,8 @@ class ProjectUpdate(BaseModel):
     target_lang: Optional[str] = None
     status: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    archived: Optional[bool] = None
+    archive_folder: Optional[str] = None
 
 class ProjectFileSchema(BaseModel):
     id: str
@@ -44,7 +46,9 @@ class ProjectResponse(BaseModel):
     rag_progress: int = 0
     files: Optional[list[ProjectFileSchema]] = []
     config: Optional[Dict[str, Any]] = None
-    
+    word_count: int = 0
+    char_count: int = 0
+
     class Config:
         from_attributes = True
 
@@ -59,6 +63,8 @@ class ProjectListResponse(BaseModel):
     progress: int = 0
     filename: Optional[str] = None
     status: Optional[str] = None
+    archived: bool = False
+    archive_folder: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -100,8 +100,8 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         const seg = segmentsRef.current.find(s => s.id === id);
         if (!seg) return;
 
-        // Skip save silently for locked segments
-        if (seg.metadata?.locked) { setSavingId(null); return; }
+        // Skip save silently for locked or skipped segments
+        if (seg.metadata?.locked || seg.metadata?.skip) { setSavingId(null); return; }
 
         const serialized = serializeContent(htmlContent, seg.tags);
         const isEmpty = !htmlContent || htmlContent.trim() === '' || htmlContent.trim() === '<p></p>';
@@ -185,6 +185,32 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         }
     };
 
+    const handleToggleSkip = async (segmentId, currentSkip) => {
+        const newSkip = !currentSkip;
+        setSegments(prev => prev.map(s =>
+            s.id === segmentId
+                ? {
+                    ...s,
+                    metadata: { ...(s.metadata || {}), skip: newSkip, ...(newSkip ? { locked: true } : { locked: false }) },
+                    ...(newSkip ? { target_content: '', status: 'translated' } : {})
+                }
+                : s
+        ));
+        try {
+            const metaUpdate = newSkip
+                ? { skip: true, locked: true }
+                : { skip: false, locked: false };
+            await updateSegment(segmentId, undefined, undefined, metaUpdate);
+        } catch (err) {
+            console.error("Failed to toggle skip", err);
+            setSegments(prev => prev.map(s =>
+                s.id === segmentId
+                    ? { ...s, metadata: { ...(s.metadata || {}), skip: currentSkip } }
+                    : s
+            ));
+        }
+    };
+
     const handleEditorUpdate = (id, newContent) => {
         setSegments((prev) => prev.map((seg) => seg.id === id ? { ...seg, target_content: newContent } : seg));
     };
@@ -244,6 +270,7 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         handleSave,
         handleToggleFlag,
         handleToggleLock,
+        handleToggleSkip,
         handleEditorUpdate,
         handleExport,
         handleTmXExport,
