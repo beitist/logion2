@@ -194,8 +194,11 @@ class RAGManager:
                           for m in ctx.matches[:3] 
                           if m.type not in ['glossary', 'history'] and m.score < 100]
                           
-            glossary = [{"term": g.source_text, "translation": g.content} 
-                        for g in ctx.glossary_hits]
+            glossary = [
+                {"term": g.source_text, "translation": g.content,
+                 **({"note": g.note} if g.note else {})}
+                for g in ctx.glossary_hits
+            ]
             
             batch_items.append({
                 "id": seg.id,

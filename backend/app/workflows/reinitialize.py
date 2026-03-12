@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import datetime as dt_module
 from collections import defaultdict, deque
@@ -172,54 +173,105 @@ class ReinitializeWorkflow(BaseWorkflow):
     def _merge_per_file(self, all_parsed, old_segments):
         """
         Per-file merge: matches old translations with new segments WITHIN the same file.
-        Prevents cross-file translation stealing.
-        Segments with file_id=NULL (orphans from legacy) are used as a fallback pool.
+        Two-tier matching:
+          1. Exact match on raw source_content (incl. tags)
+          2. Fuzzy fallback: normalized key (tags stripped, special chars normalized)
+             — only used when the normalized key is UNIQUE in both old and new segments
         """
-        # Build per-file old-segment maps + orphan pool
-        file_maps = {}      # file_id -> {source_content -> deque(old_seg)}
-        orphan_map = defaultdict(deque)  # source_content -> deque(old_seg) for file_id=NULL
+        def _normalize_key(text):
+            """Strip tags and normalize special chars for merge matching."""
+            t = re.sub(r'</?[^>]+>', '', text or '')  # Remove tags
+            t = t.replace('\u2011', '-')               # Non-breaking hyphen → normal
+            t = t.replace('\u00A0', ' ')               # NBSP → space
+            return t.strip()
+
+        # Build per-file old-segment maps (EXACT keys) + orphan pool
+        exact_file_maps = {}   # file_id -> {exact_source -> deque(old_seg)}
+        exact_orphan_map = defaultdict(deque)
+
+        # Also build normalized maps for fuzzy fallback
+        norm_file_maps = {}    # file_id -> {normalized_key -> deque(old_seg)}
+        norm_orphan_map = defaultdict(deque)
 
         for seg in old_segments:
-            # Normalize key: strip whitespace so that segments parsed with old
-            # whitespace-inside-tags behaviour still match after the fix.
-            key = (seg.source_content or "").strip()
-            if seg.file_id:
-                if seg.file_id not in file_maps:
-                    file_maps[seg.file_id] = defaultdict(deque)
-                file_maps[seg.file_id][key].append(seg)
-            else:
-                orphan_map[key].append(seg)
+            exact_key = (seg.source_content or "").strip()
+            norm_key = _normalize_key(seg.source_content)
 
-        self.log(f"Old segments: {len(old_segments)} total, {sum(len(q) for q in orphan_map.values())} orphaned (no file_id).")
+            if seg.file_id:
+                if seg.file_id not in exact_file_maps:
+                    exact_file_maps[seg.file_id] = defaultdict(deque)
+                    norm_file_maps[seg.file_id] = defaultdict(deque)
+                exact_file_maps[seg.file_id][exact_key].append(seg)
+                norm_file_maps[seg.file_id][norm_key].append(seg)
+            else:
+                exact_orphan_map[exact_key].append(seg)
+                norm_orphan_map[norm_key].append(seg)
+
+        self.log(f"Old segments: {len(old_segments)} total, {sum(len(q) for q in exact_orphan_map.values())} orphaned (no file_id).")
 
         final_db_segments = []
         global_index = 0
         total_preserved = 0
         total_new = 0
+        total_fuzzy = 0
 
         for source_record, new_segs in all_parsed:
-            file_old_map = file_maps.get(source_record.id, defaultdict(deque))
+            file_exact_map = exact_file_maps.get(source_record.id, defaultdict(deque))
+            file_norm_map = norm_file_maps.get(source_record.id, defaultdict(deque))
+
+            # Pre-count normalized keys in new segments for uniqueness check
+            from collections import Counter
+            new_norm_counts = Counter(_normalize_key(s.source_text) for s in new_segs)
+
             file_preserved = 0
             file_new = 0
+            file_fuzzy = 0
 
             for new_seg_int in new_segs:
                 target_content = None
                 status = "draft"
-
-                # 1st priority: match within same file
-                lookup_key = (new_seg_int.source_text or "").strip()
                 old_match = None
-                if file_old_map[lookup_key]:
-                    old_match = file_old_map[lookup_key].popleft()
+
+                exact_key = (new_seg_int.source_text or "").strip()
+                norm_key = _normalize_key(new_seg_int.source_text)
+
+                # 1st priority: EXACT match within same file
+                if file_exact_map[exact_key]:
+                    old_match = file_exact_map[exact_key].popleft()
+                    # Also consume from norm map to keep it in sync
+                    if file_norm_map[norm_key]:
+                        file_norm_map[norm_key].popleft()
                     target_content = old_match.target_content
                     status = old_match.status
                     file_preserved += 1
-                # 2nd priority: match from orphan pool (legacy segments without file_id)
-                elif orphan_map[lookup_key]:
-                    old_match = orphan_map[lookup_key].popleft()
+
+                # 2nd priority: EXACT match from orphan pool
+                elif exact_orphan_map[exact_key]:
+                    old_match = exact_orphan_map[exact_key].popleft()
+                    if norm_orphan_map[norm_key]:
+                        norm_orphan_map[norm_key].popleft()
                     target_content = old_match.target_content
                     status = old_match.status
                     file_preserved += 1
+
+                # 3rd priority: FUZZY match — only if normalized key is unique on BOTH sides
+                elif (file_norm_map[norm_key]
+                      and len(file_norm_map[norm_key]) == 1
+                      and new_norm_counts[norm_key] == 1):
+                    old_match = file_norm_map[norm_key].popleft()
+                    target_content = old_match.target_content
+                    status = old_match.status
+                    file_fuzzy += 1
+
+                # 4th priority: FUZZY match from orphan pool (unique only)
+                elif (norm_orphan_map[norm_key]
+                      and len(norm_orphan_map[norm_key]) == 1
+                      and new_norm_counts[norm_key] == 1):
+                    old_match = norm_orphan_map[norm_key].popleft()
+                    target_content = old_match.target_content
+                    status = old_match.status
+                    file_fuzzy += 1
+
                 else:
                     file_new += 1
 
@@ -247,9 +299,10 @@ class ReinitializeWorkflow(BaseWorkflow):
 
             total_preserved += file_preserved
             total_new += file_new
-            self.log(f"  {source_record.filename}: {file_preserved} preserved, {file_new} new")
+            total_fuzzy += file_fuzzy
+            self.log(f"  {source_record.filename}: {file_preserved} exact, {file_fuzzy} fuzzy, {file_new} new")
 
-        self.log(f"Reinit Merge Total: {total_preserved} preserved, {total_new} new. {len(final_db_segments)} segments.")
+        self.log(f"Reinit Merge Total: {total_preserved} exact, {total_fuzzy} fuzzy, {total_new} new. {len(final_db_segments)} segments.")
         return final_db_segments
 
     def embed_segments(self):

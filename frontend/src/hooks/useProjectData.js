@@ -100,9 +100,13 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         const seg = segmentsRef.current.find(s => s.id === id);
         if (!seg) return;
 
+        // Skip save silently for locked segments
+        if (seg.metadata?.locked) { setSavingId(null); return; }
+
         const serialized = serializeContent(htmlContent, seg.tags);
         const isEmpty = !htmlContent || htmlContent.trim() === '' || htmlContent.trim() === '<p></p>';
         const newStatus = isEmpty ? 'draft' : 'translated';
+        const contentChanged = serialized !== (seg.target_content || '');
 
         try {
             const start = performance.now();
@@ -111,8 +115,8 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
             setSegments(prev => prev.map(s => s.id === id ? { ...s, target_content: serialized, status: newStatus } : s));
             log(`Segment saved in ${duration}ms`, 'success');
 
-            // Propagation dialog for repetitions
-            if (seg.metadata?.repetition_count > 1 && !isEmpty) {
+            // Propagation dialog for repetitions — only when content actually changed
+            if (seg.metadata?.repetition_count > 1 && !isEmpty && contentChanged && !seg.metadata?.propagation_excluded) {
                 const count = seg.metadata.repetition_count - 1;
                 if (confirm(`Soll ich ${count} gleiche Segment(e) gleich übersetzen?`)) {
                     try {
@@ -120,17 +124,25 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
                         if (res.propagated > 0) {
                             setSegments(prev => prev.map(s =>
                                 s.source_content === seg.source_content && s.id !== id && !s.metadata?.locked
-                                    ? { ...s, target_content: serialized, status: newStatus }
+                                    ? { ...s, target_content: serialized, status: newStatus, metadata: { ...s.metadata, locked: true } }
                                     : s
                             ));
                             log(`${res.propagated} repetition(s) updated`, 'success');
                         }
-                        if (res.skipped_locked > 0) {
-                            log(`${res.skipped_locked} locked segment(s) skipped`, 'info');
+                        if (res.skipped > 0) {
+                            log(`${res.skipped} segment(s) skipped (locked/excluded)`, 'info');
                         }
                     } catch (propErr) {
                         log(`Propagation failed: ${propErr.message}`, 'error');
                     }
+                } else {
+                    // User declined — exclude this segment from future propagation dialogs
+                    try {
+                        await updateSegment(id, undefined, undefined, { ...seg.metadata, propagation_excluded: true });
+                        setSegments(prev => prev.map(s =>
+                            s.id === id ? { ...s, metadata: { ...s.metadata, propagation_excluded: true } } : s
+                        ));
+                    } catch (e) { /* silent */ }
                 }
             }
         } catch (err) {

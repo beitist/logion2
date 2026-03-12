@@ -256,8 +256,11 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
         if (currentIndex === -1) return;
 
         let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
-        if (nextIndex < 0) nextIndex = 0;
-        if (nextIndex >= segments.length) nextIndex = segments.length - 1;
+        // Skip locked segments
+        while (nextIndex >= 0 && nextIndex < segments.length && segments[nextIndex].metadata?.locked) {
+            nextIndex += direction === 'next' ? 1 : -1;
+        }
+        if (nextIndex < 0 || nextIndex >= segments.length) return;
 
         if (nextIndex !== currentIndex) {
             const nextSeg = segments[nextIndex];

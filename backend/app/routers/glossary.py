@@ -111,16 +111,10 @@ async def upload_glossary(project_id: str, file: UploadFile = File(...), db: Ses
     content = await file.read()
     decoded = content.decode('utf-8-sig') # Handle BOM automatically
     
-    # content is bytes, decoded is str
-    # Use sniff to find delimiter
-    try:
-        # Sniff the first few lines
-        sample = decoded[:2048]
-        dialect = csv.Sniffer().sniff(sample, delimiters=[',', ';', '\t'])
-        delimiter = dialect.delimiter
-    except Exception as e:
-        print(f"CSV Sniff failed, defaulting to comma: {e}")
-        delimiter = ','
+    # Detect delimiter: count occurrences in first line (header)
+    first_line = decoded.split('\n', 1)[0]
+    counts = {d: first_line.count(d) for d in ['\t', ';', ',']}
+    delimiter = max(counts, key=counts.get) if any(counts.values()) else ','
         
     reader = csv.DictReader(io.StringIO(decoded), delimiter=delimiter)
     

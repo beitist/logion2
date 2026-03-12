@@ -73,8 +73,14 @@ class InferenceOrchestrator:
         tm_matches = [{"source": m.source_text, "target": m.content, "score": m.score} 
                       for m in context.matches[:3] if m.type != 'glossary' and m.score < 100]
         
-        glossary = [{"term": g.source_text, "translation": g.content} 
-                    for g in context.glossary_hits]
+        glossary = [
+            {
+                "term": g.source_text,
+                "translation": g.content,
+                **({"note": g.note} if g.note else {})
+            }
+            for g in context.glossary_hits
+        ]
 
         # Extract neighbors for windowed context logic if available
         # But generate_structured_batch expects "global" preceding/following.
@@ -139,7 +145,7 @@ Rules:
    - Score >= 95: MANDATORY. Copy the TM target verbatim. The ONLY permitted change: if the current source differs from the TM source, adjust minimally to reflect that specific difference — nothing else.
    - Score 87-94: STRONG. Start by copying the TM target AS-IS. Then compare the current source with the TM source word by word. ONLY replace words/phrases in the TM target that directly correspond to differences in the source. Keep ALL other words, terminology, and phrasing from the TM target unchanged. Do NOT rephrase, do NOT substitute synonyms, do NOT apply style guide rules to TM-derived parts.
    - Score < 87: Weak reference. Translate freely following the style guide, but consider the TM terminology for consistency.
-4. ALWAYS use glossary terms over your own word choices. Glossary entries are mandatory.
+4. ALWAYS use glossary terms over your own word choices. Glossary entries are mandatory. If a glossary entry includes a "note", follow that guidance for context-appropriate usage.
 5. Maintain style consistency across the batch.
 """
 
@@ -309,7 +315,7 @@ Rules:
             if in_string and c == '\\':
                 if i + 1 < len(text):
                     next_c = text[i + 1]
-                    if next_c in '"\\\/bfnrtu':
+                    if next_c in '"\\\\/bfnrtu':
                         # Valid JSON escape — pass through
                         result.append(c)
                         result.append(next_c)
@@ -338,13 +344,25 @@ Rules:
                 while j < len(text) and text[j] in ' \t\r\n':
                     j += 1
 
-                if j >= len(text) or text[j] in ',}]:':
-                    # Structural delimiter follows → this closes the string
+                is_structural = False
+                if j >= len(text) or text[j] in '}]:':
+                    is_structural = True
+                elif text[j] == ',':
+                    # ",  could be structural (between JSON values) or content ("Stronger", das...)
+                    # Check if after the comma + whitespace we see a JSON key pattern: "key"
+                    k = j + 1
+                    while k < len(text) and text[k] in ' \t\r\n':
+                        k += 1
+                    if k < len(text) and text[k] in '"{[0123456789-tfn':
+                        # Looks like next JSON value/key → structural
+                        is_structural = True
+                    # else: content comma like ", das klimaangepasste..."
+
+                if is_structural:
                     in_string = False
                     result.append(c)
                 else:
-                    # Something else follows (letter, number, etc.)
-                    # → likely an unescaped quote inside the value
+                    # Content quote — escape it
                     result.append('\\"')
                 i += 1
                 continue

@@ -103,6 +103,10 @@ def get_run_text(run_element) -> str:
              text += "\t"
         elif tag == qn('w:cr'):
              text += "\n"
+        elif tag == qn('w:noBreakHyphen'):
+             text += "-"
+        elif tag == qn('w:softHyphen'):
+             pass  # Soft hyphens are invisible, skip
     return text
 
 def get_run_signature(run_element) -> tuple:
@@ -147,7 +151,7 @@ def is_pure_text_run(run_element) -> bool:
     """
     Returns True if the run contains only text-like elements.
     """
-    allowed = [qn('w:t'), qn('w:br'), qn('w:tab'), qn('w:cr'), qn('w:rPr')]
+    allowed = [qn('w:t'), qn('w:br'), qn('w:tab'), qn('w:cr'), qn('w:rPr'), qn('w:noBreakHyphen'), qn('w:softHyphen')]
     for child in run_element:
         if child.tag not in allowed:
             return False
@@ -245,6 +249,9 @@ def process_run_element(run_element, add_tag_func, context, process_para_func, t
                  
             elif tag_name == qn('w:br') or tag_name == qn('w:cr'):
                  run_content += "\n"
+
+            elif tag_name == qn('w:noBreakHyphen'):
+                 run_content += "-"
                  
             elif tag_name == qn('w:commentReference'):
                 cid = child.get(qn('w:id'))

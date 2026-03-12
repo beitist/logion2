@@ -118,6 +118,15 @@ const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, onToggleLock }) =
                     >
                         ␣
                     </button>
+                    <button
+                        tabIndex="-1"
+                        onClick={() => editor.chain().focus().insertContent('\u2011').run()}
+                        onMouseDown={(e) => e.preventDefault()}
+                        className="px-2 py-1 text-xs font-mono rounded border bg-gray-50 text-gray-500 border-gray-300 hover:bg-gray-100 active:bg-gray-200 min-w-[24px]"
+                        title="Insert Non-Breaking Hyphen (Cmd+Opt+Ctrl+-)"
+                    >
+                        ‑
+                    </button>
 
                     {availableTags && Object.keys(availableTags).map(tid => {
                         const tag = availableTags[tid];
@@ -179,10 +188,24 @@ class NbspCharacter extends InvisibleCharacter {
     render() {
         const span = document.createElement('span')
         span.classList.add('Tiptap-invisible-character', 'Tiptap-invisible-character--nbsp')
-        span.innerHTML = '&nbsp;' // Render actual nbsp or visual? CSS usually handles visual.
-        // Actually for visuals we might want a distinct marker like a small dot or circle.
-        // But the extension usually uses CSS `::before` content.
-        // We just need the class.
+        span.innerHTML = '&nbsp;'
+        return span
+    }
+}
+
+// Custom Invisible Character for Non-Breaking Hyphen (U+2011)
+class NbHyphenCharacter extends InvisibleCharacter {
+    constructor() {
+        super({
+            type: 'nbhyphen',
+            predicate: char => char === '\u2011',
+        })
+    }
+
+    render() {
+        const span = document.createElement('span')
+        span.classList.add('Tiptap-invisible-character', 'Tiptap-invisible-character--nbhyphen')
+        span.textContent = '\u2011'
         return span
     }
 }
@@ -272,6 +295,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                     new ParagraphNode(),
                     new TabCharacter(), // <--- Our custom tab
                     new NbspCharacter(), // <--- Our custom NBSP
+                    new NbHyphenCharacter(), // <--- Non-Breaking Hyphen
                 ]
             }),
             // Custom Tag Node
@@ -304,6 +328,12 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                         // NBSP Shortcut
                         'Mod-Control-Alt-Space': () => {
                             this.editor.commands.insertContent('\u00A0');
+                            return true;
+                        },
+
+                        // Non-Breaking Hyphen Shortcut
+                        'Mod-Control-Alt-Minus': () => {
+                            this.editor.commands.insertContent('\u2011');
                             return true;
                         },
 

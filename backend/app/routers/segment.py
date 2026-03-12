@@ -95,18 +95,25 @@ async def propagate_to_repetitions(segment_id: str, db: Session = Depends(get_db
     ).all()
 
     updated = 0
-    skipped_locked = 0
+    skipped = 0
     for rep in repetitions:
         meta = rep.metadata_json or {}
-        if meta.get("metadata", {}).get("locked"):
-            skipped_locked += 1
+        inner = meta.get("metadata", {})
+        if inner.get("locked") or inner.get("propagation_excluded"):
+            skipped += 1
             continue
         rep.target_content = segment.target_content
         rep.status = segment.status
+        # Lock propagated segments to prevent accidental overwrites
+        if "metadata" not in meta:
+            meta["metadata"] = {}
+        meta["metadata"]["locked"] = True
+        rep.metadata_json = meta
+        flag_modified(rep, "metadata_json")
         updated += 1
 
     db.commit()
-    return {"propagated": updated, "skipped_locked": skipped_locked}
+    return {"propagated": updated, "skipped": skipped}
 
 
 async def _trigger_auto_glossary_re_extract(segment_id: str, project_id: str):
