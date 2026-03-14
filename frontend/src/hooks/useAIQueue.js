@@ -11,6 +11,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
     const circuitRef = useRef({ failures: 0, isBroken: false });
     const activeRequestsRef = useRef({});
     const lastFocusedRef = useRef(null);
+    const contextFetchedAt = useRef({});  // segmentId → timestamp of last context fetch
 
     // --- Core Generators ---
 
@@ -22,6 +23,7 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
             try {
                 const updated = await generateDraft(seg.id, mode);
                 setSegments(prev => prev.map(s => s.id !== seg.id ? s : { ...s, ...updated }));
+                contextFetchedAt.current[seg.id] = Date.now();
                 circuitRef.current.failures = 0;
                 circuitRef.current.isBroken = false;
                 return updated;
@@ -220,9 +222,20 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
             }
 
             let analyzedSeg = seg;
-            if (!isRefocus && (!seg.context_matches || seg.context_matches.length === 0)) {
+            const lastFetched = contextFetchedAt.current[segmentId] || 0;
+            const isStale = Date.now() - lastFetched > 60000;  // 60s cooldown
+            const needsContext = !seg.context_matches || seg.context_matches.length === 0;
+
+            if (!isRefocus && needsContext) {
+                // First fetch — blocking (UI needs context)
                 const updatedFields = await analyzeSegment(seg, 'analyze');
                 analyzedSeg = { ...seg, ...updatedFields };
+            } else if (!isRefocus && isStale && lastFetched > 0) {
+                // Stale refresh — fire-and-forget (UI already has context)
+                analyzeSegment(seg, 'analyze');
+            } else if (lastFetched === 0 && !needsContext) {
+                // Context exists (from workflow/poller) but never tracked — seed the timestamp
+                contextFetchedAt.current[segmentId] = Date.now();
             }
 
             const isTranslated = analyzedSeg.status === 'translated' || analyzedSeg.status === 'approved' || analyzedSeg.status === 'mt_draft';

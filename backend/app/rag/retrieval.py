@@ -3,6 +3,7 @@ import difflib
 import re
 import os
 import voyageai
+from rapidfuzz import fuzz
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text, or_
@@ -350,54 +351,99 @@ class RetrievalEngine:
                            limit: int = 3, min_score: int = 50) -> List[TranslationMatch]:
         """
         Search for similar already-translated segments in the same project.
-        1. Cosine pre-filter via pgvector to get candidates
-        2. Voyage AI rerank for accurate scoring
-        3. Filter by min_score threshold
+        1. Fuzzy text match (rapidfuzz) for near-identical segments
+        2. Cosine pre-filter via pgvector to get candidates
+        3. Voyage AI rerank for accurate scoring
+        4. Merge, deduplicate, filter by min_score
         """
         segment = db.query(Segment).filter(Segment.id == segment_id).first()
-        if not segment or segment.embedding is None:
+        if not segment:
             return []
 
-        query_vec = segment.embedding
-        if hasattr(query_vec, 'tolist'):
-            query_vec = query_vec.tolist()
+        # --- Stage 1: Fuzzy text match (cheap, no API calls) ---
+        # Fuzzy threshold: use min_score but floor at 80 (rapidfuzz scores are generous)
+        fuzzy_threshold = max(min_score, 80)
+        fuzzy_matches = self._fuzzy_internal_tm(db, project_id, segment, fuzzy_threshold)
+        seen_ids = {m.id for m in fuzzy_matches}
 
-        # Cosine pre-filter: fetch generous candidate pool for reranking
-        dist_col = Segment.embedding.cosine_distance(query_vec).label("dist")
-        results = db.query(Segment, dist_col).filter(
+        # --- Stage 2: Vector-based candidates (requires embedding) ---
+        vector_candidates = []
+        if segment.embedding is not None:
+            query_vec = segment.embedding
+            if hasattr(query_vec, 'tolist'):
+                query_vec = query_vec.tolist()
+
+            dist_col = Segment.embedding.cosine_distance(query_vec).label("dist")
+            results = db.query(Segment, dist_col).filter(
+                Segment.project_id == project_id,
+                Segment.id != segment_id,
+                Segment.target_content.isnot(None),
+                Segment.target_content != "",
+                Segment.status.in_(["translated", "mt_draft"]),
+                Segment.embedding.isnot(None),
+            ).order_by("dist").limit(20).all()
+
+            for r, dist in results:
+                if dist > 0.5:
+                    break
+                match_id = f"internal-{r.id}"
+                if r.source_content == segment.source_content or match_id in seen_ids:
+                    continue
+                vector_candidates.append(TranslationMatch(
+                    id=match_id,
+                    content=r.target_content,
+                    source_text=r.source_content,
+                    type="internal",
+                    category="tm",
+                    score=0,
+                    filename="Project TM",
+                ))
+
+            if vector_candidates:
+                scored, _ = self._rerank_internal_tm(segment.source_content, vector_candidates)
+                vector_candidates = [m for m in scored if m.score >= min_score]
+
+        # --- Stage 3: Merge and return ---
+        combined = fuzzy_matches + vector_candidates
+        combined.sort(key=lambda x: x.score, reverse=True)
+        return combined[:limit]
+
+    def _fuzzy_internal_tm(self, db: Session, project_id: str, segment: Segment, min_ratio: int = 85) -> List[TranslationMatch]:
+        """Fast fuzzy match on tag-stripped source text using rapidfuzz."""
+        clean_query = self.clean_tags(segment.source_content or "")
+        if not clean_query or len(clean_query) < 5:
+            return []
+
+        # Fetch translated segments (no embedding required)
+        candidates = db.query(Segment).filter(
             Segment.project_id == project_id,
-            Segment.id != segment_id,
+            Segment.id != segment.id,
             Segment.target_content.isnot(None),
             Segment.target_content != "",
             Segment.status.in_(["translated", "mt_draft"]),
-            Segment.embedding.isnot(None),
-        ).order_by("dist").limit(20).all()
+        ).all()
 
-        # Skip exact repetitions
-        candidates = []
-        for r, dist in results:
-            if dist > 0.5:  # Very loose pre-filter (50% cosine similarity)
-                break
-            if r.source_content == segment.source_content:
+        matches = []
+        for c in candidates:
+            if c.source_content == segment.source_content:
+                continue  # Skip exact repetitions
+            clean_candidate = self.clean_tags(c.source_content or "")
+            if not clean_candidate:
                 continue
-            candidates.append(TranslationMatch(
-                id=f"internal-{r.id}",
-                content=r.target_content,
-                source_text=r.source_content,
-                type="internal",
-                category="tm",
-                score=0,
-                filename="Project TM",
-            ))
+            ratio = fuzz.ratio(clean_query, clean_candidate)
+            if ratio >= min_ratio:
+                matches.append(TranslationMatch(
+                    id=f"internal-{c.id}",
+                    content=c.target_content,
+                    source_text=c.source_content,
+                    type="internal",
+                    category="tm",
+                    score=int(ratio),
+                    filename="Project TM",
+                ))
 
-        if not candidates:
-            return []
-
-        # Rerank with Voyage AI for accurate scoring
-        scored, _ = self._rerank_internal_tm(segment.source_content, candidates)
-
-        # Filter by min_score and limit
-        return [m for m in scored if m.score >= min_score][:limit]
+        matches.sort(key=lambda x: x.score, reverse=True)
+        return matches[:5]  # Cap before merge
 
     def _rerank_internal_tm(self, query: str, candidates: List[TranslationMatch]) -> tuple[List[TranslationMatch], int]:
         """Rerank internal TM candidates using Voyage AI rerank-2.5."""

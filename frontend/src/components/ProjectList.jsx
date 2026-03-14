@@ -98,6 +98,16 @@ export function ProjectList({ onSelectProject, onNewProject }) {
         } catch (err) { alert(err.message); }
     };
 
+    const STATUS_CYCLE = { processing: 'review', review: 'completed', completed: 'processing' };
+    const handleCycleStatus = async (e, projectId, currentStatus) => {
+        e.stopPropagation();
+        const next = STATUS_CYCLE[currentStatus] || 'processing';
+        try {
+            await updateProject(projectId, { status: next });
+            setProjects(prev => prev.map(p => p.id === projectId ? { ...p, status: next } : p));
+        } catch (err) { console.error(err); }
+    };
+
     const getFileIcon = (filename) => {
         if (!filename) return <FileText size={18} className="text-blue-500" />;
         const ext = filename.split('.').pop().toLowerCase();
@@ -110,7 +120,7 @@ export function ProjectList({ onSelectProject, onNewProject }) {
     const ProjectRow = ({ project, isArchived = false }) => (
         <tr
             key={project.id}
-            onClick={() => onSelectProject(project.id)}
+            onClick={() => onSelectProject(project.id, project.status)}
             className="hover:bg-gray-50 cursor-pointer transition-colors"
         >
             <td className="px-6 py-4 whitespace-nowrap">
@@ -137,13 +147,17 @@ export function ProjectList({ onSelectProject, onNewProject }) {
                 {new Date(project.created_at).toLocaleDateString()}
             </td>
             <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                    project.status === 'completed' ? 'bg-green-100 text-green-800' :
-                    project.status === 'processing' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-blue-100 text-blue-800'
-                }`}>
+                <button
+                    onClick={(e) => handleCycleStatus(e, project.id, project.status)}
+                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-pointer hover:opacity-80 transition-opacity ${
+                        project.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        project.status === 'review' ? 'bg-blue-100 text-blue-800' :
+                        'bg-yellow-100 text-yellow-800'
+                    }`}
+                    title="Click to change status"
+                >
                     {project.status}
-                </span>
+                </button>
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium flex justify-end gap-1">
                 {isArchived ? (
@@ -197,7 +211,7 @@ export function ProjectList({ onSelectProject, onNewProject }) {
     );
 
     return (
-        <div className="max-w-5xl mx-auto py-8 px-4">
+        <div className="max-w-6xl mx-auto py-8 px-4">
             <div className="flex justify-between items-center mb-8">
                 <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">My Projects</h1>
                 <button

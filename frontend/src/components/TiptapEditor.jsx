@@ -67,7 +67,7 @@ const TagNode = Node.create({
     },
 })
 
-const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, onToggleLock, isSkipped, onToggleSkip }) => {
+const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, lockType, onToggleLock, isSkipped, onToggleSkip }) => {
     if (!editor) {
         return null
     }
@@ -81,13 +81,15 @@ const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, onToggleLock, isS
                     onClick={onToggleLock}
                     onMouseDown={(e) => e.preventDefault()}
                     className={`px-2 py-1 text-xs rounded border mr-1 ${
-                        isLocked
-                            ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
-                            : "bg-gray-50 text-gray-400 border-gray-300 hover:bg-gray-100"
+                        isLocked && lockType === 'propagation'
+                            ? "bg-blue-50 text-blue-500 border-blue-200 hover:bg-blue-100"
+                            : isLocked
+                                ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                                : "bg-gray-50 text-gray-400 border-gray-300 hover:bg-gray-100"
                     }`}
-                    title={isLocked ? "Unlock segment" : "Lock segment"}
+                    title={isLocked && lockType === 'propagation' ? "Propagation lock — click to unlock" : isLocked ? "Unlock segment" : "Lock segment"}
                 >
-                    {isLocked ? "🔒" : "🔓"}
+                    {isLocked && lockType === 'propagation' ? "🔗" : isLocked ? "🔒" : "🔓"}
                 </button>
             )}
 
@@ -229,7 +231,7 @@ class NbHyphenCharacter extends InvisibleCharacter {
     }
 }
 
-export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, isLocked = false, onToggleLock, isSkipped = false, onToggleSkip, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false, trackChangesEnabled = false, trackChangesUser = null }) {
+export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly, isLocked = false, lockType = null, onToggleLock, isSkipped = false, onToggleSkip, availableTags, contextMatches, aiSettings, onAiDraft, onFocus, onNavigate, onEditorReady, chromeless = false, trackChangesEnabled = false, trackChangesUser = null }) {
     const aiSettingsRef = React.useRef(aiSettings);
     const onAiDraftRef = React.useRef(onAiDraft);
     const contextMatchesRef = React.useRef(contextMatches);
@@ -571,6 +573,13 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         }
     }, [content, editor])
 
+    // Sync editable state when lock/skip changes
+    useEffect(() => {
+        if (editor) {
+            editor.setEditable(!isReadOnly);
+        }
+    }, [editor, isReadOnly]);
+
     // Sync Track Changes status to editor when props change
     const prevTCEnabledRef = React.useRef(false);
     const prevTCUserRef = React.useRef(null);
@@ -618,7 +627,7 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
 
     return (
         <div id={`editor-${segmentId}`} className={containerClasses}>
-            {(!isReadOnly || isLocked || isSkipped) && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={!isLocked && !isSkipped ? (() => onAiDraft && segmentId ? onAiDraft(segmentId) : null) : null} isLocked={isLocked} onToggleLock={onToggleLock} isSkipped={isSkipped} onToggleSkip={onToggleSkip} />}
+            {(!isReadOnly || isLocked || isSkipped) && !chromeless && <MenuBar editor={editor} availableTags={availableTags} onAiDraft={!isLocked && !isSkipped ? (() => onAiDraft && segmentId ? onAiDraft(segmentId) : null) : null} isLocked={isLocked} lockType={lockType} onToggleLock={onToggleLock} isSkipped={isSkipped} onToggleSkip={onToggleSkip} />}
             <EditorContent editor={editor} className={editorContentClasses} />
         </div>
     )

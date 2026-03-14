@@ -54,11 +54,13 @@ export function SplitView({ projectId, onBack }) {
         handleToggleFlag,
         handleToggleLock,
         handleToggleSkip,
+        handlePropagate,
         handleFullReinit,
         handleAutoTranslate,
         handleBatchProcess,
         handleTCBatch,
         handleSequentialTranslate,
+        handleOptimize,
         cancelWorkflow,
         handleReingest,
         handleEditorUpdate,
@@ -382,6 +384,7 @@ export function SplitView({ projectId, onBack }) {
                                         onToggleFlag={handleToggleFlag}
                                         onToggleLock={handleToggleLock}
                                         onToggleSkip={handleToggleSkip}
+                                        onPropagate={handlePropagate}
                                         onSave={handleSave}
                                         onFocus={handleSegmentFocus}
                                         onNavigate={handleNavigation}
@@ -537,6 +540,7 @@ export function SplitView({ projectId, onBack }) {
                                             onBatchProcess={handleBatchProcess} // Allow Blocking Workflows
                                             onTCBatch={handleTCBatch} // TC Step-by-Step
                                             onSequentialTranslate={handleSequentialTranslate} // Sequential 1-by-1
+                                            onOptimize={handleOptimize} // Optimize via chat
                                             onReingest={handleReingest}
                                             onRefresh={refreshProject}
                                             onFullReinit={handleFullReinit}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bug } from 'lucide-react';
+import { Bug, ArrowRightToLine } from 'lucide-react';
 
 /**
  * Displays segment metadata badges and status indicators.
@@ -14,7 +14,7 @@ import { Bug } from 'lucide-react';
  * @param {boolean} isFlagged - Whether segment is flagged for review
  * @param {Function} onToggleFlag - Callback to toggle flag state
  */
-export function SegmentBadges({ segment, isFlagged, onToggleFlag }) {
+export function SegmentBadges({ segment, isFlagged, onToggleFlag, onPropagate }) {
     return (
         <div className="flex items-center gap-2">
             {/* Flag button */}
@@ -26,13 +26,24 @@ export function SegmentBadges({ segment, isFlagged, onToggleFlag }) {
                 <Bug size={14} className={isFlagged ? "fill-yellow-500" : ""} />
             </button>
 
-            {/* Repetition badge */}
+            {/* Repetition badge + propagate button */}
             {segment.metadata?.repetition_count > 1 && (
-                <span
-                    className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-slate-100 text-slate-500 border border-slate-200"
-                    title={`${segment.metadata.repetition_count} identical segments`}
-                >
-                    ×{segment.metadata.repetition_count}
+                <span className="inline-flex items-center gap-0.5">
+                    <span
+                        className="px-1.5 py-0.5 rounded-l text-[9px] font-mono bg-slate-100 text-slate-500 border border-slate-200"
+                        title={`${segment.metadata.repetition_count} identical segments`}
+                    >
+                        ×{segment.metadata.repetition_count}
+                    </span>
+                    {onPropagate && segment.target_content && (
+                        <button
+                            onClick={() => onPropagate(segment.id)}
+                            className="px-1 py-0.5 rounded-r text-[9px] bg-indigo-50 text-indigo-500 border border-indigo-200 border-l-0 hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
+                            title="Propagate to all repetitions"
+                        >
+                            <ArrowRightToLine size={10} />
+                        </button>
+                    )}
                 </span>
             )}
 

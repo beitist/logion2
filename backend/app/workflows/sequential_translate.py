@@ -63,12 +63,20 @@ class SequentialTranslateWorkflow(BaseWorkflow):
             topic = ai_settings.get("topic_description", "")
 
             success_count = 0
+            propagated_count = 0
+            skipped_ids = set()  # Track segments already handled via propagation
 
             for idx, seg in enumerate(segments):
                 # Check for cancellation before each segment
                 if self.is_cancelled():
                     self.log(f"Workflow cancelled after {success_count}/{total} segments.")
                     return
+
+                # Skip locked, skipped, or already-propagated segments
+                inner_meta = (seg.metadata_json or {}).get("metadata", {})
+                if inner_meta.get("locked") or inner_meta.get("propagation_lock") or inner_meta.get("skip") or seg.id in skipped_ids:
+                    self.log(f"Segment {idx+1}/{total} (#{seg.index+1}) — skipped (locked/propagated)")
+                    continue
 
                 try:
                     self.log(f"Segment {idx+1}/{total} (#{seg.index+1})...")
@@ -138,6 +146,37 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                     self.db.commit()
                     success_count += 1
 
+                    # 4b. Propagate to repetitions (same source_content)
+                    repetitions = self.db.query(Segment).filter(
+                        Segment.project_id == self.project_id,
+                        Segment.source_content == seg.source_content,
+                        Segment.id != seg.id
+                    ).all()
+                    prop_count = 0
+                    for rep in repetitions:
+                        rep_meta = rep.metadata_json or {}
+                        rep_inner = rep_meta.get("metadata", {})
+                        if rep_inner.get("locked") or rep_inner.get("skip") or rep_inner.get("propagation_excluded"):
+                            continue
+                        rep.target_content = result.target_text
+                        rep.status = "mt_draft"
+                        if "metadata" not in rep_meta:
+                            rep_meta["metadata"] = {}
+                        rep_meta["metadata"]["propagation_lock"] = True
+                        rep_meta["metadata"].pop("locked", None)
+                        rep_meta["ai_draft"] = result.target_text
+                        # Copy context matches if available
+                        if meta.get("context_matches"):
+                            rep_meta["context_matches"] = meta["context_matches"]
+                        rep.metadata_json = rep_meta
+                        flag_modified(rep, "metadata_json")
+                        skipped_ids.add(rep.id)
+                        prop_count += 1
+                    if prop_count > 0:
+                        self.db.commit()
+                        propagated_count += prop_count
+                        self.log(f"Segment {seg.index}: propagated to {prop_count} repetition(s)")
+
                     # 5. Auto-Glossary extraction (after commit so data is persisted)
                     try:
                         glossary_svc = AutoGlossaryService(self.project_id, self.db)
@@ -200,7 +239,7 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                     print(traceback.format_exc())
 
             self.update_progress(100, status="ready")
-            self.log(f"Sequential Translation Complete. {success_count}/{total} segments translated.")
+            self.log(f"Sequential Translation Complete. {success_count} translated, {propagated_count} propagated (of {total} total).")
 
         except Exception as e:
             self.fail(e)

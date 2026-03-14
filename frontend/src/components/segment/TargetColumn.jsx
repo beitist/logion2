@@ -39,6 +39,7 @@ export function TargetColumn({
     onToggleFlag,
     onToggleLock,
     onToggleSkip,
+    onPropagate,
     registerEditor,
     showDebug,
     onGlossaryUpdate,
@@ -52,7 +53,9 @@ export function TargetColumn({
 }) {
     const [localEditor, setLocalEditor] = React.useState(null);
     const isFlagged = segment.metadata?.flagged || false;
-    const isLocked = segment.metadata?.locked || false;
+    const isManualLocked = segment.metadata?.locked || false;
+    const isPropLocked = segment.metadata?.propagation_lock || false;
+    const isLocked = isManualLocked || isPropLocked;
     const isSkipped = segment.metadata?.skip || false;
     const glossaryMatches = sortedMatches.filter(m => m.type === 'glossary');
 
@@ -110,7 +113,7 @@ export function TargetColumn({
                             : 'Target (DE)';
 
     return (
-        <div className={`p-5 rounded-r-xl flex flex-col relative group ${bgClass} ${isSkipped ? 'ring-1 ring-orange-200 opacity-50' : isLocked ? 'ring-1 ring-red-200' : ''}`}>
+        <div className={`p-5 rounded-r-xl flex flex-col relative group ${bgClass} ${isSkipped ? 'ring-1 ring-orange-200 opacity-50' : isManualLocked ? 'ring-1 ring-red-200' : isPropLocked ? 'ring-1 ring-blue-200' : ''}`}>
             {/* Header row with labels and badges */}
             <div className="text-xs text-gray-400 font-mono mb-2 uppercase tracking-wider flex justify-between items-center select-none">
                 <div className="flex items-center gap-2">
@@ -137,6 +140,7 @@ export function TargetColumn({
                     segment={segment}
                     isFlagged={isFlagged}
                     onToggleFlag={onToggleFlag}
+                    onPropagate={onPropagate}
                 />
             </div>
 
@@ -174,6 +178,7 @@ export function TargetColumn({
                     onSave={onSave}
                     isReadOnly={editorLocked || isLocked || isSkipped}
                     isLocked={isLocked}
+                    lockType={isManualLocked ? 'manual' : isPropLocked ? 'propagation' : null}
                     onToggleLock={onToggleLock ? () => onToggleLock(segment.id, isLocked) : null}
                     isSkipped={isSkipped}
                     onToggleSkip={onToggleSkip ? () => onToggleSkip(segment.id, isSkipped) : null}

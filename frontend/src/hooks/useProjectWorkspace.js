@@ -114,6 +114,7 @@ export function useProjectWorkspace(projectId) {
         handleBatchProcess: blocking.handleBatchProcess, // Explicitly expose new method
         handleTCBatch: blocking.handleTCBatch, // TC Step-by-Step batch translation
         handleSequentialTranslate: blocking.handleSequentialTranslate, // Sequential 1-by-1 with auto-glossary
+        handleOptimize: blocking.handleOptimize, // Optimize existing translations via chat
 
         // Manual Overrides or Composition
         // e.g. handleSave uses data.handleSave

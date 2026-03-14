@@ -244,6 +244,41 @@ async def sequential_translate(
     background_tasks.add_task(run_background_sequential_translate, project_id, payload.segment_ids)
     return {"status": "started", "message": "Sequential translation started in background"}
 
+class OptimizeRequest(BaseModel):
+    segment_ids: Optional[List[str]] = None
+
+@router.post("/{project_id}/optimize")
+async def optimize_translations(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    payload: OptimizeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Optimize existing translations using AI chat.
+    Iterates over non-locked segments, sends each to the chat model for refinement.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.rag_status == "processing":
+        raise HTTPException(status_code=409, detail="A workflow is already running for this project")
+
+    project.rag_status = "processing"
+    project.rag_progress = 0
+    project.ingestion_logs = []
+    config = dict(project.config or {})
+    config['workflow'] = {'status': 'running', 'active_mode': 'optimize'}
+    project.config = config
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(project, "config")
+    db.commit()
+
+    from ..workflows.optimize import run_background_optimize
+    background_tasks.add_task(run_background_optimize, project_id, payload.segment_ids)
+    return {"status": "started", "message": "Optimize workflow started in background"}
+
 @router.post("/{project_id}/reset-workflow-status")
 async def reset_workflow_status(project_id: str, db: Session = Depends(get_db)):
     """

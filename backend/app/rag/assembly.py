@@ -36,7 +36,7 @@ class ContextAssembler:
         )
         
         # 1b. Internal Project TM (cosine pre-filter + Voyage rerank)
-        internal_tm_threshold = self._ai_settings.get("threshold_internal_tm", 50)
+        internal_tm_threshold = self._ai_settings.get("threshold_internal_tm", 90)
         internal_tm = self.retrieval.search_internal_tm(
             db=self.db,
             project_id=self.project_id,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered, CircleStop } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered, CircleStop, Zap } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
 import { copySourceToTarget, clearDraftTargets, resetWorkflowStatus } from '../../api/client';
 import { SettingsCard, SettingsSection } from './shared';
@@ -15,7 +15,7 @@ import { SettingsCard, SettingsSection } from './shared';
  * - Reinitialize source file
  * - Re-ingest context
  */
-export function WorkflowsTab({ project, segments, activeFileId, activeFileName, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onSequentialTranslate, onFullReinit }) {
+export function WorkflowsTab({ project, segments, activeFileId, activeFileName, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onSequentialTranslate, onOptimize, onFullReinit }) {
     // activeFileId: set when user has selected a specific file in the header dropdown.
     // activeFileName: display name of the selected file (e.g. "report.docx").
     // When activeFileId is set, `segments` already contains only that file's segments
@@ -187,6 +187,16 @@ export function WorkflowsTab({ project, segments, activeFileId, activeFileName, 
                         buttonText="Translate Sequentially"
                         buttonStyle="bg-amber-500 text-white hover:bg-amber-600 shadow-sm"
                         onClick={onSequentialTranslate}
+                    />
+
+                    <WorkflowCard
+                        icon={Zap}
+                        iconBg="bg-cyan-50 text-cyan-600"
+                        title="Optimize Translations"
+                        description="Refine existing translations using AI chat (chat model)"
+                        buttonText="Optimize All"
+                        buttonStyle="bg-cyan-500 text-white hover:bg-cyan-600 shadow-sm"
+                        onClick={onOptimize}
                     />
 
                     <WorkflowCard

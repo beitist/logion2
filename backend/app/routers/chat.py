@@ -126,18 +126,13 @@ async def segment_chat(
     model_name = ai_settings.get("model") or get_default_model_id()
     custom_prompt = ai_settings.get("custom_prompt", "")
 
-    # Find preceding segment in same paragraph for context
+    # Find preceding segment (always include for reading flow context)
     preceding_segment = None
     if segment.index is not None and segment.index > 0:
-        prev = db.query(Segment).filter(
+        preceding_segment = db.query(Segment).filter(
             Segment.project_id == project_id,
             Segment.index == segment.index - 1
         ).first()
-        if prev:
-            cur_p = (segment.metadata_json or {}).get("metadata", {}).get("p_index")
-            prev_p = (prev.metadata_json or {}).get("metadata", {}).get("p_index")
-            if cur_p is not None and cur_p == prev_p:
-                preceding_segment = prev
 
     system_prompt = _build_chat_system_prompt(segment, project, custom_prompt, preceding_segment)
     messages = [{"role": m.role, "content": m.content} for m in payload.messages]

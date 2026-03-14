@@ -186,6 +186,16 @@ export async function sequentialTranslate(projectId, segmentIds = null) {
     return res.json();
 }
 
+export async function optimizeTranslations(projectId, segmentIds = null) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/optimize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ segment_ids: segmentIds }),
+    });
+    if (!res.ok) throw new Error("Optimize workflow failed");
+    return res.json();
+}
+
 export async function resetWorkflowStatus(projectId) {
     const res = await fetch(`${API_BASE}/project/${projectId}/reset-workflow-status`, {
         method: "POST",

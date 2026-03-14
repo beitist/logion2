@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, resetWorkflowStatus } from "../api/client";
+import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, optimizeTranslations, resetWorkflowStatus } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, activeFileId, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -286,6 +286,45 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         }
     };
 
+    const handleOptimize = async () => {
+        const aiSettings = projectRef.current?.config?.ai_settings || {};
+        const chatModel = aiSettings.model || "Default";
+        const fileLabel = getFileLabel();
+        const scope = fileLabel ? ` for '${fileLabel}'` : '';
+
+        const candidates = getFilteredSegments().filter(s =>
+            s.target_content && !s.metadata?.locked && !s.metadata?.skip
+        );
+        if (candidates.length === 0) {
+            alert("No translated segments to optimize.");
+            return;
+        }
+
+        if (!confirm(`Start Optimize${scope}?\n\nSegments: ${candidates.length}\nModel: ${chatModel}\n\nThis refines existing translations using AI chat.`)) return;
+
+        stopRef.current = false;
+        setBlockingTask({
+            isOpen: false,
+            type: 'optimize',
+            status: 'running',
+            title: `Optimizing${scope} (${candidates.length} segments)`,
+            logs: [],
+            progress: 0
+        });
+
+        try {
+            const segmentIds = activeFileIdRef.current ? candidates.map(s => s.id) : null;
+            await optimizeTranslations(projectId, segmentIds);
+            if (onRefresh) onRefresh();
+        } catch (err) {
+            setBlockingTask(prev => ({
+                ...prev,
+                status: 'error',
+                logs: [`Error: ${err.message}`]
+            }));
+        }
+    };
+
     const cancelWorkflow = async () => {
         stopRef.current = true;
         try {
@@ -306,6 +345,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         handleReingest,
         handleBatchProcess,
         handleTCBatch,
-        handleSequentialTranslate
+        handleSequentialTranslate,
+        handleOptimize
     };
 }

@@ -42,12 +42,28 @@ class BatchTranslateWorkflow(BaseWorkflow):
                 query = query.filter(Segment.id.in_(segment_ids))
 
             # Order by index for consistent processing
-            segments = query.order_by(Segment.index).all()
-            if not segments:
+            all_segments = query.order_by(Segment.index).all()
+            if not all_segments:
                 self.log("No segments found.")
                 return
 
+            # Filter out locked/skipped segments
+            segments = []
+            seen_sources = set()  # Deduplicate: only translate each unique source once
+            dedup_skipped = 0
+            for seg in all_segments:
+                inner = (seg.metadata_json or {}).get("metadata", {})
+                if inner.get("locked") or inner.get("propagation_lock") or inner.get("skip"):
+                    continue
+                if not is_analyze and seg.source_content in seen_sources:
+                    dedup_skipped += 1
+                    continue
+                seen_sources.add(seg.source_content)
+                segments.append(seg)
+
             total_segments = len(segments)
+            if dedup_skipped:
+                self.log(f"Skipped {dedup_skipped} duplicate segments (will be propagated)")
             self.log(f"Processing {total_segments} segments...")
 
             self.update_progress(0, status="processing")
@@ -238,6 +254,45 @@ class BatchTranslateWorkflow(BaseWorkflow):
                             success_count += 1
 
                     self.db.commit()
+
+                    # Propagate translations to repetitions
+                    if not is_analyze:
+                        propagated = 0
+                        for seg_id, result in results.items():
+                            if result.error or not result.target_text:
+                                continue
+                            seg = next((s for s in segments if s.id == seg_id), None)
+                            if not seg:
+                                continue
+                            reps = self.db.query(Segment).filter(
+                                Segment.project_id == self.project_id,
+                                Segment.source_content == seg.source_content,
+                                Segment.id != seg.id
+                            ).all()
+                            for rep in reps:
+                                rep_meta = rep.metadata_json or {}
+                                rep_inner = rep_meta.get("metadata", {})
+                                if rep_inner.get("locked") or rep_inner.get("skip") or rep_inner.get("propagation_excluded"):
+                                    continue
+                                if rep.target_content:
+                                    continue  # Don't overwrite existing translations
+                                rep.target_content = result.target_text
+                                rep.status = "mt_draft"
+                                if "metadata" not in rep_meta:
+                                    rep_meta["metadata"] = {}
+                                rep_meta["metadata"]["propagation_lock"] = True
+                                rep_meta["metadata"].pop("locked", None)
+                                rep_meta["ai_draft"] = result.target_text
+                                # Copy context matches
+                                seg_meta = seg.metadata_json or {}
+                                if seg_meta.get("context_matches"):
+                                    rep_meta["context_matches"] = seg_meta["context_matches"]
+                                rep.metadata_json = rep_meta
+                                flag_modified(rep, "metadata_json")
+                                propagated += 1
+                        if propagated > 0:
+                            self.db.commit()
+                            self.log(f"Propagated {propagated} repetition(s)")
 
                     # Update Progress - based on batches completed
                     progress = int(((batch_idx + 1) / total_batches) * 100)

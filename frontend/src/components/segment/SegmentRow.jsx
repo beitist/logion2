@@ -33,6 +33,7 @@ export const SegmentRow = memo(({
     onToggleFlag,
     onToggleLock,
     onToggleSkip,
+    onPropagate,
     onSave,
     onFocus,
     onNavigate,
@@ -99,8 +100,8 @@ export const SegmentRow = memo(({
     // Wrap onAiDraft for TC segments.
     // TC 0 / first_last: simple MT with correct source stage text.
     // TC 1+ step_by_step: no manual shortcut — batch workflow only.
-    const wrappedOnAiDraft = useCallback((segmentId) => {
-        if (tcMode && !isSimpleInsert && stages.length >= 2) {
+    const wrappedOnAiDraft = useCallback((segmentId, isAuto, mode, isWorkflow, forceRefresh, tcParams) => {
+        if (tcMode && !isSimpleInsert && stages.length >= 2 && !mode) {
             // step_by_step TC1+: disabled — must use batch workflow
             if (tcMode === 'step_by_step' && activeTCStage > baseStage) {
                 return Promise.resolve(null);
@@ -109,16 +110,16 @@ export const SegmentRow = memo(({
             // step_by_step TC0: translate the base stage (classic MT)
             const stageIdx = tcMode === 'first_last' ? stages.length - 1 : baseStage;
             const stageData = stages[stageIdx] || {};
-            const tcParams = {
+            const tcParamsAuto = {
                 tc_source_text: stageData.text || '',
                 tc_base_translation: '',
                 tc_author_id: 'mt',
                 tc_author_name: 'MT',
                 tc_date: stageData.date || '',
             };
-            return onAiDraft(segmentId, false, 'translate', false, false, tcParams);
+            return onAiDraft(segmentId, false, 'translate', false, false, tcParamsAuto);
         } else {
-            return onAiDraft(segmentId);
+            return onAiDraft(segmentId, isAuto, mode, isWorkflow, forceRefresh, tcParams);
         }
     }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, stages, baseStage]);
 
@@ -158,6 +159,7 @@ export const SegmentRow = memo(({
                 onToggleFlag={onToggleFlag}
                 onToggleLock={onToggleLock}
                 onToggleSkip={onToggleSkip}
+                onPropagate={onPropagate}
                 registerEditor={registerEditor}
                 showDebug={showDebug}
                 onGlossaryUpdate={onGlossaryUpdate}

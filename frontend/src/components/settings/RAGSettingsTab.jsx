@@ -14,7 +14,7 @@ export function RAGSettingsTab({ project, onUpdate }) {
         threshold_mandatory: 60,
         threshold_optional: 40,
         threshold_tm: 60,
-        threshold_internal_tm: 50
+        threshold_internal_tm: 90
     });
     const [saving, setSaving] = useState(false);
 
@@ -25,7 +25,7 @@ export function RAGSettingsTab({ project, onUpdate }) {
                 threshold_mandatory: ai.threshold_mandatory !== undefined ? ai.threshold_mandatory : 60,
                 threshold_optional: ai.threshold_optional !== undefined ? ai.threshold_optional : 40,
                 threshold_tm: ai.threshold_tm !== undefined ? ai.threshold_tm : 60,
-                threshold_internal_tm: ai.threshold_internal_tm !== undefined ? ai.threshold_internal_tm : 50
+                threshold_internal_tm: ai.threshold_internal_tm !== undefined ? ai.threshold_internal_tm : 90
             });
         }
     }, [project]);

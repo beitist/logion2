@@ -162,9 +162,12 @@ class SegmentService:
             inner_meta = current_meta.get("metadata", {})
             if not isinstance(inner_meta, dict): inner_meta = {}
             
-            # Merge new context_matches, preserving old MT card if inference returned nothing
+            # Merge new context_matches, preserving existing MT card
             if context_matches:
-                current_meta['context_matches'] = context_matches
+                # Keep MT cards from existing matches (RAG doesn't produce MT cards)
+                existing_mt = [m for m in current_meta.get('context_matches', [])
+                               if (m.get('type') == 'mt' if isinstance(m, dict) else getattr(m, 'type', None) == 'mt')]
+                current_meta['context_matches'] = existing_mt + context_matches
             else:
                 # Retrieval returned nothing — keep existing matches intact
                 logger.warning(f"Segment {segment.id}: No context_matches from retrieval, preserving existing")
@@ -274,7 +277,7 @@ class SegmentService:
             resp_dict.pop('embedding', None) # Exclude large vector
             resp_dict.pop('_sa_instance_state', None) # Cleanup SQLAlchemy state
             
-            resp_dict['context_matches'] = context_matches
+            resp_dict['context_matches'] = current_meta.get('context_matches', context_matches)
             
             meta_json = segment.metadata_json or {}
             resp_dict['segment_metadata'] = meta_json.get("metadata")

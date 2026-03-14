@@ -101,7 +101,7 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         if (!seg) return;
 
         // Skip save silently for locked or skipped segments
-        if (seg.metadata?.locked || seg.metadata?.skip) { setSavingId(null); return; }
+        if (seg.metadata?.locked || seg.metadata?.propagation_lock || seg.metadata?.skip) { setSavingId(null); return; }
 
         const serialized = serializeContent(htmlContent, seg.tags);
         const isEmpty = !htmlContent || htmlContent.trim() === '' || htmlContent.trim() === '<p></p>';
@@ -114,41 +114,15 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
             const duration = Math.round(performance.now() - start);
             setSegments(prev => prev.map(s => s.id === id ? { ...s, target_content: serialized, status: newStatus } : s));
             log(`Segment saved in ${duration}ms`, 'success');
-
-            // Propagation dialog for repetitions — only when content actually changed
-            if (seg.metadata?.repetition_count > 1 && !isEmpty && contentChanged && !seg.metadata?.propagation_excluded) {
-                const count = seg.metadata.repetition_count - 1;
-                if (confirm(`Soll ich ${count} gleiche Segment(e) gleich übersetzen?`)) {
-                    try {
-                        const res = await propagateTranslation(id);
-                        if (res.propagated > 0) {
-                            setSegments(prev => prev.map(s =>
-                                s.source_content === seg.source_content && s.id !== id && !s.metadata?.locked
-                                    ? { ...s, target_content: serialized, status: newStatus, metadata: { ...s.metadata, locked: true } }
-                                    : s
-                            ));
-                            log(`${res.propagated} repetition(s) updated`, 'success');
-                        }
-                        if (res.skipped > 0) {
-                            log(`${res.skipped} segment(s) skipped (locked/excluded)`, 'info');
-                        }
-                    } catch (propErr) {
-                        log(`Propagation failed: ${propErr.message}`, 'error');
-                    }
-                } else {
-                    // User declined — exclude this segment from future propagation dialogs
-                    try {
-                        await updateSegment(id, undefined, undefined, { ...seg.metadata, propagation_excluded: true });
-                        setSegments(prev => prev.map(s =>
-                            s.id === id ? { ...s, metadata: { ...s.metadata, propagation_excluded: true } } : s
-                        ));
-                    } catch (e) { /* silent */ }
-                }
-            }
         } catch (err) {
-            log(`Save failed: ${err.message}`, 'error');
-            console.error("Save failed", err);
-            alert("Save failed!");
+            // 423 = segment was locked between blur and save — ignore silently
+            if (err.message?.includes('423') || err.message?.includes('locked')) {
+                log(`Segment locked — save skipped`, 'info');
+            } else {
+                log(`Save failed: ${err.message}`, 'error');
+                console.error("Save failed", err);
+                alert("Save failed!");
+            }
         } finally {
             setSavingId(null);
         }
@@ -167,19 +141,42 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
     };
 
     const handleToggleLock = async (segmentId, currentLock) => {
-        const newLock = !currentLock;
+        const seg = segmentsRef.current.find(s => s.id === segmentId);
+        // currentLock reflects either manual locked or propagation_lock
+        const isManualLocked = seg?.metadata?.locked || false;
+        const isPropLocked = seg?.metadata?.propagation_lock || false;
+        // Toggle: if any lock is active, unlock everything; otherwise set manual lock
+        const newLock = !(isManualLocked || isPropLocked);
+
+        // Flush editor content before locking — otherwise unsaved edits are lost
+        let contentToSave = undefined;
+        if (newLock) {
+            const editor = editorRefs.current[segmentId];
+            if (editor) {
+                const html = editor.getHTML();
+                const serialized = serializeContent(html, seg?.tags);
+                if (serialized !== (seg?.target_content || '')) {
+                    contentToSave = serialized;
+                }
+            }
+        }
+
+        // Locking a segment = user reviewed it → set status to 'translated'
+        const hasContent = contentToSave || seg?.target_content;
+        const promoteStatus = newLock && hasContent && seg?.status !== 'translated' && seg?.status !== 'approved';
+        const newStatus = promoteStatus ? 'translated' : undefined;
         setSegments(prev => prev.map(s =>
             s.id === segmentId
-                ? { ...s, metadata: { ...(s.metadata || {}), locked: newLock } }
+                ? { ...s, ...(contentToSave ? { target_content: contentToSave } : {}), metadata: { ...(s.metadata || {}), locked: newLock || undefined, propagation_lock: undefined }, ...(promoteStatus ? { status: 'translated' } : {}) }
                 : s
         ));
         try {
-            await updateSegment(segmentId, undefined, undefined, { locked: newLock });
+            await updateSegment(segmentId, contentToSave, newStatus, { locked: newLock, propagation_lock: false });
         } catch (err) {
             console.error("Failed to toggle lock", err);
             setSegments(prev => prev.map(s =>
                 s.id === segmentId
-                    ? { ...s, metadata: { ...(s.metadata || {}), locked: currentLock } }
+                    ? { ...s, metadata: { ...(s.metadata || {}), locked: isManualLocked || undefined, propagation_lock: isPropLocked || undefined } }
                     : s
             ));
         }
@@ -208,6 +205,28 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
                     ? { ...s, metadata: { ...(s.metadata || {}), skip: currentSkip } }
                     : s
             ));
+        }
+    };
+
+    const handlePropagate = async (segmentId) => {
+        const seg = segmentsRef.current.find(s => s.id === segmentId);
+        if (!seg || !seg.target_content) return;
+
+        try {
+            const res = await propagateTranslation(segmentId);
+            if (res.propagated > 0) {
+                setSegments(prev => prev.map(s =>
+                    s.source_content === seg.source_content && s.id !== segmentId && !s.metadata?.locked
+                        ? { ...s, target_content: seg.target_content, status: seg.status, metadata: { ...s.metadata, propagation_lock: true, locked: undefined } }
+                        : s
+                ));
+                log(`${res.propagated} repetition(s) updated`, 'success');
+            }
+            if (res.skipped > 0) {
+                log(`${res.skipped} segment(s) skipped (locked/excluded)`, 'info');
+            }
+        } catch (err) {
+            log(`Propagation failed: ${err.message}`, 'error');
         }
     };
 
@@ -271,6 +290,7 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         handleToggleFlag,
         handleToggleLock,
         handleToggleSkip,
+        handlePropagate,
         handleEditorUpdate,
         handleExport,
         handleTmXExport,

@@ -52,7 +52,7 @@ export function SourceColumn({
     // Threshold values for filtering matches
     const tMandatory = aiSettings.threshold_mandatory ?? 60;
     const tOptional = aiSettings.threshold_optional ?? 40;
-    const tInternalTm = aiSettings.threshold_internal_tm ?? 50;
+    const tInternalTm = aiSettings.threshold_internal_tm ?? 90;
 
     // Extract glossary matches for inline highlighting
     const glossaryMatches = useMemo(() => {
