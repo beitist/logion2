@@ -162,7 +162,7 @@ const MenuBar = ({ editor, availableTags, onAiDraft, isLocked, lockType, onToggl
                             <button
                                 key={tid}
                                 tabIndex="-1"
-                                onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: tid, label: label } }).run()}
+                                onClick={() => editor.chain().focus().insertContent({ type: 'tag', attrs: { id: tid, label: label, tagType: tag.type || 'unknown' } }).run()}
                                 onMouseDown={(e) => e.preventDefault()}
                                 className="px-2 py-1 text-xs font-mono rounded border bg-white text-gray-600 border-gray-300 hover:bg-blue-50 active:bg-blue-100 min-w-[24px]"
                                 title={title}
@@ -279,7 +279,8 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                 // REMOVED: Speechbubble override for comments (User Request 1)
                 // else if (tagInfo.type === 'comment') label = '💬';
             }
-            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}" class="tag-node tag-node-${finalId}" style="--tag-label: '${label}'"></span>`;
+            const tagType = tagInfo?.type || 'unknown';
+            return `<span data-type="tag-node" data-id="${finalId}" data-label="${label}" data-tag-type="${tagType}" class="tag-node tag-node-${finalId}" style="--tag-label: '${label}'"></span>`;
         });
 
         // 3. Post-Pass: Merge Adjacent Tags (Combo Tags) (User Request 2)
