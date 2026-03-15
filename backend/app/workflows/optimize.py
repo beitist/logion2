@@ -17,10 +17,14 @@ TAG_PATTERN = re.compile(r'</?(\d+)>')
 NON_TEXT_PATTERN = re.compile(r'^[\d\s\.\,\;\:\!\?\-\–\—\(\)\[\]\{\}\/\\%\$€£¥#\*\+\=\@\&\|\"\'°±×÷<>]+$')
 
 DEFAULT_OPTIMIZE_PROMPT = (
-    "Optimiere die folgende Übersetzung. "
+    "Prüfe die aktuelle Übersetzung auf folgende Kriterien und optimiere sie bei Bedarf:\n"
+    "1. Liest sich der Satz wie originales Deutsch (kein 'Übersetzungsdeutsch')?\n"
+    "2. Stimmen Fachbegriffe mit dem Glossar überein?\n"
+    "3. Passt der Satz zum vorhergehenden Kontext (Lesefluss, Kohärenz)?\n"
+    "4. Ist die Satzstruktur natürlich (ggf. Passiv, Umstellung, Aufteilung)?\n\n"
     "Antworte AUSSCHLIESSLICH mit dem optimierten Satz. "
-    "Keine Erklärungen, keine Anführungszeichen, keine Einleitungen, "
-    "keine Alternativen — nur der eine beste Satz."
+    "Keine Erklärungen, keine Anführungszeichen, keine Einleitungen, keine Alternativen. "
+    "Wenn die Übersetzung bereits gut ist, gib sie unverändert zurück."
 )
 
 

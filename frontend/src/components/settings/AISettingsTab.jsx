@@ -23,6 +23,18 @@ Prüfe den Text auf typisches 'Übersetzungsdeutsch' und formuliere ihn so um, a
 
 Prüfe deine Übersetzung vor der Ausgabe: Würde dieser Satz so in einem offiziellen deutschen Regierungsdokument stehen? Falls er noch nach 'Übersetzung' klingt, strukturiere ihn radikal um.`;
 
+/**
+ * Default optimize prompt for the "Optimize Translations" workflow.
+ * Sent as user message; the system prompt already includes source, translation, TM, glossary.
+ */
+const DEFAULT_OPTIMIZE_PROMPT = `Prüfe die aktuelle Übersetzung auf folgende Kriterien und optimiere sie bei Bedarf:
+1. Liest sich der Satz wie originales Deutsch (kein 'Übersetzungsdeutsch')?
+2. Stimmen Fachbegriffe mit dem Glossar überein?
+3. Passt der Satz zum vorhergehenden Kontext (Lesefluss, Kohärenz)?
+4. Ist die Satzstruktur natürlich (ggf. Passiv, Umstellung, Aufteilung)?
+
+Antworte AUSSCHLIESSLICH mit dem optimierten Satz. Keine Erklärungen, keine Anführungszeichen, keine Einleitungen, keine Alternativen. Wenn die Übersetzung bereits gut ist, gib sie unverändert zurück.`;
+
 /** Preferred default model ID for both editor and workflow translation */
 const DEFAULT_MODEL_ID = 'gemini-3.1-pro-preview';
 
@@ -43,6 +55,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
         glossary_model: '',
         auto_glossary_on_edit: false,
         custom_prompt: '',
+        optimize_prompt: '',
         topic_description: '',
         pre_translate_count: 0,
         batch_size: 10,
@@ -72,6 +85,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                 auto_glossary_on_edit: ai.auto_glossary_on_edit || false,
                 // Fall back to the default translation prompt if none is configured yet
                 custom_prompt: ai.custom_prompt !== undefined ? ai.custom_prompt : DEFAULT_CUSTOM_PROMPT,
+                optimize_prompt: ai.optimize_prompt !== undefined ? ai.optimize_prompt : DEFAULT_OPTIMIZE_PROMPT,
                 topic_description: ai.topic_description || '',
                 pre_translate_count: ai.pre_translate_count || 0,
                 batch_size: ai.batch_size || 10,
@@ -267,6 +281,29 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                                        shadow-sm text-sm font-mono resize-none transition-all
                                        placeholder:text-gray-400"
                         />
+                    </SettingsSection>
+                </SettingsCard>
+
+                {/* Optimize Prompt Section */}
+                <SettingsCard>
+                    <SettingsSection
+                        icon={Zap}
+                        title="Optimize Instructions"
+                        description="User prompt for the 'Optimize Translations' workflow"
+                        accentColor="text-cyan-500"
+                    >
+                        <textarea
+                            value={settings.optimize_prompt}
+                            onChange={(e) => setSettings({ ...settings, optimize_prompt: e.target.value })}
+                            placeholder="Instructions for how to optimize/refine existing translations..."
+                            className="w-full h-36 px-4 py-3 border border-gray-200 rounded-xl
+                                       focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400
+                                       shadow-sm text-sm font-mono resize-none transition-all
+                                       placeholder:text-gray-400"
+                        />
+                        <p className="text-xs text-gray-400 mt-1.5">
+                            Sent as user message. The system prompt already includes source text, current translation, TM matches, and glossary.
+                        </p>
                     </SettingsSection>
                 </SettingsCard>
 
