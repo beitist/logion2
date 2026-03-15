@@ -86,29 +86,44 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                 try:
                     self.log(f"Segment {idx+1}/{total} (#{seg.index+1})...")
 
-                    # 1. Fresh RAGManager per segment (picks up new auto-glossary entries)
-                    manager = RAGManager(self.project_id, self.db)
+                    target_text = None
+                    result = None
+                    for attempt in range(2):  # 1 attempt + 1 retry
+                        # Fresh RAGManager per attempt (picks up new auto-glossary entries)
+                        manager = RAGManager(self.project_id, self.db)
 
-                    # 2. Generate draft with full context + glossary
-                    result = await manager.generate_draft(
-                        segment=seg,
-                        source_lang=self.project.source_lang,
-                        target_lang=self.project.target_lang,
-                        model_name=model_name,
-                        custom_prompt=custom_prompt,
-                    )
+                        result = await manager.generate_draft(
+                            segment=seg,
+                            source_lang=self.project.source_lang,
+                            target_lang=self.project.target_lang,
+                            model_name=model_name,
+                            custom_prompt=custom_prompt,
+                        )
 
-                    if result.error:
-                        self.log(f"Segment {seg.index}: Error — {result.error}")
+                        if result.error:
+                            if attempt == 0:
+                                self.log(f"Segment {seg.index}: Error — {result.error} (retrying...)")
+                                continue
+                            self.log(f"Segment {seg.index}: Error after retry — {result.error}")
+                            break
+
+                        target_text = (result.target_text or "").strip()
+                        if target_text:
+                            break
+                        if attempt == 0:
+                            self.log(f"Segment {seg.index}: Empty AI response (retrying...)")
+
+                    if not target_text:
+                        self.log(f"Segment {seg.index}: No valid response after retry — skipped")
                         continue
 
                     # 3. Save: target_content, status=mt_draft
-                    seg.target_content = result.target_text
+                    seg.target_content = target_text
                     seg.status = "mt_draft"
 
                     # 4. Update metadata (ai_draft, context_matches)
                     meta = seg.metadata_json or {}
-                    meta["ai_draft"] = result.target_text
+                    meta["ai_draft"] = target_text
 
                     if result.context_used:
                         matches = result.context_used.matches or []
@@ -118,7 +133,7 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                         # Insert MT result as a hit
                         mt_hit = {
                             "id": f"mt-result-{seg.id}",
-                            "content": result.target_text,
+                            "content": target_text,
                             "source_text": seg.source_content,
                             "type": "mt",
                             "category": "ai",

@@ -182,26 +182,35 @@ class BatchTranslateWorkflow(BaseWorkflow):
                     if not results:
                         self.log(f"Batch {i//BATCH_SIZE + 1} returned no results.")
                     
+                    retry_seg_ids = []  # Collect segments that need retry
+
                     for seg_id, result in results.items():
                         if result.error:
                             self.log(f"Segment {seg_id} failed: {result.error}")
+                            retry_seg_ids.append(seg_id)
                             continue
 
                         # Find segment (already attached to session)
                         seg = next((s for s in segments if s.id == seg_id), None)
                         if seg:
                             meta = seg.metadata_json or {}
+                            target_text = (result.target_text or "").strip()
 
                             if not is_analyze:
-                                # 1. Update Target Content logic: Only if empty
+                                if not target_text:
+                                    self.log(f"Segment #{seg.index+1}: Empty AI response")
+                                    retry_seg_ids.append(seg_id)
+                                    continue
+
+                                # 1. Update Target Content: Only if empty
                                 updated_target = False
                                 if not seg.target_content:
-                                    seg.target_content = result.target_text
+                                    seg.target_content = target_text
                                     seg.status = "mt_draft"
                                     updated_target = True
 
                                 # 2. Update Metadata
-                                meta['ai_draft'] = result.target_text
+                                meta['ai_draft'] = target_text
 
                             # 3. Context Matches & Glossary (always saved)
                             if result.context_used:
@@ -212,7 +221,7 @@ class BatchTranslateWorkflow(BaseWorkflow):
                                 # Insert MT Result as a "Hit"
                                 # For translate/draft: use the new AI result
                                 # For analyze: reuse existing target_content as MT tile (no LLM cost)
-                                mt_text = result.target_text if not is_analyze else seg.target_content
+                                mt_text = target_text if not is_analyze else seg.target_content
                                 if mt_text:
                                     mt_hit = {
                                         "id": f"mt-result-{seg.id}",
@@ -257,6 +266,39 @@ class BatchTranslateWorkflow(BaseWorkflow):
                             success_count += 1
 
                     self.db.commit()
+
+                    # Retry failed segments individually (1 retry per segment)
+                    if retry_seg_ids and not is_analyze:
+                        self.log(f"Retrying {len(retry_seg_ids)} failed segment(s)...")
+                        for retry_id in retry_seg_ids:
+                            seg = next((s for s in segments if s.id == retry_id), None)
+                            if not seg:
+                                continue
+                            try:
+                                retry_result = await manager.generate_draft(
+                                    segment=seg,
+                                    source_lang=self.project.source_lang,
+                                    target_lang=self.project.target_lang,
+                                    model_name=model_name,
+                                    custom_prompt=custom_prompt,
+                                )
+                                rt = (retry_result.target_text or "").strip()
+                                if retry_result.error or not rt:
+                                    self.log(f"Segment #{seg.index+1}: Retry failed — skipped")
+                                    continue
+
+                                meta = seg.metadata_json or {}
+                                if not seg.target_content:
+                                    seg.target_content = rt
+                                    seg.status = "mt_draft"
+                                meta['ai_draft'] = rt
+                                seg.metadata_json = dict(meta)
+                                flag_modified(seg, "metadata_json")
+                                success_count += 1
+                                self.log(f"Segment #{seg.index+1}: Retry succeeded")
+                            except Exception as retry_err:
+                                self.log(f"Segment #{seg.index+1}: Retry error — {retry_err}")
+                        self.db.commit()
 
                     # Propagate translations to repetitions
                     if not is_analyze:

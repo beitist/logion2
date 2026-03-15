@@ -130,15 +130,20 @@ class OptimizeWorkflow(BaseWorkflow):
                     # 3. Build system prompt (same as chat, now with fresh context)
                     system_prompt = _build_chat_system_prompt(seg, self.project, custom_prompt, preceding_segment)
 
-                    # 4. Optimize call (chat model for quality)
+                    # 4. Optimize call (chat model for quality) with retry
                     messages = [{"role": "user", "content": optimize_prompt}]
-                    reply_text, usage = await orchestrator.call_chat(system_prompt, messages, chat_model)
-
-                    # Strip any accidental quotes or whitespace from reply
-                    reply_text = reply_text.strip().strip('"').strip("'").strip("\u201e").strip("\u201c").strip()
+                    reply_text = ""
+                    usage = {}
+                    for attempt in range(2):  # 1 attempt + 1 retry
+                        reply_text, usage = await orchestrator.call_chat(system_prompt, messages, chat_model)
+                        reply_text = reply_text.strip().strip('"').strip("'").strip("\u201e").strip("\u201c").strip()
+                        if reply_text:
+                            break
+                        if attempt == 0:
+                            self.log(f"Segment {seg.index}: Empty response (retrying...)")
 
                     if not reply_text:
-                        self.log(f"Segment {seg.index}: Empty response — skipped")
+                        self.log(f"Segment {seg.index}: Empty response after retry — skipped")
                         continue
 
                     # 5. Tag re-injection if source has tags
@@ -151,13 +156,17 @@ class OptimizeWorkflow(BaseWorkflow):
                                 orchestrator, tagging_model,
                                 seg.source_content, reply_text
                             )
-                            if tagged_text:
+                            if tagged_text and tagged_text.strip():
                                 final_text = tagged_text
                                 tagged_count += 1
                         except Exception as tag_err:
                             self.log(f"Segment {seg.index}: Tagging failed ({tag_err}) — using tag-free version")
 
                     # 6. Save optimized translation (keep current status)
+                    # Guard: never overwrite a valid target with empty content
+                    if not final_text.strip():
+                        self.log(f"Segment {seg.index}: Final text empty after processing — keeping original")
+                        continue
                     seg.target_content = final_text
                     # Don't change status — already translated
 
