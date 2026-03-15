@@ -273,6 +273,8 @@ class RetrievalEngine:
             if tm.origin_type == TranslationOrigin.user: score = 99
             elif tm.origin_type == TranslationOrigin.optional: score = 98
             
+            if not tm.target_text:
+                continue
             results.append(TranslationMatch(
                 id=f"tm-{tm.id}",
                 content=tm.target_text,

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { generateDraft, reingestProject, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, optimizeTranslations, resetWorkflowStatus } from "../api/client";
+import { generateDraft, reingestProject, reingestNewFiles, reinitializeProject, getProject, batchTranslate, tcBatchTranslate, sequentialTranslate, optimizeTranslations, resetWorkflowStatus } from "../api/client";
 
 export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRef, activeFileId, onRefresh, clearAIQueue }) {
     const [blockingTask, setBlockingTask] = useState({
@@ -160,6 +160,20 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
                 status: 'running',
                 title: "Re-ingesting Context...",
                 logs: ["Request sent..."],
+                progress: -1
+            });
+        } catch (e) { alert("Failed: " + e.message); }
+    };
+
+    const handleReingestNew = async () => {
+        try {
+            await reingestNewFiles(projectId);
+            setBlockingTask({
+                isOpen: true,
+                type: 'reinit',
+                status: 'running',
+                title: "Ingesting New Files...",
+                logs: ["Checking for new context files..."],
                 progress: -1
             });
         } catch (e) { alert("Failed: " + e.message); }
@@ -343,6 +357,7 @@ export function useBlockingTask(projectId, { segmentsRef, setSegments, projectRe
         handleAutoTranslate,
         handleFullReinit,
         handleReingest,
+        handleReingestNew,
         handleBatchProcess,
         handleTCBatch,
         handleSequentialTranslate,

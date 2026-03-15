@@ -147,6 +147,14 @@ export async function reingestProject(projectId) {
     return res.json();
 }
 
+export async function reingestNewFiles(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/reingest-new`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to ingest new files");
+    return res.json();
+}
+
 export async function reinitializeProject(projectId, fileData = null) {
     const url = `${API_BASE}/project/${projectId}/reinitialize`;
 

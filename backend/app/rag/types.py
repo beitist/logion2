@@ -6,7 +6,7 @@ class TranslationMatch(BaseModel):
     Represents a single retrieval match (TM or Vector).
     """
     id: str
-    content: str  # The target text (or source if source match)
+    content: str = ""  # The target text (or source if source match)
     source_text: Optional[str] = None # For TM matches
     filename: str
     type: str # 'mandatory', 'user', 'optional', 'glossary', 'mt'

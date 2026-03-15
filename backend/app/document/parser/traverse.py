@@ -509,6 +509,90 @@ def _build_stage_texts(fragments: list, clusters: list) -> list:
     return results
 
 
+def _strip_paragraph_default_tags(text: str, tags: dict):
+    """Remove font/size tags that cover the entire paragraph text.
+
+    When every run in a paragraph specifies the same font (e.g. Calibri)
+    or size, those tags are effectively the paragraph default and create
+    noise in the editor.  This function detects such "universal" tags
+    and strips them, keeping the tags dict clean.
+
+    Returns (cleaned_text, cleaned_tags).
+    """
+    if not text or not tags:
+        return text, tags
+
+    # Types eligible for default-stripping
+    STRIP_TYPES = {'font', 'size'}
+
+    # Collect candidate groups: (type, value_key) → set of tag IDs
+    # value_key identifies the actual value so we can group identical tags
+    groups = {}
+    for tid, tag in tags.items():
+        ttype = tag.type if hasattr(tag, 'type') else tag.get('type', '')
+        if ttype not in STRIP_TYPES:
+            continue
+        attrs = tag.xml_attributes if hasattr(tag, 'xml_attributes') else tag.get('xml_attributes', {})
+        if ttype == 'font':
+            val = (attrs or {}).get('name', '')
+        elif ttype == 'size':
+            val = (attrs or {}).get('val', '')
+        else:
+            continue
+        key = (ttype, val)
+        if key not in groups:
+            groups[key] = set()
+        groups[key].add(tid)
+
+    if not groups:
+        return text, tags
+
+    # For each group, check if its tags cover ALL non-whitespace text.
+    # Walk through the text tracking depth of this group's tags.
+    # If coverage of non-ws chars >= 95%, it's a paragraph default → strip.
+    tags_to_remove = set()
+    for (ttype, val), tids in groups.items():
+        covered = 0
+        total = 0
+        depth = 0
+        i = 0
+        while i < len(text):
+            if text[i] == '<':
+                end = text.find('>', i)
+                if end == -1:
+                    break
+                marker = text[i + 1:end]
+                is_close = marker.startswith('/')
+                tid = marker.lstrip('/')
+                if tid in tids:
+                    depth += (-1 if is_close else 1)
+                i = end + 1
+            else:
+                # Only count word characters (letters/digits) for coverage.
+                # Punctuation between tags (commas, periods) is excluded from
+                # the count because our parser skips punctuation-only runs.
+                if text[i].isalnum():
+                    total += 1
+                    if depth > 0:
+                        covered += 1
+                i += 1
+        coverage = covered / total if total > 0 else 0
+        if coverage >= 0.95:
+            tags_to_remove.update(tids)
+
+    if not tags_to_remove:
+        return text, tags
+
+    # Remove the tag markers from text
+    remove_pattern = '|'.join(re.escape(tid) for tid in tags_to_remove)
+    cleaned_text = re.sub(rf'</?({remove_pattern})>', '', text)
+
+    # Remove from tags dict
+    cleaned_tags = {tid: tag for tid, tag in tags.items() if tid not in tags_to_remove}
+
+    return cleaned_text, cleaned_tags
+
+
 def process_paragraph(para_element, location: dict, context: dict) -> list[SegmentInternal]:
     """
     Converts a docx Paragraph XML ELEMENT into a SegmentInternal list.
@@ -526,6 +610,9 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
     state = InlineProcessingState(context)
     final_content = process_inline_children(para_element, state)
     tags = state.tags
+
+    # Strip redundant paragraph-default tags (e.g. every run has font=Calibri)
+    final_content, tags = _strip_paragraph_default_tags(final_content, tags)
 
     if not final_content.strip() and not ("[SHAPE]" in final_content):
         return []

@@ -241,3 +241,169 @@ def run_background_reingest(project_id: str):
 # run_background_reingest uses SessionLocal, so it is fine.
 # Wait, `to_model_class` wrapper? No, just import Project.
 from ..models import Project
+
+
+class IncrementalReingestWorkflow(BaseWorkflow):
+    """Only ingest context files that have no existing chunks (newly added files)."""
+
+    def run(self):
+        self.project.rag_status = "ingesting"
+        self.project.rag_progress = 0
+        self.project.ingestion_logs = []
+        self.db.commit()
+
+        self.log("Incremental Re-Ingest: Checking for new context files...")
+
+        engine = RetrievalEngine()
+        if not engine._client:
+            self.log("FATAL: Voyage AI Client not loaded (Check API Key).")
+            self.fail(Exception("Voyage AI Client missing"))
+            return
+
+        # Get all legal/background files
+        files = self.db.query(ProjectFile).filter(
+            ProjectFile.project_id == self.project_id,
+            ProjectFile.category.in_([ProjectFileCategory.legal.value, ProjectFileCategory.background.value])
+        ).all()
+
+        # Filter: only files without existing chunks
+        from sqlalchemy import func as sql_func
+        chunk_counts = dict(
+            self.db.query(ContextChunk.file_id, sql_func.count(ContextChunk.id))
+            .filter(ContextChunk.file_id.in_([f.id for f in files]))
+            .group_by(ContextChunk.file_id)
+            .all()
+        )
+
+        new_files = [f for f in files if chunk_counts.get(f.id, 0) == 0]
+
+        if not new_files:
+            self.log("No new context files found. All files already ingested.")
+            self.update_progress(100, status="ready")
+            return
+
+        self.log(f"Found {len(new_files)} new file(s) to ingest: {', '.join(f.filename for f in new_files)}")
+
+        # Phase 1: Parse new files
+        all_chunks_to_persist = []
+
+        for file in new_files:
+            temp_path = f"temp_rag_{file.id}_{file.filename}"
+            try:
+                is_doc = file.filename.lower().endswith((".docx", ".xlsx"))
+
+                if not is_doc:
+                    download_file(file.file_path, temp_path)
+
+                if file.filename.lower().endswith((".docx", ".xlsx")):
+                    from ..document.parsing_service import process_file_parsing
+                    segments = process_file_parsing(
+                        file_path_or_url=file.file_path,
+                        project_id=self.project_id,
+                        original_filename=file.filename
+                    )
+                    for idx, seg in enumerate(segments):
+                        txt = seg.source_text.strip()
+                        if len(txt) > 3:
+                            all_chunks_to_persist.append({
+                                "file_id": file.id,
+                                "text": txt,
+                                "rich": txt,
+                                "index": idx
+                            })
+
+                elif file.filename.endswith(".tmx"):
+                    self.log(f"Processing TMX {file.filename}...")
+                    origin = TranslationOrigin.mandatory if file.category == "legal" else TranslationOrigin.optional
+                    ingest_tmx_direct(temp_path, self.project_id, origin, self.db)
+
+                    idx = 0
+                    for unit in parse_tmx_units(temp_path):
+                        all_chunks_to_persist.append({
+                            "file_id": file.id,
+                            "text": unit['source_text'],
+                            "rich": unit['target_text'],
+                            "index": idx
+                        })
+                        idx += 1
+
+            except Exception as e:
+                self.log(f"Error parsing {file.filename}: {e}")
+            finally:
+                if os.path.exists(temp_path): os.remove(temp_path)
+
+        total_chunks = len(all_chunks_to_persist)
+        if total_chunks == 0:
+            self.log("No new chunks to vectorize.")
+            self.update_progress(100, status="ready")
+            return
+
+        # Phase 2: Embed & Insert (only new chunks, no segment re-embedding)
+        BATCH_SIZE = 32
+        processed = 0
+        total_tokens = 0
+
+        self.log(f"Vectorizing {total_chunks} new chunks...")
+
+        for i in range(0, total_chunks, BATCH_SIZE):
+            batch = all_chunks_to_persist[i : i+BATCH_SIZE]
+            texts = [engine.clean_tags(b['text']) for b in batch]
+
+            try:
+                embeddings, tokens = engine.embed_batch(texts, input_type="document")
+                total_tokens += tokens
+            except Exception as e:
+                self.log(f"Embedding error: {e}")
+                continue
+
+            db_objs = []
+            for b, vec in zip(batch, embeddings):
+                db_objs.append(ContextChunk(
+                    file_id=b['file_id'],
+                    content=b['text'],
+                    rich_content=b['rich'],
+                    embedding=vec,
+                    chunk_index=b['index']
+                ))
+
+            self.db.add_all(db_objs)
+            self.db.commit()
+
+            processed += len(batch)
+            progress = int((processed / total_chunks) * 100)
+            self.update_progress(progress)
+
+        # Update Usage Stats
+        if total_tokens > 0:
+            from sqlalchemy.orm.attributes import flag_modified
+            current_config = dict(self.project.config or {})
+            usage_stats = current_config.get("usage_stats", {})
+            m_stats = usage_stats.get("voyage-3-large", {"input_tokens": 0, "output_tokens": 0})
+            m_stats["input_tokens"] += total_tokens
+            usage_stats["voyage-3-large"] = m_stats
+            current_config["usage_stats"] = usage_stats
+            self.project.config = current_config
+            flag_modified(self.project, "config")
+            self.db.commit()
+
+        self.update_progress(100, status="ready")
+        self.log(f"Incremental ingest complete. {total_chunks} new chunks vectorized. ({total_tokens} tokens)")
+
+
+def run_background_incremental_reingest(project_id: str):
+    """Background Task Entrypoint for incremental reingest."""
+    db = SessionLocal()
+    try:
+        wf = IncrementalReingestWorkflow(db, project_id)
+        wf.run()
+    except Exception as e:
+        logging.getLogger("Workflow").error(f"Incremental Reingest Failed: {e}")
+        try:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if project:
+                project.rag_status = "error"
+                db.commit()
+        except:
+            pass
+    finally:
+        db.close()

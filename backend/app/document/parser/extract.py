@@ -232,7 +232,7 @@ def process_run_element(run_element, add_tag_func, context, process_para_func, t
     # Skip formatting tags for runs that contain only punctuation/whitespace.
     # Word often splits these into separate runs with spurious formatting differences
     # (e.g. an apostrophe in "WEO's" becoming WEO<4>'</4>s), which confuses AI workflows.
-    _punct_only = all(c in " \t\n\r'''\"\"\".,;:!?-–—/\\()[]{}…·•" for c in final_text)
+    _punct_only = all(c in " \t\n\r'''\"\"\".,;:!?-–—‑‐/\\()[]{}…·•" for c in final_text)
     extracted_tags = [] if _punct_only else extract_tags(run_element)
     
     active_ids = []

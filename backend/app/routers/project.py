@@ -165,6 +165,23 @@ async def reingest_project_endpoint(
     service.trigger_reingestion(project_id, background_tasks)
     return {"message": "Re-ingestion started"}
 
+@router.post("/{project_id}/reingest-new")
+async def reingest_new_files_endpoint(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    service: ProjectService = Depends(get_project_service)
+):
+    """
+    Incremental re-ingestion: only processes newly added context files
+    that have no existing chunks. Preserves all existing data.
+    """
+    project = service.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from ..workflows.reingest import run_background_incremental_reingest
+    background_tasks.add_task(run_background_incremental_reingest, project_id)
+    return {"message": "Incremental re-ingestion started"}
+
 @router.post("/{project_id}/generate-drafts")
 async def generate_drafts_endpoint(
     project_id: str, 

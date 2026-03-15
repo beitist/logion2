@@ -32,9 +32,10 @@ export function QACheck({ segments, activeSegmentId, onNavigateToSegment }) {
             if (meta.type === 'comment') continue;
             if (meta.skip) continue;
 
-            const hasTarget = seg.target_content && seg.target_content.trim();
+            // Strip HTML tags to check for actual text content
+            const rawTarget = (seg.target_content || '').replace(/<[^>]*>/g, '').trim();
 
-            if (!hasTarget && seg.status !== 'translated') {
+            if (!rawTarget) {
                 empty.push(seg);
             }
 
@@ -178,8 +179,8 @@ export function QAExportWarning({ segments, onProceed, onCancel }) {
         for (const seg of segments) {
             const meta = seg.metadata || {};
             if (meta.type === 'comment' || meta.skip) continue;
-            const hasTarget = seg.target_content && seg.target_content.trim();
-            if (!hasTarget && seg.status !== 'translated') empty++;
+            const rawTarget = (seg.target_content || '').replace(/<[^>]*>/g, '').trim();
+            if (!rawTarget) empty++;
             if (seg.status === 'mt_draft' || seg.status === 'draft') drafts++;
         }
         return { empty, drafts, total: empty + drafts };
