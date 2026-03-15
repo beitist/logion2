@@ -396,10 +396,10 @@ class ProjectService:
         if cat_enum == ProjectFileCategory.source:
             await self._parse_source_file(project, file_record)
         
-        # For legal/background: trigger reingest for RAG
+        # For legal/background: trigger incremental reingest (only new files)
         if cat_enum in [ProjectFileCategory.legal, ProjectFileCategory.background]:
-            from ..workflows.reingest import run_background_reingest
-            background_tasks.add_task(run_background_reingest, project_id)
+            from ..workflows.reingest import run_background_incremental_reingest
+            background_tasks.add_task(run_background_incremental_reingest, project_id)
         
         self.db.refresh(file_record)
         return file_record

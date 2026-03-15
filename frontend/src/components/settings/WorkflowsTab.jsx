@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered, CircleStop, Zap, MessageSquareText } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered, CircleStop, Zap, MessageSquareText, FolderPlus } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
 import { copySourceToTarget, copyCommentsToTarget, clearDraftTargets, resetWorkflowStatus } from '../../api/client';
 import { SettingsCard, SettingsSection } from './shared';
@@ -15,7 +15,7 @@ import { SettingsCard, SettingsSection } from './shared';
  * - Reinitialize source file
  * - Re-ingest context
  */
-export function WorkflowsTab({ project, segments, activeFileId, activeFileName, onQueueAll, onReingest, onRefresh, onBatchProcess, onTCBatch, onSequentialTranslate, onOptimize, onFullReinit }) {
+export function WorkflowsTab({ project, segments, activeFileId, activeFileName, onQueueAll, onReingest, onReingestNew, onRefresh, onBatchProcess, onTCBatch, onSequentialTranslate, onOptimize, onFullReinit }) {
     // activeFileId: set when user has selected a specific file in the header dropdown.
     // activeFileName: display name of the selected file (e.g. "report.docx").
     // When activeFileId is set, `segments` already contains only that file's segments
@@ -274,13 +274,23 @@ export function WorkflowsTab({ project, segments, activeFileId, activeFileName, 
                             </button>
 
                             <button
+                                onClick={onReingestNew}
+                                className="flex items-center justify-center gap-2 px-4 py-2.5
+                                           bg-blue-50 border border-blue-200 text-blue-700
+                                           rounded-xl text-xs font-medium hover:bg-blue-100 transition-colors"
+                            >
+                                <FolderPlus size={14} />
+                                Ingest New Files
+                            </button>
+
+                            <button
                                 onClick={onReingest}
                                 className="flex items-center justify-center gap-2 px-4 py-2.5
                                            bg-gray-50 border border-gray-200 text-gray-700
                                            rounded-xl text-xs font-medium hover:bg-gray-100 transition-colors"
                             >
                                 <Database size={14} />
-                                Re-Ingest Context
+                                Re-Ingest All Context
                             </button>
 
                             <button

@@ -597,6 +597,7 @@ export function SplitView({ projectId, onBack }) {
                                             onSequentialTranslate={handleSequentialTranslate} // Sequential 1-by-1
                                             onOptimize={handleOptimize} // Optimize via chat
                                             onReingest={handleReingest}
+                                            onReingestNew={handleReingestNew}
                                             onRefresh={refreshProject}
                                             onFullReinit={handleFullReinit}
                                         />
