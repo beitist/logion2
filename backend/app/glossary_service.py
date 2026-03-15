@@ -2,6 +2,7 @@
 import re
 import spacy
 from spacy.matcher import PhraseMatcher
+from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 from .models import GlossaryEntry
 from typing import List, Dict
@@ -102,6 +103,31 @@ class GlossaryMatcher:
                     "note": entry["context_note"],
                     "origin": entry["origin"],
                 })
+
+        # --- Fuzzy fallback for unmatched entries (catches inflections/plurals) ---
+        matched_ids = {r["entry_id"] for r in results}
+        unmatched = {eid: e for eid, e in self.entries_data.items() if eid not in matched_ids}
+
+        if unmatched and clean_text:
+            words = clean_text.split()
+            for eid, entry in unmatched.items():
+                term_lower = entry["source_term"].lower()
+                term_words = term_lower.split()
+                n = len(term_words)
+                if n > len(words):
+                    continue
+                for i in range(len(words) - n + 1):
+                    window = " ".join(words[i:i + n])
+                    score = fuzz.ratio(window, term_lower)
+                    if score >= 95:
+                        results.append({
+                            "entry_id": eid,
+                            "source": entry["source_term"],
+                            "target": entry["target_term"],
+                            "note": entry["context_note"],
+                            "origin": entry["origin"],
+                        })
+                        break  # one match per entry is enough
 
         # Dedup based on source term
         seen = set()

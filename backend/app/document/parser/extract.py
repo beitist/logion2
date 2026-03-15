@@ -218,11 +218,15 @@ def process_run_element(run_element, add_tag_func, context, process_para_func, t
             return txt
 
     final_text = text_override if text_override is not None else get_run_text(run_element)
-    
+
     if not final_text:
         return ""
-        
-    extracted_tags = extract_tags(run_element)
+
+    # Skip formatting tags for runs that contain only punctuation/whitespace.
+    # Word often splits these into separate runs with spurious formatting differences
+    # (e.g. an apostrophe in "WEO's" becoming WEO<4>'</4>s), which confuses AI workflows.
+    _punct_only = all(c in " \t\n\r'''\"\"\".,;:!?-–—/\\()[]{}…·•" for c in final_text)
+    extracted_tags = [] if _punct_only else extract_tags(run_element)
     
     active_ids = []
     full_run_text = ""
