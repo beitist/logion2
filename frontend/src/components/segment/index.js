@@ -13,7 +13,7 @@ export { SourceColumn } from './SourceColumn';
 export { TargetColumn } from './TargetColumn';
 export { MatchCard } from './MatchCard';
 export { GlossaryCard } from './GlossaryCard';
-export { SegmentBadges, SegmentTypeBadges, SpacingWarning } from './SegmentBadges';
+export { SegmentBadges, SegmentTypeBadges } from './SegmentBadges';
 
 // Hooks
 export { useSegmentMatches } from './hooks/useSegmentMatches';
