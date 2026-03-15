@@ -90,35 +90,3 @@ export function SegmentTypeBadges({ metadata }) {
     );
 }
 
-/**
- * Warning indicator for whitespace mismatches between source and target.
- * 
- * Checks if target starts/ends with expected whitespace from source.
- * Important for document reassembly where spacing must be preserved.
- * 
- * @param {Object} segment - Segment with metadata.whitespaces and target_content
- */
-export function SpacingWarning({ segment }) {
-    const ws = segment.metadata?.whitespaces;
-    if (!ws) return null;
-
-    const target = segment.target_content || "";
-    const expectedLead = ws.leading || "";
-    const expectedTrail = ws.trailing || "";
-
-    let mismatchParts = [];
-    if (!target.startsWith(expectedLead)) mismatchParts.push("Leading Space");
-    if (!target.endsWith(expectedTrail)) mismatchParts.push("Trailing Space");
-
-    if (mismatchParts.length === 0) return null;
-
-    return (
-        <div
-            className="ml-2 flex items-center gap-1 text-[10px] text-red-500 bg-red-50 px-1.5 py-0.5 rounded border border-red-100"
-            title={`Mismatch: ${mismatchParts.join(", ")}`}
-        >
-            <span className="font-bold font-mono">␣!</span>
-            <span className="hidden group-hover:inline">Spacing</span>
-        </div>
-    );
-}

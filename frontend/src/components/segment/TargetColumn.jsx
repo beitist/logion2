@@ -1,7 +1,7 @@
 import React from 'react';
 import { TiptapEditor } from '../TiptapEditor';
 import { hydrateContent } from '../../utils/editorTransforms';
-import { SegmentBadges, SegmentTypeBadges, SpacingWarning } from './SegmentBadges';
+import { SegmentBadges, SegmentTypeBadges } from './SegmentBadges';
 import { GlossaryCard } from './GlossaryCard';
 
 /**
@@ -128,8 +128,6 @@ export function TargetColumn({
                         {targetLabel}
                     </span>
 
-                    {/* Spacing mismatch warning */}
-                    <SpacingWarning segment={segment} />
 
                     {/* Type badges (H for header, Tb for table) */}
                     <SegmentTypeBadges metadata={segment.metadata} />
