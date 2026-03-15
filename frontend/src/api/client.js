@@ -115,6 +115,14 @@ export async function copySourceToTarget(projectId) {
     return res.json();
 }
 
+export async function copyCommentsToTarget(projectId) {
+    const res = await fetch(`${API_BASE}/project/${projectId}/workflow/copy-comments`, {
+        method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to copy comments");
+    return res.json();
+}
+
 export async function clearDraftTargets(projectId) {
     const res = await fetch(`${API_BASE}/project/${projectId}/workflow/clear-drafts`, {
         method: "POST",
@@ -355,6 +363,59 @@ export async function sendSegmentChat(projectId, segmentId, messages) {
     if (!res.ok) {
         const errorText = await res.text();
         throw new Error(`Chat failed: ${res.status} - ${errorText}`);
+    }
+    return res.json();
+}
+
+// ── Global Settings & Backup ──
+
+export async function browseDirs(path = '') {
+    const res = await fetch(`${API_BASE}/settings/browse-dirs?path=${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error("Failed to browse directories");
+    return res.json();
+}
+
+export async function getAppSettings() {
+    const res = await fetch(`${API_BASE}/settings/`);
+    if (!res.ok) throw new Error("Failed to fetch settings");
+    return res.json();
+}
+
+export async function updateAppSettings(updates) {
+    const res = await fetch(`${API_BASE}/settings/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Failed to update settings: ${text}`);
+    }
+    return res.json();
+}
+
+export async function triggerBackup(projectId) {
+    const res = await fetch(`${API_BASE}/settings/backup/${projectId}`, { method: "POST" });
+    if (!res.ok) throw new Error("Backup failed");
+    return res.json();
+}
+
+export async function listBackups() {
+    const res = await fetch(`${API_BASE}/settings/backups`);
+    if (!res.ok) throw new Error("Failed to list backups");
+    return res.json();
+}
+
+export async function restoreBackup(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/settings/restore`, {
+        method: "POST",
+        body: formData,
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Restore failed: ${text}`);
     }
     return res.json();
 }

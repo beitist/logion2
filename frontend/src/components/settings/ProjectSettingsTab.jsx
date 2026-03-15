@@ -16,7 +16,8 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
         name: '',
         source_lang: '',
         target_lang: '',
-        use_ai: true
+        use_ai: true,
+        include_comments_in_workflows: false,
     });
     const [saving, setSaving] = useState(false);
 
@@ -26,7 +27,8 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                 name: project.name || project.filename,
                 source_lang: project.source_lang || 'en',
                 target_lang: project.target_lang || 'de',
-                use_ai: project.config?.use_ai !== false // Default true
+                use_ai: project.config?.use_ai !== false, // Default true
+                include_comments_in_workflows: !!project.config?.include_comments_in_workflows, // Default false
             });
         }
     }, [project]);
@@ -40,7 +42,8 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                 target_lang: formData.target_lang,
                 config: {
                     ...currentConfig,
-                    use_ai: formData.use_ai
+                    use_ai: formData.use_ai,
+                    include_comments_in_workflows: formData.include_comments_in_workflows,
                 }
             });
             onUpdate(updatedProject);
@@ -171,6 +174,21 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                             <SettingsToggle
                                 checked={formData.use_ai}
                                 onChange={(val) => setFormData({ ...formData, use_ai: val })}
+                                accentColor="bg-emerald-500"
+                            />
+                        </div>
+                        <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100">
+                            <div className="flex-1">
+                                <div className="text-sm font-medium text-gray-800">
+                                    Include Comments in Workflows
+                                </div>
+                                <div className="text-xs text-gray-500 mt-0.5">
+                                    When off, comment segments are skipped by all AI workflows
+                                </div>
+                            </div>
+                            <SettingsToggle
+                                checked={formData.include_comments_in_workflows}
+                                onChange={(val) => setFormData({ ...formData, include_comments_in_workflows: val })}
                                 accentColor="bg-emerald-500"
                             />
                         </div>

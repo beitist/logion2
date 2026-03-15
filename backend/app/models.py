@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Text, Boolean, ForeignKey, JSON, DateTime, Enum
+from sqlalchemy import Column, String, Integer, Text, Boolean, ForeignKey, JSON, DateTime, Enum, func
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -87,6 +87,10 @@ class Segment(Base):
     @property
     def segment_metadata(self):
         return (self.metadata_json or {}).get("metadata")
+
+    @property
+    def segment_type(self):
+        return (self.metadata_json or {}).get("type")
 
     @property
     def context_matches(self):
@@ -216,3 +220,11 @@ class AiUsageLog(Base):
     # Relationship
     project = relationship("Project")
 
+
+class AppSettings(Base):
+    """Singleton table for global app settings (backup paths, etc.)."""
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    settings = Column(JSON, default={})
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

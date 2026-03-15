@@ -32,25 +32,34 @@ class BatchDraftWorkflow(BaseWorkflow):
             if segment_ids:
                 query = query.filter(Segment.id.in_(segment_ids))
             
-            segments = query.order_by(Segment.index).all()
-            if not segments:
+            all_segments = query.order_by(Segment.index).all()
+            if not all_segments:
                 self.log("No segments found.")
                 return
-                
+
+            # Configuration
+            config = self.project.config or {}
+
+            # Filter out comment segments unless explicitly included
+            segments = [
+                seg for seg in all_segments
+                if config.get("include_comments_in_workflows") or (seg.metadata_json or {}).get("type") != "comment"
+            ]
+            if not segments:
+                self.log("No segments to process (all comments excluded).")
+                return
+
             total_segments = len(segments)
             self.log(f"Generating drafts for {total_segments} segments...")
-            
+
             self.update_progress(0, status="processing")
 
             manager = RAGManager(self.project_id, self.db)
-            
+
             # Batch Processing - Group by CONTIGUOUS segments first
             # This ensures isolated segments get their own batch with proper context.
             BATCH_SIZE = 10
             success_count = 0
-            
-            # Configuration
-            config = self.project.config or {}
             ai_settings = config.get("ai_settings", {})
             custom_prompt = ai_settings.get("custom_prompt", "Translate the following text accurately.")
             model_name = ai_settings.get("workflow_model")

@@ -78,6 +78,11 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                     self.log(f"Segment {idx+1}/{total} (#{seg.index+1}) — skipped (locked/propagated)")
                     continue
 
+                # Skip comment segments unless explicitly included
+                if not config.get("include_comments_in_workflows") and (seg.metadata_json or {}).get("type") == "comment":
+                    self.log(f"Segment {idx+1}/{total} (#{seg.index+1}) — skipped (comment)")
+                    continue
+
                 try:
                     self.log(f"Segment {idx+1}/{total} (#{seg.index+1})...")
 

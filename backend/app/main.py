@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import project, translate, segment, glossary, chat
+from .routers import project, translate, segment, glossary, chat, settings
 from .database import engine, Base
 from .logger import main_logger, correlation_id_ctx
 import uuid
@@ -36,6 +36,11 @@ def reset_stuck_workflows():
         main_logger.error("reset_stuck_workflows_failed", error=str(e))
     finally:
         db.close()
+
+@app.on_event("startup")
+async def start_backup_scheduler():
+    from .services.backup_scheduler import start_backup_scheduler
+    start_backup_scheduler()
 
 # Middleware: Correlation ID
 from .middleware.correlation import CorrelationMiddleware, get_request_id
@@ -108,6 +113,7 @@ app.include_router(translate.router)
 app.include_router(segment.router)
 app.include_router(glossary.router)
 app.include_router(chat.router)
+app.include_router(settings.router)
 
 @app.get("/")
 def read_root():

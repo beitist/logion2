@@ -55,6 +55,9 @@ class BatchTranslateWorkflow(BaseWorkflow):
                 inner = (seg.metadata_json or {}).get("metadata", {})
                 if inner.get("locked") or inner.get("propagation_lock") or inner.get("skip"):
                     continue
+                # Skip comment segments unless explicitly included
+                if not config.get("include_comments_in_workflows") and (seg.metadata_json or {}).get("type") == "comment":
+                    continue
                 if not is_analyze and seg.source_content in seen_sources:
                     dedup_skipped += 1
                     continue

@@ -165,11 +165,13 @@ export function useProjectData(projectId, { log, setActiveSegmentId, queueSegmen
         const hasContent = contentToSave || seg?.target_content;
         const promoteStatus = newLock && hasContent && seg?.status !== 'translated' && seg?.status !== 'approved';
         const newStatus = promoteStatus ? 'translated' : undefined;
-        setSegments(prev => prev.map(s =>
+        // Synchronously update ref so concurrent blur-saves see the lock immediately
+        segmentsRef.current = segmentsRef.current.map(s =>
             s.id === segmentId
                 ? { ...s, ...(contentToSave ? { target_content: contentToSave } : {}), metadata: { ...(s.metadata || {}), locked: newLock || undefined, propagation_lock: undefined }, ...(promoteStatus ? { status: 'translated' } : {}) }
                 : s
-        ));
+        );
+        setSegments(segmentsRef.current);
         try {
             await updateSegment(segmentId, contentToSave, newStatus, { locked: newLock, propagation_lock: false });
         } catch (err) {

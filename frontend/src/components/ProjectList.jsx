@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { getProjects, deleteProject, duplicateProject, updateProject } from '../api/client';
-import { Trash2, FilePlus, Copy, FileText, FileSpreadsheet, Archive, ArchiveRestore, ChevronDown, ChevronRight, FolderOpen, Folder, X } from 'lucide-react';
+import { Trash2, FilePlus, Copy, FileText, FileSpreadsheet, Archive, ArchiveRestore, ChevronDown, ChevronRight, FolderOpen, Folder, X, Settings } from 'lucide-react';
+import { GlobalSettingsModal } from './GlobalSettingsModal';
 
 export function ProjectList({ onSelectProject, onNewProject }) {
     const [projects, setProjects] = useState([]);
@@ -8,6 +9,7 @@ export function ProjectList({ onSelectProject, onNewProject }) {
     const [error, setError] = useState(null);
     const [archiveOpen, setArchiveOpen] = useState(false);
     const [archiveDialog, setArchiveDialog] = useState(null); // { projectId, folderName }
+    const [settingsOpen, setSettingsOpen] = useState(false);
 
     const fetchList = async () => {
         try {
@@ -214,13 +216,22 @@ export function ProjectList({ onSelectProject, onNewProject }) {
         <div className="max-w-6xl mx-auto py-8 px-4">
             <div className="flex justify-between items-center mb-8">
                 <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">My Projects</h1>
-                <button
-                    onClick={onNewProject}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors"
-                >
-                    <FilePlus size={18} />
-                    <span>New Project</span>
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setSettingsOpen(true)}
+                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="Settings"
+                    >
+                        <Settings size={20} />
+                    </button>
+                    <button
+                        onClick={onNewProject}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors"
+                    >
+                        <FilePlus size={18} />
+                        <span>New Project</span>
+                    </button>
+                </div>
             </div>
 
             {error && (
@@ -292,6 +303,13 @@ export function ProjectList({ onSelectProject, onNewProject }) {
                     onConfirm={handleArchiveConfirm}
                 />
             )}
+
+            {/* Global Settings Modal */}
+            <GlobalSettingsModal
+                open={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
+                onProjectRestored={fetchList}
+            />
         </div>
     );
 }

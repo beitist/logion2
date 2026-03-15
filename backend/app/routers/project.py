@@ -195,6 +195,17 @@ async def copy_source_workflow(project_id: str, service: SegmentService = Depend
     service.bulk_copy_source_to_target(project_id)
     return {"message": "Copy source completed successfully", "project_id": project_id}
 
+@router.post("/{project_id}/workflow/copy-comments")
+async def copy_comments_workflow(project_id: str, db: Session = Depends(get_db)):
+    """
+    Workflow: Copy source content to target for all comment segments.
+    Preserves original comments without translation.
+    """
+    from ..workflows.copy_source import CopyCommentsWorkflow
+    wf = CopyCommentsWorkflow(db, project_id)
+    wf.run()
+    return {"message": "Comments copied to target", "project_id": project_id}
+
 @router.post("/{project_id}/workflow/clear-drafts")
 async def clear_drafts_workflow(project_id: str, db: Session = Depends(get_db)):
     """

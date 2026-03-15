@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered, CircleStop, Zap } from 'lucide-react';
+import { RefreshCw, Search, Sparkles, Database, Copy, RotateCcw, Trash2, GitCompareArrows, ListOrdered, CircleStop, Zap, MessageSquareText } from 'lucide-react';
 import { ReinitializeModal } from '../ReinitializeModal';
-import { copySourceToTarget, clearDraftTargets, resetWorkflowStatus } from '../../api/client';
+import { copySourceToTarget, copyCommentsToTarget, clearDraftTargets, resetWorkflowStatus } from '../../api/client';
 import { SettingsCard, SettingsSection } from './shared';
 
 /**
@@ -21,6 +21,7 @@ export function WorkflowsTab({ project, segments, activeFileId, activeFileName, 
     // When activeFileId is set, `segments` already contains only that file's segments
     // (filtered in SplitView), so all workflows naturally operate on the subset.
     const [copyLoading, setCopyLoading] = useState(false);
+    const [copyCommentsLoading, setCopyCommentsLoading] = useState(false);
     const [isReinitModalOpen, setIsReinitModalOpen] = useState(false);
 
     const handleRun = (mode) => {
@@ -51,6 +52,21 @@ export function WorkflowsTab({ project, segments, activeFileId, activeFileName, 
             alert("Failed to copy source: " + err.message);
         } finally {
             setCopyLoading(false);
+        }
+    };
+
+    const handleCopyComments = async () => {
+        if (!project) return;
+        if (!confirm("Copy source text to target for all comment segments? This preserves comments in the original language.")) return;
+
+        try {
+            setCopyCommentsLoading(true);
+            await copyCommentsToTarget(project.id);
+            if (onRefresh) onRefresh();
+        } catch (err) {
+            alert("Failed to copy comments: " + err.message);
+        } finally {
+            setCopyCommentsLoading(false);
         }
     };
 
@@ -209,6 +225,20 @@ export function WorkflowsTab({ project, segments, activeFileId, activeFileName, 
                         onClick={handleCopySource}
                         disabled={copyLoading}
                     />
+
+                    {/* Copy Comments — only shown when comment segments exist */}
+                    {segments?.some(s => s.segment_type === 'comment') && (
+                        <WorkflowCard
+                            icon={MessageSquareText}
+                            iconBg="bg-teal-50 text-teal-600"
+                            title="Copy Comments to Target"
+                            description="Preserve original comments (no translation)"
+                            buttonText={copyCommentsLoading ? "Copying..." : "Copy Comments"}
+                            buttonStyle="bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100"
+                            onClick={handleCopyComments}
+                            disabled={copyCommentsLoading}
+                        />
+                    )}
 
                     {/* TC Step-by-Step — only shown when TC segments exist */}
                     {segments?.some(s => s.metadata?.has_track_changes) && (

@@ -3,17 +3,23 @@ import { useProjectData } from '../hooks/useProjectData';
 import { useSegmentChat } from '../hooks/useSegmentChat';
 import { SegmentRow } from './segment';
 import { ChatPanel } from './ChatPanel';
-import { ArrowLeft, Check, ChevronsRight, Lock, SkipForward, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronsRight, Download, Lock, SkipForward, X } from 'lucide-react';
 import { updateSegment } from '../api/client';
 import './TiptapStyles.css';
 
+const decodeEntities = (text) => {
+    const el = document.createElement('textarea');
+    el.innerHTML = text;
+    return el.value;
+};
 const stripTags = (content) =>
-    (content || '').replace(/<[^>]*>/g, '').replace(/\[TAB\]/g, ' ').trim();
+    decodeEntities((content || '').replace(/<[^>]*>/g, '').replace(/\[TAB\]/g, ' ').trim());
 
 export function ReviewView({ projectId, onBack }) {
     const [activeIndex, setActiveIndex] = useState(0);
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [showChat, setShowChat] = useState(false);
+    const [showExportMenu, setShowExportMenu] = useState(false);
     const scrollRef = useRef(null);
     const segmentRefs = useRef({});
     const modalEditorRef = useRef(null);
@@ -22,8 +28,9 @@ export function ReviewView({ projectId, onBack }) {
     const log = useCallback((msg, level) => console.log(`[Review] ${level}: ${msg}`), []);
 
     const {
-        segments, project, loading, setSegments,
+        segments, project, loading, setSegments, editorRefs,
         handleSave, handleToggleFlag, handleToggleLock, handleToggleSkip, handlePropagate,
+        handleExport, handleTmXExport,
     } = useProjectData(projectId, { log, setActiveSegmentId: noop, queueSegments: null });
 
     const chat = useSegmentChat(projectId);
@@ -140,6 +147,28 @@ export function ReviewView({ projectId, onBack }) {
                         <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
                     </div>
                     <span className="text-xs text-gray-500">{reviewedCount}/{segments.length}</span>
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowExportMenu(v => !v)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                        >
+                            <Download size={14} />
+                            Export
+                        </button>
+                        {showExportMenu && (
+                            <>
+                                <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
+                                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-20 min-w-[160px]">
+                                    <button onClick={() => { handleExport(); setShowExportMenu(false); }} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 text-left">
+                                        Export Translation
+                                    </button>
+                                    <button onClick={() => { handleTmXExport(); setShowExportMenu(false); }} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 text-left">
+                                        Export TMX
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -277,7 +306,7 @@ export function ReviewView({ projectId, onBack }) {
                                         moveActive(dir === 'next' ? 1 : -1);
                                     }}
                                     onContextMenu={noop}
-                                    registerEditor={(id, ed) => { modalEditorRef.current = ed; }}
+                                    registerEditor={(id, ed) => { modalEditorRef.current = ed; editorRefs.current[id] = ed; }}
                                     onGlossaryUpdate={noop}
                                 />
                             </div>

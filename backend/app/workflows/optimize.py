@@ -85,6 +85,10 @@ class OptimizeWorkflow(BaseWorkflow):
                 if inner_meta.get("locked") or inner_meta.get("propagation_lock") or inner_meta.get("skip") or seg.id in skipped_ids:
                     continue
 
+                # Skip comment segments unless explicitly included
+                if not config.get("include_comments_in_workflows") and (seg.metadata_json or {}).get("type") == "comment":
+                    continue
+
                 # Skip non-text segments (only numbers, punctuation, whitespace)
                 stripped = TAG_PATTERN.sub('', seg.source_content or '').strip()
                 if not stripped or NON_TEXT_PATTERN.match(stripped):
