@@ -243,7 +243,7 @@ def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict, list]:
         'size', 'font', 'strike', 'smallCaps', 'caps',
         'superscript', 'subscript',
         # Structural elements that carry content/annotation
-        'comment', 'shape',
+        'comment', 'shape', 'link',
         # Reference elements (must round-trip to preserve footnote/endnote anchors)
         'footnote', 'endnote',
     }
@@ -261,12 +261,22 @@ def strip_wrapping_tags(source_text: str, tags: dict) -> tuple[str, dict, list]:
         text_before = text
 
         # 1. Remove empty tag pairs: <N></N> (including groups like <1><2></2></1>)
-        # Pattern matches <N></N> with nothing in between
-        text = re.sub(r'<(\d+)></\1>', '', text)
+        # BUT preserve footnote/endnote reference tags — they are structurally
+        # important and must survive for export, even though they carry no text.
+        def _remove_empty_pair(m):
+            tid = m.group(1)
+            tag_data = new_tags.get(tid)
+            if tag_data:
+                ttype = tag_data.type if hasattr(tag_data, 'type') else tag_data.get('type', '')
+                if ttype in ('footnote', 'endnote'):
+                    return m.group(0)  # keep
+            return ''  # remove
+        text = re.sub(r'<(\d+)></\1>', _remove_empty_pair, text)
 
         # 2. Remove whitespace-only tag pairs: <N>whitespace</N>
         # This removes tags that only contain spaces, newlines, nbsp, etc.
-        text = re.sub(r'<(\d+)>[\s\xa0]*</\1>', '', text)
+        # Also preserves footnote/endnote reference tags (same logic as above).
+        text = re.sub(r'<(\d+)>[\s\xa0]*</\1>', _remove_empty_pair, text)
 
         # 3. Peel off outer wrapping tags if they encompass entire content
         # Use stripped version for matching, but preserve whitespace in result
@@ -557,6 +567,17 @@ def process_paragraph(para_element, location: dict, context: dict) -> list[Segme
         parts = [clean_content]
     else:
         parts = split_sentences(clean_content)
+
+    # Merge orphan tag-only parts (e.g. "<1></1>") back into the previous segment.
+    # pysbd sometimes splits footnote/endnote reference tags into their own segment.
+    _tag_only_re = re.compile(r'^[\s]*(?:<\d+></\d+>[\s]*)+$')
+    merged_parts = []
+    for p in parts:
+        if _tag_only_re.match(p) and merged_parts:
+            merged_parts[-1] += p
+        else:
+            merged_parts.append(p)
+    parts = merged_parts
     repaired_parts = repair_tags(parts)
 
     final_segments = []

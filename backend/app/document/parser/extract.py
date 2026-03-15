@@ -220,7 +220,14 @@ def process_run_element(run_element, add_tag_func, context, process_para_func, t
     final_text = text_override if text_override is not None else get_run_text(run_element)
 
     if not final_text:
-        return ""
+        # Don't skip runs that contain special non-text elements (footnotes, endnotes, drawings, etc.)
+        has_special = any(
+            child.tag in (qn('w:footnoteReference'), qn('w:endnoteReference'),
+                          qn('w:drawing'), qn('w:pict'), qn('w:commentReference'))
+            for child in run_element
+        )
+        if not has_special:
+            return ""
 
     # Skip formatting tags for runs that contain only punctuation/whitespace.
     # Word often splits these into separate runs with spurious formatting differences
@@ -263,7 +270,8 @@ def process_run_element(run_element, add_tag_func, context, process_para_func, t
                 is_active = "_active_ranges" in context and cid in context["_active_ranges"]
                 
                 if not was_handled and not is_active and cid and context["comments_map"].get(cid):
-                    ctext = context["comments_map"][cid]
+                    cdata = context["comments_map"][cid]
+                    ctext = cdata["text"] if isinstance(cdata, dict) else cdata
                     com_tag = TagModel(type="comment", content=ctext, ref_id=cid)
                     tid = add_tag_func(com_tag)
                     run_content += f"<{tid}></{tid}>"

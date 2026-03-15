@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { Terminal, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows, MessageSquare } from 'lucide-react';
 import './TiptapStyles.css';
 
@@ -17,6 +17,7 @@ import { ShortcutsPanel } from './ShortcutsPanel';
 import { BlockingModal } from './BlockingModal';
 import { WorkflowIndicator } from './WorkflowIndicator';
 import { ChatPanel } from './ChatPanel';
+import { QACheck, QAExportWarning } from './QACheck';
 
 import { useProjectWorkspace } from '../hooks/useProjectWorkspace';
 import { useSegmentChat } from '../hooks/useSegmentChat';
@@ -89,6 +90,52 @@ export function SplitView({ projectId, onBack }) {
         } catch (err) {
             console.error('Glossary update failed:', err);
         }
+    };
+
+    // QA Export Warning state
+    const [showQAWarning, setShowQAWarning] = useState(false);
+    const pendingExportRef = useRef(null);
+
+    // Navigate to a specific segment by ID (for QA check)
+    const handleNavigateToSegment = (segId) => {
+        setActiveSegmentId(segId);
+        handleSegmentFocus(segId);
+    };
+
+    // Wrap export to show QA warning
+    const handleExportWithQA = () => {
+        setShowExportMenu(false);
+        // Check for QA issues
+        let hasIssues = false;
+        for (const seg of segments) {
+            const meta = seg.metadata || {};
+            if (meta.type === 'comment' || meta.skip) continue;
+            const hasTarget = seg.target_content && seg.target_content.trim();
+            if ((!hasTarget && seg.status !== 'translated') || seg.status === 'mt_draft' || seg.status === 'draft') {
+                hasIssues = true;
+                break;
+            }
+        }
+        if (hasIssues) {
+            pendingExportRef.current = 'docx';
+            setShowQAWarning(true);
+        } else {
+            handleExport();
+        }
+    };
+
+    const handleTmxExportWithQA = () => {
+        setShowExportMenu(false);
+        pendingExportRef.current = 'tmx';
+        // TMX export without warning (only translations are included anyway)
+        handleTmXExport();
+    };
+
+    const handleQAExportProceed = () => {
+        setShowQAWarning(false);
+        if (pendingExportRef.current === 'docx') handleExport();
+        else if (pendingExportRef.current === 'tmx') handleTmXExport();
+        pendingExportRef.current = null;
     };
 
     // Virtualization ref for scrollable container
@@ -277,6 +324,13 @@ export function SplitView({ projectId, onBack }) {
 
                     <div className="h-6 w-px bg-gray-300 mx-2" />
 
+                    {/* QA Check */}
+                    <QACheck
+                        segments={filteredSegments}
+                        activeSegmentId={activeSegmentId}
+                        onNavigateToSegment={handleNavigateToSegment}
+                    />
+
                     {/* Export Menu */}
                     <div className="relative">
                         <button
@@ -289,11 +343,11 @@ export function SplitView({ projectId, onBack }) {
                         {showExportMenu && (
                             <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-20">
                                 <div className="p-1">
-                                    <button onClick={handleExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
+                                    <button onClick={handleExportWithQA} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
                                         <FileText size={16} className="text-blue-500" />
                                         <span className="font-medium">Export Translation</span>
                                     </button>
-                                    <button onClick={handleTmXExport} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
+                                    <button onClick={handleTmxExportWithQA} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg text-left">
                                         <FileText size={16} className="text-green-500" />
                                         <span className="font-medium">Export TMX</span>
                                     </button>
@@ -565,6 +619,15 @@ export function SplitView({ projectId, onBack }) {
                 onComplete={() => setBlockingTask(prev => ({ ...prev, isOpen: false }))}
                 onStop={() => stopRef.current = true}
             />
+
+            {/* QA Export Warning */}
+            {showQAWarning && (
+                <QAExportWarning
+                    segments={segments}
+                    onProceed={handleQAExportProceed}
+                    onCancel={() => { setShowQAWarning(false); pendingExportRef.current = null; }}
+                />
+            )}
         </div>
     );
 }

@@ -22,12 +22,37 @@ def _restore_whitespaces(text: str, metadata: dict) -> str:
          
     return text
 
+def _restore_missing_note_tags(target_text: str, source_text: str, tags: dict) -> str:
+    """Append footnote/endnote reference tags from source if missing in target.
+
+    After reinitialize, old translations may lack newly-parsed footnote tags.
+    Without them the exported DOCX loses its footnote references.
+    """
+    if not tags or not source_text:
+        return target_text
+    for tid, tag in tags.items():
+        if getattr(tag, 'type', None) not in ('footnote', 'endnote'):
+            continue
+        tag_pair = f"<{tid}></{tid}>"
+        if tag_pair not in (target_text or ""):
+            # Find position in source to decide placement
+            src_pos = source_text.find(tag_pair)
+            if src_pos == -1:
+                continue
+            # If tag is near end of source, append to target; otherwise prepend
+            if src_pos > len(source_text) * 0.5:
+                target_text = (target_text or "") + tag_pair
+            else:
+                target_text = tag_pair + (target_text or "")
+    return target_text
+
+
 def get_merged_content(segs_for_para):
     if not segs_for_para:
         return "", {}
     full_text = ""
     combined_tags = {}
-    
+
     segs_for_para.sort(key=lambda x: x.metadata.get("sub_index", 0))
     for s in segs_for_para:
         text = s.target_content if s.target_content is not None else s.source_text
@@ -35,16 +60,19 @@ def get_merged_content(segs_for_para):
         # 1. Restore whitespaces FIRST (so they end up inside wrapper tags)
         text = _restore_whitespaces(text, s.metadata)
 
-        # 2. Restore Wrapper Tags (wraps the content including whitespace)
+        # 2. Ensure footnote/endnote reference tags are present in target
+        text = _restore_missing_note_tags(text, s.source_text, s.tags)
+
+        # 3. Restore Wrapper Tags (wraps the content including whitespace)
         wrappers = s.metadata.get("wrapper_tags", [])
         if wrappers:
             for tid in reversed(wrappers):
                 text = f"<{tid}>{text}</{tid}>"
-        
+
         full_text += text
         if s.tags:
             combined_tags.update(s.tags)
-            
+
     full_text = re.sub(r'</(\d+)><\1>', '', full_text)
     return full_text, combined_tags
 
