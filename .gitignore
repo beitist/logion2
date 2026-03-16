@@ -1,62 +1,90 @@
+# ============================================================
+# Logion 2 — .gitignore (Public Repository)
+# ============================================================
+
+# --- Environment & Secrets ---
 .env
-__pycache__
-/backend/app/__pycache__
-/backend/app/__pycache__/*
-
-/frontend/.env.local
 .env.local
+.env.*.local
 
-/briefings/*.md
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+*.db
 
-/backend/uploads/*
+# --- Node.js ---
+node_modules/
+dist/
+dist-ssr/
+*.local
 
-*.docx
-ÜPrompt.docx
+# --- Runtime Data ---
+backend/projectdata/
+backend/uploads/
+uploads/
+backups/
+app.log
+app.log.*
+app.json
+app.json.*
 
-
-# Logs
-logs
+# --- Logs ---
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# --- OS ---
 .DS_Store
+Thumbs.db
+
+# --- Editors & IDEs ---
+.vscode/
+!.vscode/extensions.json
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# Python Cache Files
-*.pyc
-
-.venv
-venv
-
-.venv/*
-venv/*
-
-resource/*
-resource
-
-backend/uploads/*
-backend/projectdata/
-
+# --- Debug & Dev Artifacts ---
 *.txt
-*.db
+!requirements.txt
+!README.md
 
-app.log.*
-app.json.*
-app.json
+# --- Test Data & Old Files ---
+resource/
+documentation/
+briefings/
+scripts/
+test/
+tests/
+backend/old_tests/
+backend/tests/
+backend/migrations/
+
+# --- One-off scripts (root & backend root) ---
+/repro_*.py
+/backend/debug_*.py
+/backend/analyze_*.py
+/backend/check_*.py
+/backend/verify_*.py
+/backend/migrate_*.py
+/backend/repro_*.py
+/backend/create_*.py
+/backend/add_*.py
+/backend/requirements.in
+
+# --- Misc ---
+*.docx
+*.png
+*.graffle
+.claude/
+.pytest_cache/
