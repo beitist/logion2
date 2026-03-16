@@ -64,11 +64,17 @@ resource/
 documentation/
 briefings/
 scripts/
+old/
 test/
 tests/
+backend/old/
 backend/old_tests/
 backend/tests/
 backend/migrations/
+
+# -- FOLDERS -- 
+documentation
+old
 
 # --- One-off scripts (root & backend root) ---
 /repro_*.py
