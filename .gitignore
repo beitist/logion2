@@ -86,7 +86,7 @@ old
 /backend/repro_*.py
 /backend/create_*.py
 /backend/add_*.py
-/backend/requirements.in
+
 
 # --- Misc ---
 *.docx
