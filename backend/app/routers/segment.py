@@ -104,11 +104,11 @@ async def propagate_to_repetitions(segment_id: str, db: Session = Depends(get_db
             skipped += 1
             continue
         rep.target_content = segment.target_content
-        rep.status = segment.status
+        rep.status = "auto_propagated"
         if "metadata" not in meta:
             meta["metadata"] = {}
         meta["metadata"]["propagation_lock"] = True
-        meta["metadata"].pop("locked", None)  # clear any old manual lock
+        meta["metadata"].pop("locked", None)
         rep.metadata_json = meta
         flag_modified(rep, "metadata_json")
         updated += 1

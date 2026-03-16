@@ -215,10 +215,10 @@ class OptimizeWorkflow(BaseWorkflow):
                         if rep_inner.get("locked") or rep_inner.get("skip") or rep_inner.get("propagation_excluded"):
                             continue
                         rep.target_content = final_text
+                        rep.status = "auto_propagated"
                         if "metadata" not in rep_meta:
                             rep_meta["metadata"] = {}
                         rep_meta["metadata"]["propagation_lock"] = True
-                        rep_meta["metadata"].pop("locked", None)
                         rep.metadata_json = rep_meta
                         flag_modified(rep, "metadata_json")
                         skipped_ids.add(rep.id)

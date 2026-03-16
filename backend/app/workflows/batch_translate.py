@@ -322,11 +322,10 @@ class BatchTranslateWorkflow(BaseWorkflow):
                                 if rep.target_content:
                                     continue  # Don't overwrite existing translations
                                 rep.target_content = result.target_text
-                                rep.status = "mt_draft"
+                                rep.status = "auto_propagated"
                                 if "metadata" not in rep_meta:
                                     rep_meta["metadata"] = {}
                                 rep_meta["metadata"]["propagation_lock"] = True
-                                rep_meta["metadata"].pop("locked", None)
                                 rep_meta["ai_draft"] = result.target_text
                                 # Copy context matches
                                 seg_meta = seg.metadata_json or {}

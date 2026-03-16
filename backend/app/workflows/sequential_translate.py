@@ -179,11 +179,10 @@ class SequentialTranslateWorkflow(BaseWorkflow):
                         if rep_inner.get("locked") or rep_inner.get("skip") or rep_inner.get("propagation_excluded"):
                             continue
                         rep.target_content = result.target_text
-                        rep.status = "mt_draft"
+                        rep.status = "auto_propagated"
                         if "metadata" not in rep_meta:
                             rep_meta["metadata"] = {}
                         rep_meta["metadata"]["propagation_lock"] = True
-                        rep_meta["metadata"].pop("locked", None)
                         rep_meta["ai_draft"] = result.target_text
                         # Copy context matches if available
                         if meta.get("context_matches"):

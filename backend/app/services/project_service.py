@@ -151,17 +151,27 @@ class ProjectService:
         return self.db.query(Project).filter(Project.id == project_id).first()
 
     def get_all_projects(self) -> List[Project]:
+        from sqlalchemy import func as sql_func, case
         projects = self.db.query(Project).order_by(Project.created_at.desc()).all()
-        
-        # Calculate Progress (Simplistic approach: N+1, optimize if needed)
+
+        # Single query for all project progress counts
+        progress_q = (
+            self.db.query(
+                Segment.project_id,
+                sql_func.count(Segment.id).label("total"),
+                sql_func.count(case(
+                    (Segment.status.in_(["translated", "approved", "completed", "auto_propagated"]), Segment.id),
+                )).label("completed"),
+            )
+            .group_by(Segment.project_id)
+            .all()
+        )
+        progress_map = {row.project_id: (row.total, row.completed) for row in progress_q}
+
         for p in projects:
-            total = len(p.segments)
-            if total == 0:
-                p.progress = 0
-            else:
-                completed = sum(1 for s in p.segments if s.status in ["translated", "approved", "completed"])
-                p.progress = int((completed / total) * 100)
-                
+            total, completed = progress_map.get(p.id, (0, 0))
+            p.progress = int((completed / total) * 100) if total else 0
+
         return projects
 
 

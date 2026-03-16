@@ -49,6 +49,9 @@ def browse_directories(path: str = ""):
 
     path = os.path.expanduser(path)
 
+    # Resolve symlinks (e.g. ~/OneDrive -> ~/Library/CloudStorage/OneDrive-...)
+    path = os.path.realpath(path)
+
     if not os.path.isdir(path):
         raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
 
@@ -58,6 +61,22 @@ def browse_directories(path: str = ""):
             full = os.path.join(path, name)
             if os.path.isdir(full) and not name.startswith("."):
                 entries.append(name)
+
+        # When browsing home dir, inject cloud storage folders as shortcuts
+        home = os.path.expanduser("~")
+        if os.path.realpath(path) == os.path.realpath(home):
+            cloud_root = os.path.join(home, "Library", "CloudStorage")
+            if os.path.isdir(cloud_root):
+                try:
+                    for name in sorted(os.listdir(cloud_root)):
+                        full = os.path.join(cloud_root, name)
+                        if os.path.isdir(full) and not name.startswith("."):
+                            label = f"☁ {name}"
+                            if label not in entries:
+                                entries.append(label)
+                except PermissionError:
+                    pass
+
         return {
             "current": os.path.abspath(path),
             "parent": os.path.dirname(os.path.abspath(path)),
