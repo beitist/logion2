@@ -13,6 +13,7 @@ function DirectoryPicker({ value, onChange, onClose }) {
     const [currentPath, setCurrentPath] = useState('');
     const [parentPath, setParentPath] = useState('');
     const [dirs, setDirs] = useState([]);
+    const [cloudShortcuts, setCloudShortcuts] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
@@ -24,6 +25,7 @@ function DirectoryPicker({ value, onChange, onClose }) {
             setCurrentPath(data.current);
             setParentPath(data.parent);
             setDirs(data.directories);
+            setCloudShortcuts(data.cloud_shortcuts || []);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -68,7 +70,24 @@ function DirectoryPicker({ value, onChange, onClose }) {
             <div className="max-h-48 overflow-y-auto">
                 {loading && <div className="px-3 py-4 text-xs text-gray-400 text-center">Loading...</div>}
                 {error && <div className="px-3 py-2 text-xs text-red-500">{error}</div>}
-                {!loading && dirs.length === 0 && !error && (
+                {/* Cloud storage shortcuts */}
+                {!loading && cloudShortcuts.length > 0 && (
+                    <>
+                        {cloudShortcuts.map(cs => (
+                            <button
+                                key={cs.path}
+                                onClick={() => loadDir(cs.path)}
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50 text-left transition-colors"
+                            >
+                                <span className="flex-shrink-0">☁️</span>
+                                <span className="truncate">{cs.name.replace('☁ ', '')}</span>
+                                <ChevronRight size={12} className="text-blue-300 ml-auto flex-shrink-0" />
+                            </button>
+                        ))}
+                        <div className="border-t border-gray-100" />
+                    </>
+                )}
+                {!loading && dirs.length === 0 && cloudShortcuts.length === 0 && !error && (
                     <div className="px-3 py-4 text-xs text-gray-400 text-center">No subdirectories</div>
                 )}
                 {!loading && dirs.map(dir => (

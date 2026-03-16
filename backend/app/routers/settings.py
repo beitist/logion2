@@ -63,6 +63,7 @@ def browse_directories(path: str = ""):
                 entries.append(name)
 
         # When browsing home dir, inject cloud storage folders as shortcuts
+        cloud_shortcuts = []
         home = os.path.expanduser("~")
         if os.path.realpath(path) == os.path.realpath(home):
             cloud_root = os.path.join(home, "Library", "CloudStorage")
@@ -71,9 +72,7 @@ def browse_directories(path: str = ""):
                     for name in sorted(os.listdir(cloud_root)):
                         full = os.path.join(cloud_root, name)
                         if os.path.isdir(full) and not name.startswith("."):
-                            label = f"☁ {name}"
-                            if label not in entries:
-                                entries.append(label)
+                            cloud_shortcuts.append({"name": f"☁ {name}", "path": full})
                 except PermissionError:
                     pass
 
@@ -81,6 +80,7 @@ def browse_directories(path: str = ""):
             "current": os.path.abspath(path),
             "parent": os.path.dirname(os.path.abspath(path)),
             "directories": entries,
+            "cloud_shortcuts": cloud_shortcuts,
         }
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied")
