@@ -1,6 +1,7 @@
 import io
 import os
 import json
+import hashlib
 import zipfile
 import glob
 import uuid
@@ -8,6 +9,7 @@ import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import func as sql_func
 
 from ..models import (
     Project, ProjectFile, Segment, ContextChunk,
@@ -156,23 +158,67 @@ class BackupService:
 
         return buf.getvalue()
 
+    # ── Content Hash (for skip-if-unchanged) ─────────────────────
+
+    def _compute_content_hash(self, project_id: str) -> str:
+        """Fast hash over segment count + statuses + target content.
+        Changes when any segment is edited, added, or removed."""
+        rows = (
+            self.db.query(Segment.status, Segment.target_content)
+            .filter(Segment.project_id == project_id)
+            .order_by(Segment.index)
+            .all()
+        )
+        h = hashlib.sha256()
+        for status, target in rows:
+            h.update((status or "").encode())
+            h.update((target or "").encode())
+        # Also include glossary count and TU count
+        g_count = self.db.query(sql_func.count(GlossaryEntry.id)).filter(
+            GlossaryEntry.project_id == project_id).scalar()
+        tu_count = self.db.query(sql_func.count(TranslationUnit.id)).filter(
+            TranslationUnit.project_id == project_id).scalar()
+        h.update(f"g{g_count}t{tu_count}".encode())
+        return h.hexdigest()[:16]
+
+    def _read_last_backup_hash(self, backup_dir: str, short_id: str) -> str | None:
+        """Read the content hash from the most recent backup's hash sidecar file."""
+        pattern = os.path.join(backup_dir, f"*_{short_id}_*.logion.hash")
+        existing = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        if existing:
+            try:
+                return open(existing[0]).read().strip()
+            except OSError:
+                pass
+        return None
+
     # ── Save to Disk ───────────────────────────────────────────────
 
     def save_backup_to_disk(
         self, project_id: str, backup_dir: str,
-        max_count: int = 3, include_files: bool = True
-    ) -> str:
-        """Write ZIP to backup_dir, rotate old backups. Returns the path."""
+        max_count: int = 3, include_files: bool = True,
+        skip_if_unchanged: bool = True
+    ) -> str | None:
+        """Write ZIP to backup_dir, rotate old backups. Returns the path, or None if skipped."""
         project = self.db.query(Project).filter(Project.id == project_id).first()
         if not project:
             raise ValueError(f"Project {project_id} not found")
 
+        short_id = project_id[:8]
         os.makedirs(backup_dir, exist_ok=True)
+
+        # Skip if nothing changed since last backup
+        if skip_if_unchanged:
+            content_hash = self._compute_content_hash(project_id)
+            last_hash = self._read_last_backup_hash(backup_dir, short_id)
+            if content_hash == last_hash:
+                logger.debug(f"Skipping backup for {project.name} — no changes")
+                return None
+
         zip_bytes = self.export_project_zip(project_id, include_files)
 
         # Sanitize project name for filename
         safe_name = "".join(c if c.isalnum() or c in "-_ " else "" for c in (project.name or "project")).strip().replace(" ", "_")[:40]
-        short_id = project_id[:8]
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         filename = f"{safe_name}_{short_id}_{timestamp}.logion.zip"
         filepath = os.path.join(backup_dir, filename)
@@ -180,17 +226,24 @@ class BackupService:
         with open(filepath, "wb") as f:
             f.write(zip_bytes)
 
+        # Write hash sidecar
+        hash_path = filepath.replace(".logion.zip", ".logion.hash")
+        content_hash = content_hash if skip_if_unchanged else self._compute_content_hash(project_id)
+        with open(hash_path, "w") as f:
+            f.write(content_hash)
+
         logger.info(f"Backup saved: {filepath} ({len(zip_bytes)} bytes)")
 
         # Rotate — keep only the newest max_count backups for this project
-        pattern = os.path.join(backup_dir, f"*_{short_id}_*.logion.zip")
-        existing = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
-        for old in existing[max_count:]:
-            try:
-                os.remove(old)
-                logger.info(f"Rotated old backup: {old}")
-            except OSError:
-                pass
+        for ext in ("*.logion.zip", "*.logion.hash"):
+            pattern = os.path.join(backup_dir, f"*_{short_id}_{ext}")
+            existing = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+            for old in existing[max_count:]:
+                try:
+                    os.remove(old)
+                    logger.info(f"Rotated old backup: {old}")
+                except OSError:
+                    pass
 
         return filepath
 

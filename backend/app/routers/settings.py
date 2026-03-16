@@ -101,6 +101,7 @@ async def trigger_manual_backup(project_id: str, db: Session = Depends(get_db)):
             project_id, backup_dir,
             max_count=s.get("backup_max_count", 3),
             include_files=s.get("backup_include_files", True),
+            skip_if_unchanged=False,
         )
         return {"path": path}
     except Exception as e:

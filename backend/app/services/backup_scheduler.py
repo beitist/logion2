@@ -27,13 +27,17 @@ async def backup_loop():
                 if backup_dir:
                     projects = db.query(Project).filter(Project.archived == False).all()
                     svc = BackupService(db)
+                    backed_up = 0
                     for p in projects:
                         try:
-                            svc.save_backup_to_disk(p.id, backup_dir, max_count, include_files)
+                            result = svc.save_backup_to_disk(p.id, backup_dir, max_count, include_files)
+                            if result:
+                                backed_up += 1
                         except Exception as e:
                             logger.error(f"Backup failed for project {p.id}: {e}")
                     if projects:
-                        logger.info(f"Auto-backup complete: {len(projects)} project(s)")
+                        skipped = len(projects) - backed_up
+                        logger.info(f"Auto-backup: {backed_up} saved, {skipped} unchanged (of {len(projects)})")
             finally:
                 db.close()
         except Exception as e:
