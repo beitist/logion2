@@ -17,6 +17,11 @@ class QuotaExceededError(Exception):
     pass
 
 
+class ProviderUnavailableError(Exception):
+    """Raised when an AI provider returns a server error after retries."""
+    pass
+
+
 def _is_quota_exceeded(error_str: str) -> bool:
     """Detects quota-exceeded 429s (vs transient rate limits)."""
     lower = error_str.lower()
@@ -468,6 +473,9 @@ Rules:
                     wait = (attempt + 1) * 3  # 3s, 6s, 9s
                     logger.warning(f"Gemini transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
                     await asyncio.sleep(wait)
+                elif is_transient:
+                    logger.error(f"Gemini API unavailable after {max_retries} attempts: {e}")
+                    raise ProviderUnavailableError(f"Gemini API is temporarily unavailable. Please try again in a moment.")
                 else:
                     raise e
 
@@ -507,6 +515,9 @@ Rules:
                     wait = (attempt + 1) * 3
                     logger.warning(f"Claude transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
                     await asyncio.sleep(wait)
+                elif is_transient:
+                    logger.error(f"Claude API unavailable after {max_retries} attempts: {e}")
+                    raise ProviderUnavailableError(f"Claude API is temporarily unavailable. Please try again in a moment.")
                 else:
                     raise e
 
@@ -559,6 +570,9 @@ Rules:
                     wait = (attempt + 1) * 3
                     logger.warning(f"Gemini chat transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
                     await asyncio.sleep(wait)
+                elif is_transient:
+                    logger.error(f"Gemini API unavailable after {max_retries} attempts: {e}")
+                    raise ProviderUnavailableError(f"Gemini API is temporarily unavailable. Please try again in a moment.")
                 else:
                     raise e
 
@@ -596,5 +610,8 @@ Rules:
                     wait = (attempt + 1) * 3
                     logger.warning(f"Claude chat transient error (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait}s...")
                     await asyncio.sleep(wait)
+                elif is_transient:
+                    logger.error(f"Claude API unavailable after {max_retries} attempts: {e}")
+                    raise ProviderUnavailableError(f"Claude API is temporarily unavailable. Please try again in a moment.")
                 else:
                     raise e
