@@ -269,8 +269,8 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
         if (currentIndex === -1) return;
 
         let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
-        // Skip locked/skipped segments
-        while (nextIndex >= 0 && nextIndex < segments.length && (segments[nextIndex].metadata?.locked || segments[nextIndex].metadata?.skip)) {
+        // Skip locked/skipped/auto-propagated segments
+        while (nextIndex >= 0 && nextIndex < segments.length && (segments[nextIndex].metadata?.locked || segments[nextIndex].metadata?.skip || segments[nextIndex].status === 'auto_propagated')) {
             nextIndex += direction === 'next' ? 1 : -1;
         }
         if (nextIndex < 0 || nextIndex >= segments.length) return;

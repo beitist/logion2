@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Segment, Project, AiUsageLog
-from ..rag.inference import InferenceOrchestrator
+from ..rag.inference import InferenceOrchestrator, ProviderUnavailableError, QuotaExceededError
 from ..config import get_default_model_id
 
 logger = logging.getLogger("ChatRouter")
@@ -138,7 +138,12 @@ async def segment_chat(
     messages = [{"role": m.role, "content": m.content} for m in payload.messages]
 
     orchestrator = InferenceOrchestrator()
-    reply_text, usage = await orchestrator.call_chat(system_prompt, messages, model_name)
+    try:
+        reply_text, usage = await orchestrator.call_chat(system_prompt, messages, model_name)
+    except ProviderUnavailableError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=429, detail=str(e))
 
     # Log usage to DB + project config
     input_tokens = usage.get("input_tokens", 0)
