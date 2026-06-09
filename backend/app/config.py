@@ -22,7 +22,7 @@ def get_ai_models_config() -> Dict[str, Any]:
              try:
                 with open(cwd_path, "r") as f:
                     return json.load(f)
-             except:
+             except Exception:
                  pass
         return {"models": []}
 

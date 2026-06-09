@@ -27,6 +27,7 @@ backend/projectdata/
 backend/uploads/
 uploads/
 backups/
+tmp/
 app.log
 app.log.*
 app.json

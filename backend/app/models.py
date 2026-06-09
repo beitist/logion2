@@ -1,9 +1,9 @@
-from sqlalchemy import Column, String, Integer, Text, Boolean, ForeignKey, JSON, DateTime, Enum, func
+from sqlalchemy import Column, String, Integer, Text, Boolean, ForeignKey, JSON, DateTime, Enum, func, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 import enum
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC
 
 from .database import Base
 
@@ -65,7 +65,7 @@ class Segment(Base):
     __tablename__ = "segments"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False, index=True)
     # file_id links the segment to its source file for multi-file projects
     # nullable=True for backward compatibility with existing data
     file_id = Column(String, ForeignKey("project_files.id"), nullable=True, index=True)
@@ -74,7 +74,12 @@ class Segment(Base):
     target_content = Column(Text, nullable=True)
     status = Column(String, default=SegmentStatus.draft.value)
     metadata_json = Column(JSON, nullable=True) # Renamed to avoid confusion with internal metadata
-    embedding = Column(Vector(2048)) # Voyage AI Embeddings (large/3.5)
+    embedding = Column(HALFVEC(2048)) # Voyage AI Embeddings (fp16 halfvec — HNSW-indexable >2000 dims)
+
+    # Composite index: nearly every query filters by project_id and orders by index
+    __table_args__ = (
+        Index("ix_segments_project_index", "project_id", "index"),
+    )
 
 
     project = relationship("Project", back_populates="segments")
@@ -108,7 +113,7 @@ class ContextChunk(Base):
     
     content = Column(Text, nullable=False) # The chunk text (Plain for embedding)
     rich_content = Column(Text, nullable=True) # The chunk text with Tags (<1>...</1>)
-    embedding = Column(Vector(2048)) # Voyage AI Embeddings
+    embedding = Column(HALFVEC(2048)) # Voyage AI Embeddings (fp16 halfvec — HNSW-indexable)
     
     # Retrieval Optimization
     chunk_index = Column(Integer, nullable=True, index=True) # Position in file (0, 1, 2...) for Context Window
@@ -129,29 +134,6 @@ class TranslationOrigin(str, enum.Enum):
     mandatory = "mandatory"
     user = "user"
     optional = "optional"
-
-class TranslationMemoryUnit(Base):
-    """
-    Vector-Enabled Translation Memory (Replaces ChromaDB)
-    """
-    __tablename__ = "tm_vectors"
-    
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    
-    # Text Content
-    source_text = Column(Text, nullable=False) # STRIPPED source for embedding/search
-    target_text = Column(Text, nullable=False) 
-    
-    # Metadata for Display
-    raw_source = Column(Text, nullable=False) # Original Source with Tags/Tabs
-    source_lang = Column(String, default="en")
-    target_lang = Column(String, default="de")
-    
-    # Vector
-    # Using 384 dimensions for all-MiniLM-L6-v2 (default SentenceTransformer)
-    embedding = Column(Vector(2048)) 
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 class TranslationUnit(Base):
     """Hybrid TMX / Exact Match Table"""

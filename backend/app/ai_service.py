@@ -373,8 +373,6 @@ def generate_indicator_suggestion(data: dict):
         return result
     except Exception as e:
         print(f"AI Error: {e}")
-    except Exception as e:
-        print(f"AI Error: {e}")
         return {"description": "Error generating indicator.", "reasoning": str(e)}
 
 def analyze_risks(data: dict):
@@ -560,4 +558,4 @@ def improve_narrative_text(data: dict):
 
     except Exception as e:
         print(f"Narrative AI Error: {e}")
-        return {"improved_text":Data.get('text', ''), "reasoning": f"Error: {str(e)}"}
+        return {"improved_text": data.get('text', ''), "reasoning": f"Error: {str(e)}"}

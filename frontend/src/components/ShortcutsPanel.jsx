@@ -14,6 +14,8 @@ export function ShortcutsPanel({ onClose }) {
         { keys: ["⌘/Ctrl", "Alt", "Enter"], desc: "Save & Next Segment", category: "Navigation" },
         { keys: ["⌘/Ctrl", "Shift", "↓"], desc: "Next Segment", category: "Navigation" },
         { keys: ["⌘/Ctrl", "Shift", "↑"], desc: "Prev Segment", category: "Navigation" },
+        { keys: ["⌘/Ctrl", "Alt", "↓"], desc: "Next Unfinished", category: "Navigation" },
+        { keys: ["⌘/Ctrl", "Alt", "↑"], desc: "Prev Unfinished", category: "Navigation" },
 
         // AI & Context
         { keys: ["Ctrl", "Space"], desc: "Generate AI Draft", category: "AI" },

@@ -1,27 +1,10 @@
-
 import os
-import re
-import shutil
-from typing import List
-from bs4 import BeautifulSoup
-from fastapi import HTTPException
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from ..models import Project, Segment, ProjectFile, ProjectFileCategory
-from ..schemas import SegmentInternal, TagModel
-from ..storage import download_file
-from ..document.assembler import reassemble_docx
-from ..logger import get_logger
-
-logger = get_logger("ExportService")
-UPLOAD_DIR = "uploads"
-
-from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from ..logger import get_logger
 
 logger = get_logger("ExportService")
+
 
 class ExportService:
     def __init__(self, db: Session):

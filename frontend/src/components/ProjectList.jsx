@@ -75,9 +75,9 @@ export function ProjectList({ onSelectProject, onNewProject }) {
         setArchiveDialog({ projectId, folderName: '' });
     };
 
-    const handleArchiveConfirm = async () => {
+    const handleArchiveConfirm = async (folderName) => {
         if (!archiveDialog) return;
-        const { projectId, folderName } = archiveDialog;
+        const { projectId } = archiveDialog;
         try {
             await updateProject(projectId, {
                 archived: true,
@@ -348,16 +348,14 @@ function ArchiveDialogModal({ archiveDialog, setArchiveDialog, existingFolders, 
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter') {
-            archiveDialog.folderName = folderName;
-            onConfirm();
+            onConfirm(folderName);
         } else if (e.key === 'Escape') {
             setArchiveDialog(null);
         }
     };
 
     const handleConfirm = () => {
-        archiveDialog.folderName = folderName;
-        onConfirm();
+        onConfirm(folderName);
     };
 
     return (

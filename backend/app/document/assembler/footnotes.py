@@ -238,7 +238,7 @@ def inject_endnotes(doc: Document, segments: list):
             eid = endnote.get(qn('w:id'))
             if eid in endnote_segs:
                  seg = endnote_segs[eid]
-                 target_text = seg.target_content if seg.target_content else seg.source_text
+                 target_text = seg.target_content if seg.target_content is not None else seg.source_text
 
                  # Collect original hyperlinks before clearing
                  orig_hyperlinks = _collect_original_hyperlinks(endnote, endnotes_part)

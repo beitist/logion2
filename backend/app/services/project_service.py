@@ -1,8 +1,11 @@
 
 import os
+import re
+import json
 import uuid
 from datetime import datetime
 from typing import List, Optional
+from collections import defaultdict, deque, Counter
 from fastapi import UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from ..models import Project, ProjectFile, ProjectFileCategory, Segment, GlossaryEntry, TranslationUnit, AiUsageLog, ContextChunk
@@ -458,83 +461,194 @@ class ProjectService:
             logger.error(f"Failed to parse source file: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
     
+    @staticmethod
+    def _normalize_for_match(text: str) -> str:
+        """Strip tags and normalize special chars for fuzzy segment matching."""
+        t = re.sub(r'</?[^>]+>', '', text or '')
+        t = t.replace('\u2011', '-').replace('\u00A0', ' ')
+        return t.strip()
+
+    def _backup_file_segments(self, project_id: str, file_id: str, filename: str):
+        """
+        JSON backup of all translated segments for a single file before replacement.
+        """
+        translated = self.db.query(Segment).filter(
+            Segment.file_id == file_id,
+            Segment.target_content.isnot(None),
+            Segment.target_content != ""
+        ).order_by(Segment.index).all()
+
+        if not translated:
+            logger.info(f"No translated segments to backup for {filename}")
+            return
+
+        backup_data = {
+            "project_id": project_id,
+            "file_id": file_id,
+            "filename": filename,
+            "timestamp": datetime.utcnow().isoformat(),
+            "segment_count": len(translated),
+            "segments": [
+                {
+                    "id": seg.id,
+                    "index": seg.index,
+                    "source_content": seg.source_content,
+                    "target_content": seg.target_content,
+                    "status": seg.status,
+                }
+                for seg in translated
+            ]
+        }
+
+        backup_dir = os.path.join(UPLOAD_DIR, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(backup_dir, f"replace_backup_{project_id}_{file_id}_{timestamp}.json")
+
+        with open(backup_path, "w", encoding="utf-8") as f:
+            json.dump(backup_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Backed up {len(translated)} translated segments to {backup_path}")
+
+    def _rematch_segments(self, old_segments: list, new_db_segments: list):
+        """
+        Match old translations to new segments using exact + fuzzy matching.
+        Mutates new_db_segments in place (sets target_content and status).
+        Returns (exact_count, fuzzy_count, new_count).
+        """
+        normalize = self._normalize_for_match
+
+        # Build maps from old segments
+        exact_map = defaultdict(deque)
+        norm_map = defaultdict(deque)
+        for seg in old_segments:
+            if not seg.target_content:
+                continue
+            exact_key = (seg.source_content or "").strip()
+            norm_key = normalize(seg.source_content)
+            exact_map[exact_key].append(seg)
+            norm_map[norm_key].append(seg)
+
+        # Count normalized keys in new segments for uniqueness check
+        new_norm_counts = Counter(normalize(s.source_content) for s in new_db_segments)
+
+        exact_count = 0
+        fuzzy_count = 0
+        new_count = 0
+
+        for seg in new_db_segments:
+            exact_key = (seg.source_content or "").strip()
+            norm_key = normalize(seg.source_content)
+            old_match = None
+
+            # 1. Exact match
+            if exact_map[exact_key]:
+                old_match = exact_map[exact_key].popleft()
+                if norm_map[norm_key]:
+                    norm_map[norm_key].popleft()
+                exact_count += 1
+            # 2. Fuzzy match (unique on both sides)
+            elif (norm_map[norm_key]
+                  and len(norm_map[norm_key]) == 1
+                  and new_norm_counts[norm_key] == 1):
+                old_match = norm_map[norm_key].popleft()
+                fuzzy_count += 1
+            else:
+                new_count += 1
+
+            if old_match:
+                seg.target_content = old_match.target_content
+                seg.status = old_match.status
+
+        return exact_count, fuzzy_count, new_count
+
     async def replace_file(
-        self, 
-        project_id: str, 
-        file_id: str, 
+        self,
+        project_id: str,
+        file_id: str,
         new_file: 'UploadFile',
         background_tasks: 'BackgroundTasks'
     ) -> ProjectFile:
         """
         Replaces an existing file with a new version.
-        For source files: deletes old segments and re-parses.
+        For source files: backs up translations, re-parses, and rematches.
         For legal/background: triggers reingest.
-        
-        Args:
-            project_id: Project UUID
-            file_id: The file to replace
-            new_file: The replacement file
-            background_tasks: For async reingest
-            
-        Returns:
-            Updated ProjectFile record
         """
         file_record = self.db.query(ProjectFile).filter(
             ProjectFile.id == file_id,
             ProjectFile.project_id == project_id
         ).first()
-        
+
         if not file_record:
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         project = self.get_project(project_id)
         category = ProjectFileCategory(file_record.category)
-        
-        # For source files: delete linked ai_usage_logs + segments first.
-        # ai_usage_logs has a FK to segments.id, so logs must be removed
-        # before the segments can be deleted (same pattern as delete_project).
+
+        # For source files: backup translations, then rematch after re-parse
+        old_segments = []
         if category == ProjectFileCategory.source:
-            # Collect segment IDs belonging to this file
-            segment_ids = [
-                sid for (sid,) in self.db.query(Segment.id).filter(
-                    Segment.file_id == file_id
-                ).all()
-            ]
+            # 1. Backup translated segments to JSON
+            self._backup_file_segments(project_id, file_id, file_record.filename)
+
+            # 2. Keep old segments in memory for rematch
+            old_segments = self.db.query(Segment).filter(
+                Segment.file_id == file_id
+            ).order_by(Segment.index).all()
+
+            # 3. Unlink AI usage logs, then delete old segments
+            segment_ids = [s.id for s in old_segments]
             if segment_ids:
-                # Delete referencing ai_usage_logs first
                 self.db.query(AiUsageLog).filter(
                     AiUsageLog.segment_id.in_(segment_ids)
                 ).delete(synchronize_session='fetch')
-            deleted_count = self.db.query(Segment).filter(
+            self.db.query(Segment).filter(
                 Segment.file_id == file_id
             ).delete()
-            logger.info(f"Deleted {deleted_count} segments (and their usage logs) from replaced file")
-        
+            logger.info(f"Deleted {len(old_segments)} segments from replaced file (backed up)")
+
         # Upload new file content
         object_name = f"{project_id}/{file_record.category}/{new_file.filename}"
-        
+
         try:
             await new_file.seek(0)
             uploaded_obj = upload_file(new_file.file, object_name, content_type=new_file.content_type)
-            
-            # Update file record
+
             file_record.filename = new_file.filename
             file_record.file_path = uploaded_obj
             self.db.add(file_record)
             self.db.commit()
-            
+
         except Exception as e:
             self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-        
-        # For source files: re-parse segments from new file
+
+        # For source files: re-parse and rematch translations
         if category == ProjectFileCategory.source:
             await self._parse_source_file(project, file_record)
 
-        # Always reingest: source replacement changes segment vectors,
+            if old_segments:
+                # Load freshly parsed segments for this file
+                new_segments = self.db.query(Segment).filter(
+                    Segment.file_id == file_id
+                ).order_by(Segment.index).all()
+
+                exact, fuzzy, new = self._rematch_segments(old_segments, new_segments)
+                self.db.commit()
+                logger.info(
+                    f"Rematch for {file_record.filename}: "
+                    f"{exact} exact, {fuzzy} fuzzy, {new} new "
+                    f"(from {len(old_segments)} old segments)"
+                )
+
+        # Reingest: source replacement changes segment vectors,
         # legal/background replacement changes TM/context chunks.
-        background_tasks.add_task(run_background_reingest, project_id)
-        
+        from ..workflows.reingest import run_background_incremental_reingest
+        if category == ProjectFileCategory.source:
+            background_tasks.add_task(run_background_reingest, project_id)
+        else:
+            background_tasks.add_task(run_background_incremental_reingest, project_id)
+
         self.db.refresh(file_record)
         return file_record
     

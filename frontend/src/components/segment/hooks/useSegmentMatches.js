@@ -33,8 +33,10 @@ export function useSegmentMatches(segment) {
             }
         }
 
-        // Sort: MT first (always shown at top), then by score descending
-        const sortedMatches = rawMatches.sort((a, b) => {
+        // Sort: MT first (always shown at top), then by score descending.
+        // Copy first — rawMatches may alias segment.context_matches (state) when
+        // no AI draft was injected, and .sort() mutates in place.
+        const sortedMatches = [...rawMatches].sort((a, b) => {
             if (a.type === 'mt') return -1;
             if (b.type === 'mt') return 1;
             return (b.score || 0) - (a.score || 0);

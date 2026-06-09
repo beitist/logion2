@@ -4,8 +4,10 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.settings_service import get_app_settings, update_app_settings
 from ..core.config import settings as app_config
+from ..logger import get_logger
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+logger = get_logger("SettingsRouter")
 
 
 @router.get("/")
@@ -40,20 +42,43 @@ def get_version():
     return {"version": app_config.PROJECT_VERSION}
 
 
+def _browse_root() -> str:
+    """Confinement root for the directory picker (user's home directory)."""
+    return os.path.realpath(os.path.expanduser("~"))
+
+
+def _is_within_root(resolved_path: str, root: str) -> bool:
+    """True if resolved_path is the root or nested under it (post-realpath)."""
+    try:
+        return os.path.commonpath([resolved_path, root]) == root
+    except ValueError:
+        # Different drives on Windows -> not comparable
+        return False
+
+
 @router.get("/browse-dirs")
 def browse_directories(path: str = ""):
-    """List subdirectories of a given path for the directory picker."""
+    """List subdirectories of a given path for the directory picker.
+
+    Confined to the user's home directory to prevent enumerating arbitrary
+    server paths (e.g. ?path=/etc).
+    """
+    root = _browse_root()
+
     # Default to home directory
     if not path:
-        path = os.path.expanduser("~")
+        path = root
 
     path = os.path.expanduser(path)
 
     # Resolve symlinks (e.g. ~/OneDrive -> ~/Library/CloudStorage/OneDrive-...)
     path = os.path.realpath(path)
 
+    if not _is_within_root(path, root):
+        raise HTTPException(status_code=403, detail="Path outside allowed directory")
+
     if not os.path.isdir(path):
-        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+        raise HTTPException(status_code=400, detail="Not a directory")
 
     try:
         entries = []
@@ -76,9 +101,14 @@ def browse_directories(path: str = ""):
                 except PermissionError:
                     pass
 
+        # Clamp parent so the UI cannot navigate above the confinement root.
+        parent = os.path.dirname(os.path.abspath(path))
+        if not _is_within_root(os.path.realpath(parent), root):
+            parent = None
+
         return {
             "current": os.path.abspath(path),
-            "parent": os.path.dirname(os.path.abspath(path)),
+            "parent": parent,
             "directories": entries,
             "cloud_shortcuts": cloud_shortcuts,
         }
@@ -105,7 +135,8 @@ async def trigger_manual_backup(project_id: str, db: Session = Depends(get_db)):
         )
         return {"path": path}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("manual_backup_failed", project_id=project_id)
+        raise HTTPException(status_code=500, detail="Backup failed")
 
 
 @router.get("/backups")
@@ -134,4 +165,5 @@ async def restore_from_backup(file: UploadFile = File(...), db: Session = Depend
         project = svc.restore_project_from_zip(zip_data)
         return {"project_id": project.id, "name": project.name}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("restore_failed", filename=file.filename)
+        raise HTTPException(status_code=500, detail="Restore failed")

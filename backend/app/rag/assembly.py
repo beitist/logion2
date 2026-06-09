@@ -29,10 +29,11 @@ class ContextAssembler:
         """
         # 1. Retrieval
         matches, usage = self.retrieval.retrieve_matches(
-            db=self.db, 
-            project_id=self.project_id, 
+            db=self.db,
+            project_id=self.project_id,
             query=segment.source_content,
-            segment_id=segment.id
+            segment_id=segment.id,
+            thresholds=self._ai_settings,
         )
         
         # 1b. Internal Project TM (cosine pre-filter + Voyage rerank)

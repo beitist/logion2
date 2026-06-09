@@ -228,18 +228,15 @@ def run_background_reingest(project_id: str):
         logging.getLogger("Workflow").error(f"Reingest Failed: {e}")
         # Try to set error status
         try:
-             project = db.query(to_model_class("Project")).filter(to_model_class("Project").id == project_id).first()
+             project = db.query(Project).filter(Project.id == project_id).first()
              if project:
                  project.rag_status = "error"
                  db.commit()
-        except:
+        except Exception:
             pass
     finally:
         db.close()
 
-# Helper to avoid circular imports? BaseWorkflow imports Project.
-# run_background_reingest uses SessionLocal, so it is fine.
-# Wait, `to_model_class` wrapper? No, just import Project.
 from ..models import Project
 
 

@@ -56,7 +56,13 @@ def _parse_docx(file_path: str, segmentation_func=None, source_lang="en"):
             xml_data = comments_part.blob
             root = etree.fromstring(xml_data)
             namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-            
+            W14_PARA_ID = '{http://schemas.microsoft.com/office/word/2010/wordml}paraId'
+
+            # paraId -> comment id. commentsExtended references comments via the
+            # w14:paraId of the comment's paragraphs (one per paragraph, usually
+            # the last paragraph carries the commentEx entry).
+            para_id_to_cid = {}
+
             for comment in root.findall('.//w:comment', namespaces):
                 cid = comment.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id')
                 # Extract text
@@ -64,48 +70,31 @@ def _parse_docx(file_path: str, segmentation_func=None, source_lang="en"):
                 full_text = "".join([t.text or "" for t in texts])
                 # Store as dict with text and done status (default False)
                 context["comments_map"][cid] = {"text": full_text, "is_done": False}
-        
+                # Record every paragraph's w14:paraId so we can resolve commentEx entries
+                for para in comment.findall('.//w:p', namespaces):
+                    pid = para.get(W14_PARA_ID)
+                    if pid:
+                        para_id_to_cid[pid] = cid
+
         # Check commentsExtended.xml for done status
         comments_ext_part = None
         for rel in part.rels.values():
             if "commentsExtended" in rel.reltype:
                 comments_ext_part = rel.target_part
                 break
-        
-        if comments_ext_part:
+
+        if comments_ext_part and context["comments_map"]:
             from lxml import etree
             ext_xml = comments_ext_part.blob
             ext_root = etree.fromstring(ext_xml)
-            # w15:commentEx with w15:done attribute
             ns = {'w15': 'http://schemas.microsoft.com/office/word/2012/wordml'}
+            W15 = 'http://schemas.microsoft.com/office/word/2012/wordml'
             for ce in ext_root.findall('.//w15:commentEx', ns):
-                para_id = ce.get('{http://schemas.microsoft.com/office/word/2012/wordml}paraId')
-                is_done = ce.get('{http://schemas.microsoft.com/office/word/2012/wordml}done') == '1'
-                # Match by paraId -> need to link to comment ID (complex, use simple approach)
-                # Actually, commentEx is indexed by position, so match by order
-                # For now, just check done attribute exists
-                if is_done:
-                    # Try to find corresponding comment by index
-                    pass  # TODO: proper linking if needed
-            
-            # Simpler approach: check if done="1" appears
-            for ce in ext_root.iter():
-                if 'done' in ce.attrib.values():
-                    # Mark all as potentially done - check paraIdParent
-                    parent_id = None
-                    for attr, val in ce.attrib.items():
-                        if 'paraIdParent' in attr:
-                            parent_id = val
-                    is_done = '1' in [v for k, v in ce.attrib.items() if 'done' in k]
-                    # Link via paraId if available
-                    for attr, val in ce.attrib.items():
-                        if 'paraId' in attr and not 'Parent' in attr:
-                            # Find comment with this paraId
-                            for cid in context["comments_map"]:
-                                # If we can match, update done status
-                                if is_done:
-                                    context["comments_map"][cid]["is_done"] = True
-                                    break  # Only first match for now
+                para_id = ce.get('{%s}paraId' % W15)
+                is_done = ce.get('{%s}done' % W15) == '1'
+                cid = para_id_to_cid.get(para_id)
+                if cid and is_done and cid in context["comments_map"]:
+                    context["comments_map"][cid]["is_done"] = True
     except Exception as e:
         logger.warning(f"Failed to extract comments: {e}")
 

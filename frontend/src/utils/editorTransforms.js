@@ -1,6 +1,30 @@
 import { mergeXmlTags, getTagLabel } from './tagUtils';
 
 /**
+ * Escapes raw HTML in untrusted text (source documents, TM/MT matches) while
+ * preserving the recognized inline markers we render ourselves: the numeric
+ * tag tokens (<N>, </N>) and <br>. Prevents markup like <img onerror=…> from
+ * being injected into dangerouslySetInnerHTML sinks.
+ */
+const escapeHtmlPreservingTags = (s) => {
+    const TOKEN = /(<\/?\d+>|<br\s*\/?>)/gi;
+    return String(s).split(TOKEN).map((part, i) => {
+        // Odd indices are the captured tokens (our own markup) — keep verbatim.
+        if (i % 2 === 1) return part;
+        return part
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }).join('');
+};
+
+const escapeAttr = (s) => String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+/**
  * Hydrates custom XML <N> tags into Tiptap-friendly HTML spans.
  * Handles tab wrappers and legacy comment tags.
  */
@@ -147,6 +171,10 @@ export const formatSourceContent = (htmlContent, tags, forTiptap = false) => {
         }
     }
 
+    // Escape untrusted text now that wrapper-tag stripping (which needs the raw
+    // <N> tokens) is done. Both render paths below feed dangerouslySetInnerHTML.
+    contentToRender = escapeHtmlPreservingTags(contentToRender);
+
     if (forTiptap) {
         let hydrated = hydrateContent(contentToRender, tags);
         hydrated = hydrated.replace(/\[TAB\]/g, '\t');
@@ -272,7 +300,7 @@ export const highlightGlossaryTerms = (htmlContent, glossaryMatches) => {
                 const noteText = match.note ? ` (${match.note})` : '';
                 const tooltipContent = `→ ${targetText}${noteText}`;
 
-                return `<mark class="glossary-highlight bg-yellow-100 border-b border-yellow-400 cursor-help rounded-sm px-0.5" title="${tooltipContent.replace(/"/g, '&quot;')}" data-glossary-source="${match.source.replace(/"/g, '&quot;')}" data-glossary-target="${targetText.replace(/"/g, '&quot;')}">${capturedTerm}</mark>`;
+                return `<mark class="glossary-highlight bg-yellow-100 border-b border-yellow-400 cursor-help rounded-sm px-0.5" title="${escapeAttr(tooltipContent)}" data-glossary-source="${escapeAttr(match.source)}" data-glossary-target="${escapeAttr(targetText)}">${capturedTerm}</mark>`;
             });
         });
     }

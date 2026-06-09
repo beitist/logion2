@@ -263,37 +263,54 @@ export function useAIQueue({ segmentsRef, projectRef, setSegments, log, setFlash
         }
     };
 
+    const _focusSegment = (nextSeg) => {
+        const editor = editorRefs.current[nextSeg.id];
+        if (editor) {
+            editor.commands.focus('end');
+            handleSegmentFocus(nextSeg.id);
+            setTimeout(() => {
+                const el = document.getElementById(`editor-${nextSeg.id}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+        } else {
+            setTimeout(() => {
+                const editorEl = document.querySelector(`#editor-${nextSeg.id} .ProseMirror`);
+                if (editorEl) {
+                    editorEl.focus();
+                    handleSegmentFocus(nextSeg.id);
+                }
+            }, 10);
+        }
+    };
+
     const handleNavigation = (currentId, direction) => {
-        const segments = segmentsRef.current; // Use Ref for reliable index
+        const segments = segmentsRef.current;
         const currentIndex = segments.findIndex(s => s.id === currentId);
         if (currentIndex === -1) return;
 
-        let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
-        // Skip locked/skipped/auto-propagated segments
-        while (nextIndex >= 0 && nextIndex < segments.length && (segments[nextIndex].metadata?.locked || segments[nextIndex].metadata?.skip || segments[nextIndex].status === 'auto_propagated')) {
-            nextIndex += direction === 'next' ? 1 : -1;
-        }
-        if (nextIndex < 0 || nextIndex >= segments.length) return;
+        // Support 'next_unfinished' / 'prev_unfinished' for jumping to draft/empty/mt_draft
+        const isUnfinished = direction === 'next_unfinished' || direction === 'prev_unfinished';
+        const step = direction.startsWith('prev') ? -1 : 1;
+        const unfinishedStatuses = new Set(['draft', 'mt_draft', 'error']);
+        let idx = currentIndex + step;
 
-        if (nextIndex !== currentIndex) {
-            const nextSeg = segments[nextIndex];
-            const editor = editorRefs.current[nextSeg.id];
-            if (editor) {
-                editor.commands.focus('end');
-                handleSegmentFocus(nextSeg.id);
-                setTimeout(() => {
-                    const el = document.getElementById(`editor-${nextSeg.id}`);
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }, 50);
+        while (idx >= 0 && idx < segments.length) {
+            const seg = segments[idx];
+            const skip = seg.metadata?.locked || seg.metadata?.skip || seg.status === 'auto_propagated';
+
+            if (isUnfinished) {
+                const isEmpty = !seg.target_content || seg.target_content === '<p></p>';
+                if (!skip && (unfinishedStatuses.has(seg.status) || isEmpty)) {
+                    _focusSegment(seg);
+                    return;
+                }
             } else {
-                setTimeout(() => {
-                    const editorEl = document.querySelector(`#editor-${nextSeg.id} .ProseMirror`);
-                    if (editorEl) {
-                        editorEl.focus();
-                        handleSegmentFocus(nextSeg.id);
-                    }
-                }, 10);
+                if (!skip) {
+                    _focusSegment(seg);
+                    return;
+                }
             }
+            idx += step;
         }
     };
 

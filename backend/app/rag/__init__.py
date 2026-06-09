@@ -1,39 +1,8 @@
 from .manager import RAGManager
-from .ingestion import ingest_project_files
 from .tasks import generate_project_drafts
 from .retrieval import RetrievalEngine
 from .types import GenerationResult
 from sqlalchemy.orm import Session
-
-# Legacy Support / Route Adapter
-async def generate_segment_draft(
-    segment_text: str,
-    project_id: str,
-    db: Session,
-    source_lang: str = "en", 
-    target_lang: str = "de",
-    model_name=None, 
-    custom_prompt="", 
-    skip_ai=False,
-    # These legacy args are now less relevant but kept to avoid kwargs errors if not cleaned
-    threshold=0.4, 
-    tags=None, 
-    cached_matches=None, 
-    prev_context=None, 
-    next_context=None
-):
-    """
-    Adapter function.
-    We need to find the Segment object to use the new Assembler effectively.
-    """
-    from ..models import Segment
-    
-    # Try to find segment by text? 
-    # This is fragile. We should ideally change the router to pass ID.
-    # But since I'm updating the router anyway, I'll change the call there!
-    # So I can change the signature here.
-    
-    raise DeprecationWarning("Use generate_segment_draft_v2 with segment_id")
 
 async def generate_segment_draft_v2(
     segment_id: str,
@@ -66,4 +35,4 @@ async def generate_segment_draft_v2(
     )
     
     # Convert Pydantic to Dict for router compatibility
-    return res.dict()
+    return res.model_dump()

@@ -2,6 +2,8 @@ import logging
 import difflib
 import re
 import os
+import time
+import math
 import voyageai
 from rapidfuzz import fuzz
 from typing import List, Optional, Tuple
@@ -11,16 +13,67 @@ from sqlalchemy import text, or_
 from ..models import TranslationUnit, TranslationOrigin, ContextChunk, ProjectFile, ProjectFileCategory, Segment
 from ..tmx import compute_hash, normalize_text
 from .types import TranslationMatch
-from sentence_transformers import CrossEncoder # Keep CrossEncoder for reranking!
-import numpy as np
 
 logger = logging.getLogger("RAG.Retrieval")
+
+# Signals that a Voyage API error is transient and worth retrying.
+_TRANSIENT_SIGNALS = (
+    "rate limit", "ratelimit", "429", "timeout", "timed out",
+    "500", "502", "503", "504", "temporarily", "overloaded", "connection",
+)
+
+
+def _is_transient_voyage_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    if any(k in name for k in ("ratelimit", "server", "timeout", "connection", "apiconnection")):
+        return True
+    msg = str(exc).lower()
+    return any(sig in msg for sig in _TRANSIENT_SIGNALS)
+
+
+def _voyage_with_retry(fn, what: str, retries: int = 3, base_delay: float = 1.0):
+    """Call a Voyage API function with exponential backoff on transient errors.
+
+    Re-raises immediately on non-transient errors or after exhausting retries,
+    so callers keep their existing except-handlers as the final fallback.
+    """
+    for attempt in range(retries):
+        try:
+            return fn()
+        except Exception as e:
+            if not _is_transient_voyage_error(e) or attempt == retries - 1:
+                raise
+            delay = base_delay * (2 ** attempt)
+            logger.warning(
+                f"Voyage {what} transient error (attempt {attempt + 1}/{retries}): {e}. "
+                f"Retrying in {delay:.1f}s"
+            )
+            time.sleep(delay)
+
+
+def _rescale_relevance(raw: float, band_lo: float = 0.75, band_hi: float = 0.99) -> int:
+    """Log-rescale a Voyage relevance score (0..1) into a 0..100 match score.
+
+    Voyage rerank packs relevant matches into a narrow high band (~0.85-0.95)
+    and junk into ~0.2-0.35. Restricting to [band_lo, band_hi] and applying a
+    logarithmic curve spreads the high band so near-perfect matches separate
+    from merely-related ones, while keeping good matches in a readable 80-95
+    range. Anything below band_lo maps to 0 (filtered).
+    """
+    if band_hi <= band_lo:
+        band_hi = band_lo + 1e-6
+    t = (raw - band_lo) / (band_hi - band_lo)
+    if t <= 0:
+        return 0
+    if t >= 1:
+        return 100
+    k = 9.0
+    return int(round(math.log1p(t * k) / math.log1p(k) * 100))
 
 class RetrievalEngine:
     _instance = None
     _client = None
-    _cross_encoder = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(RetrievalEngine, cls).__new__(cls)
@@ -30,28 +83,15 @@ class RetrievalEngine:
     def _load_models(self):
         try:
             logger.info("Loading Retrieval Models...")
-            
-            # 1. Voyage AI Client
+
+            # Voyage AI Client (embeddings + reranking)
             api_key = os.getenv("VOYAGE_API_KEY")
             if not api_key:
                 logger.warning("⚠️ VOYAGE_API_KEY not found. Vector embedding will fail.")
             else:
                 self._client = voyageai.Client(api_key=api_key)
-                
-            # 2. Cross-Encoder (Reranking) - Keep local for speed/cost?
-            # Or use Voyage reranker? User asked to replace LaBSE algorithm.
-            # Local reranker is fine to keep for now unless specified.
-            # It's small.
-            device = "cpu"
-            model_name = 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1'
-            try:
-                # Try offline first (avoids HuggingFace HEAD request timeouts)
-                self._cross_encoder = CrossEncoder(model_name, device=device, local_files_only=True)
-            except Exception:
-                # First run: download from HuggingFace
-                self._cross_encoder = CrossEncoder(model_name, device=device)
-            
-            logger.info("✅ Retrieval Models Loaded (Voyage AI + CrossEncoder).")
+
+            logger.info("✅ Retrieval Models Loaded (Voyage AI).")
         except Exception as e:
             logger.error(f"❌ Error loading models: {e}", exc_info=True)
 
@@ -77,11 +117,14 @@ class RetrievalEngine:
             
             sanitized = [t if t.strip() else " " for t in texts]
 
-            result = self._client.embed(
-                sanitized, 
-                model="voyage-3-large", 
-                input_type=input_type,
-                output_dimension=2048
+            result = _voyage_with_retry(
+                lambda: self._client.embed(
+                    sanitized,
+                    model="voyage-3-large",
+                    input_type=input_type,
+                    output_dimension=2048
+                ),
+                what="embed",
             )
             return result.embeddings, result.total_tokens
             
@@ -118,13 +161,17 @@ class RetrievalEngine:
                 
         return prev_ctx, next_ctx
 
-    def retrieve_matches(self, db: Session, project_id: str, query: str, limit: int = 5, segment_id: str = None) -> List[TranslationMatch]:
+    def retrieve_matches(self, db: Session, project_id: str, query: str, limit: int = 5,
+                         segment_id: str = None, thresholds: dict = None) -> List[TranslationMatch]:
         """
         Main retrieval pipeline:
         1. Exact/TM Lookup (TranslationUnit)
         2. Vector Search (ContextChunk)
         3. Deduplication (Source-Text based)
         4. Reranking (Voyage AI) & Differentiation
+
+        thresholds: per-category RAG settings (threshold_mandatory/optional/tm,
+        rerank_band_lo/hi) — controls scoring band and the display cutoff.
         """
         matches = []
         total_embedding_tokens = 0
@@ -145,10 +192,13 @@ class RetrievalEngine:
         
         # Helper to get priority score (Higher is better)
         def get_priority(m: TranslationMatch):
-            # 3: Mandatory / Exact
+            # 4: Exact source-hash match — must never be dedup'd away by a
+            #    same-text semantic candidate (would lose its protected score)
+            if (m.metadata or {}).get("exact"): return 4
+            # 3: Mandatory / Legal
             if m.type == TranslationOrigin.mandatory or m.category == ProjectFileCategory.legal: return 3
             # 2: User / TMX
-            if m.type == TranslationOrigin.user: return 2 
+            if m.type == TranslationOrigin.user: return 2
             # 1: Context / Background
             return 1
             
@@ -165,7 +215,7 @@ class RetrievalEngine:
         deduped_candidates = list(unique_map.values())
         
         # 4. Rerank & Score
-        scored_matches, rerank_tokens = self._rerank_voyage(query, deduped_candidates)
+        scored_matches, rerank_tokens = self._rerank_voyage(query, deduped_candidates, thresholds=thresholds)
         total_rerank_tokens += rerank_tokens
 
         logger.info(f"Retrieval Usage: Embedding Tokens={total_embedding_tokens}, Rerank Tokens={total_rerank_tokens}")
@@ -177,17 +227,40 @@ class RetrievalEngine:
         
         return scored_matches[:limit], usage_dict
 
-    def _rerank_voyage(self, query: str, candidates: List[TranslationMatch]) -> tuple[List[TranslationMatch], int]:
+    def _rerank_voyage(self, query: str, candidates: List[TranslationMatch],
+                       thresholds: dict = None) -> tuple[List[TranslationMatch], int]:
         """
-        Uses Voyage AI Rerank API (rerank-2.5).
-        Returns (matches, token_usage)
+        Scores candidates via Voyage AI Rerank (rerank-2.5).
+
+        - Exact source-hash matches (metadata['exact']) keep their canonical
+          score (100/99/98) and are never overwritten by the reranker.
+        - Non-exact candidates get a log-rescaled relevance score (see
+          _rescale_relevance) and are filtered by per-category thresholds from
+          the RAG settings sliders.
+
+        Returns (matches, token_usage).
         """
-        if not candidates: 
+        if not candidates:
             return [], 0
-            
+
+        thresholds = thresholds or {}
+        band_lo = thresholds.get("rerank_band_lo", 0.75)
+        band_hi = thresholds.get("rerank_band_hi", 0.99)
+
+        def is_exact(m: TranslationMatch) -> bool:
+            return bool((m.metadata or {}).get("exact"))
+
+        def threshold_for(m: TranslationMatch) -> int:
+            if m.type == TranslationOrigin.mandatory or m.category == ProjectFileCategory.legal:
+                return thresholds.get("threshold_mandatory", 60)
+            if m.category == "tm":
+                return thresholds.get("threshold_tm", 60)
+            return thresholds.get("threshold_optional", 40)
+
         if not self._client:
-            for m in candidates: m.score = 80
-            return candidates, 0
+            # No reranker available: only trust exact matches (keep their score),
+            # rather than inventing a flat fallback score for everything.
+            return [m for m in candidates if is_exact(m)], 0
 
         # Prepare Documents — strip XML tags so they don't affect relevance scoring
         clean_query = self.clean_tags(query)
@@ -203,54 +276,45 @@ class RetrievalEngine:
         )
 
         try:
-            reranking = self._client.rerank(
-                query=instructed_query,
-                documents=docs,
-                model="rerank-2.5",
-                top_k=len(docs)
+            reranking = _voyage_with_retry(
+                lambda: self._client.rerank(
+                    query=instructed_query,
+                    documents=docs,
+                    model="rerank-2.5",
+                    top_k=len(docs)
+                ),
+                what="rerank",
             )
-            
+
             score_map = {r.index: r.relevance_score for r in reranking.results}
             tokens = reranking.total_tokens
-            
+
         except Exception as e:
             logger.error(f"Voyage Rerank Failed: {e}")
-            return candidates, 0
+            # On failure, keep exact matches; drop unscored semantic candidates.
+            return [m for m in candidates if is_exact(m)], 0
 
         final_list = []
-        query_chars = len(clean_query)
-
         for i, match in enumerate(candidates):
-            raw_score = score_map.get(i, 0.0)
-
-            # Length penalty: only penalize candidates much LONGER than query (>3x)
-            # A paragraph matching on a single keyword should not outscore a segment-level match
-            doc_chars = len(docs[i])
-            if query_chars > 0 and doc_chars > query_chars * 3:
-                length_factor = (query_chars * 3) / doc_chars  # 5x→0.6, 10x→0.3
-            else:
-                length_factor = 1.0
-
-            adjusted_score = raw_score * length_factor
-            base_score = int(adjusted_score * 100)
-
-            # Boosts/Penalties
-            boost = 2
-            is_mandatory = (match.type == TranslationOrigin.mandatory or match.category == ProjectFileCategory.legal)
-
-            if is_mandatory:
-                boost = 5
-
-            final_score = base_score + boost
-            match.score = max(0, min(99, final_score))
-            
+            raw = score_map.get(i, 0.0)
             match.metadata = match.metadata or {}
-            match.metadata['rerank_score'] = base_score
-            
-            final_list.append(match)
-            
+            match.metadata['rerank_relevance'] = round(raw, 4)
+
+            if is_exact(match):
+                # Exact source-hash match: preserve canonical score (100/99/98).
+                match.metadata['rerank_score'] = match.score
+                final_list.append(match)
+                continue
+
+            match.score = _rescale_relevance(raw, band_lo, band_hi)
+            match.metadata['rerank_score'] = match.score
+
+            # Per-category cutoff (wired to the RAG settings sliders)
+            if match.score >= threshold_for(match):
+                final_list.append(match)
+
         final_list.sort(key=lambda x: x.score, reverse=True)
-        return [m for m in final_list if m.score > 35], tokens
+        return final_list, tokens
 
     def _lookup_tm(self, db: Session, project_id: str, text_val: str) -> List[TranslationMatch]:
         """
@@ -282,7 +346,8 @@ class RetrievalEngine:
                 filename="Translation Memory",
                 type=tm.origin_type,
                 category="tm",
-                score=score
+                score=score,
+                metadata={"exact": True},  # source-hash identical → protect from rerank overwrite
             ))
         return results
 
@@ -331,7 +396,7 @@ class RetrievalEngine:
                 filename=file.filename,
                 type=TranslationOrigin.mandatory if file.category == ProjectFileCategory.legal else TranslationOrigin.optional,
                 category=file.category,
-                score=0, # Calculated in _rerank_and_score
+                score=0, # Set later during Voyage reranking
                 chunk_index=chunk.chunk_index,
                 file_id=file.id
             ))
@@ -462,11 +527,14 @@ class RetrievalEngine:
         docs = [self.clean_tags(c.source_text) for c in candidates]
 
         try:
-            reranking = self._client.rerank(
-                query=clean_query,
-                documents=docs,
-                model="rerank-2.5",
-                top_k=len(docs)
+            reranking = _voyage_with_retry(
+                lambda: self._client.rerank(
+                    query=clean_query,
+                    documents=docs,
+                    model="rerank-2.5",
+                    top_k=len(docs)
+                ),
+                what="rerank(internal-tm)",
             )
 
             for r in reranking.results:
@@ -478,7 +546,3 @@ class RetrievalEngine:
         except Exception as e:
             logger.error(f"Internal TM Rerank Failed: {e}")
             return candidates, 0
-
-    def _rerank(self, query: str, candidates: List[TranslationMatch]) -> List[TranslationMatch]:
-        # Legacy method kept for interface compatibility if needed, but we use _rerank_and_score now internally
-        return self._rerank_and_score(query, candidates)

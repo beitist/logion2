@@ -331,15 +331,13 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
             Extension.create({
                 addKeyboardShortcuts() {
                     return {
-                        // Navigation: Next Segment
-                        'Mod-Alt-ArrowDown': () => { if (onNavigateRef.current) { onNavigateRef.current('next'); return true; } return false; },
-                        'Mod-Control-Alt-ArrowDown': () => { if (onNavigateRef.current) { onNavigateRef.current('next'); return true; } return false; },
+                        // Navigation: Next/Prev Segment
                         'Mod-Shift-ArrowDown': () => { if (onNavigateRef.current) { onNavigateRef.current('next'); return true; } return false; },
-
-                        // Navigation: Prev Segment
-                        'Mod-Alt-ArrowUp': () => { if (onNavigateRef.current) { onNavigateRef.current('prev'); return true; } return false; },
-                        'Mod-Control-Alt-ArrowUp': () => { if (onNavigateRef.current) { onNavigateRef.current('prev'); return true; } return false; },
                         'Mod-Shift-ArrowUp': () => { if (onNavigateRef.current) { onNavigateRef.current('prev'); return true; } return false; },
+
+                        // Navigation: Next/Prev Unfinished Segment (draft, mt_draft, empty)
+                        'Mod-Alt-ArrowDown': () => { if (onNavigateRef.current) { onNavigateRef.current('next_unfinished'); return true; } return false; },
+                        'Mod-Alt-ArrowUp': () => { if (onNavigateRef.current) { onNavigateRef.current('prev_unfinished'); return true; } return false; },
 
                         // Real Tab
                         'Tab': () => {
