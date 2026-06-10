@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { Terminal, Keyboard, X, Trash2, Save, MoreVertical, FileText, Check, Copy, ArrowLeft, Download, ChevronDown, Zap, Database, BookOpen, BarChart3, RefreshCw, FolderOpen, Settings, GitCompareArrows, MessageSquare } from 'lucide-react';
 import './TiptapStyles.css';
 
@@ -93,6 +93,30 @@ export function SplitView({ projectId, onBack }) {
         }
     };
 
+    // Stable per-row handlers (latest-ref pattern): the hook handlers are
+    // recreated every render, which would defeat memo(SegmentRow). The
+    // wrappers below keep a constant identity while always calling the
+    // latest implementation.
+    const latestHandlers = useRef({});
+    latestHandlers.current = {
+        handleAiDraft, handleToggleFlag, handleToggleLock, handleToggleSkip,
+        handlePropagate, handleSave, handleSegmentFocus, handleNavigation,
+        handleContextMenu, handleGlossaryUpdate,
+    };
+    const rowHandlers = useMemo(() => ({
+        onAiDraft: (...a) => latestHandlers.current.handleAiDraft(...a),
+        onToggleFlag: (...a) => latestHandlers.current.handleToggleFlag(...a),
+        onToggleLock: (...a) => latestHandlers.current.handleToggleLock(...a),
+        onToggleSkip: (...a) => latestHandlers.current.handleToggleSkip(...a),
+        onPropagate: (...a) => latestHandlers.current.handlePropagate(...a),
+        onSave: (...a) => latestHandlers.current.handleSave(...a),
+        onFocus: (...a) => latestHandlers.current.handleSegmentFocus(...a),
+        onNavigate: (...a) => latestHandlers.current.handleNavigation(...a),
+        onContextMenu: (...a) => latestHandlers.current.handleContextMenu(...a),
+        onGlossaryUpdate: (...a) => latestHandlers.current.handleGlossaryUpdate(...a),
+    }), []);
+    const registerEditor = useCallback((id, ed) => { editorRefs.current[id] = ed; }, [editorRefs]);
+
     // QA Export Warning state
     const [showQAWarning, setShowQAWarning] = useState(false);
     const pendingExportRef = useRef(null);
@@ -145,20 +169,30 @@ export function SplitView({ projectId, onBack }) {
     // Get unique source files from project (safe for loading state)
     const sourceFiles = (project?.files || []).filter(f => f.category === 'source');
 
-    // Filter segments by activeFileId (null = show all)
-    let filteredSegments = activeFileId
-        ? segments.filter(s => s.file_id === activeFileId)
-        : segments;
+    // Filter segments by activeFileId (null = show all) + comment filter.
+    // Memoized: stable identity keeps the scroll effect and virtualizer from
+    // recomputing on unrelated renders.
+    const filteredSegments = useMemo(() => {
+        let list = activeFileId
+            ? segments.filter(s => s.file_id === activeFileId)
+            : segments;
 
-    // Filter comments based on commentFilter ('all', 'active', or 'none')
-    if (commentFilter === 'none') {
-        filteredSegments = filteredSegments.filter(s => s.metadata?.type !== 'comment');
-    } else if (commentFilter === 'active') {
-        filteredSegments = filteredSegments.filter(s => {
-            if (s.metadata?.type === 'comment') return !s.metadata?.is_done;
-            return true;
-        });
-    }
+        if (commentFilter === 'none') {
+            list = list.filter(s => s.metadata?.type !== 'comment');
+        } else if (commentFilter === 'active') {
+            list = list.filter(s => {
+                if (s.metadata?.type === 'comment') return !s.metadata?.is_done;
+                return true;
+            });
+        }
+        return list;
+    }, [segments, activeFileId, commentFilter]);
+
+    const progressPct = useMemo(() => {
+        if (!filteredSegments.length) return 0;
+        const done = filteredSegments.filter(s => s.status === 'translated' || s.status === 'approved').length;
+        return Math.round((done / filteredSegments.length) * 100);
+    }, [filteredSegments]);
 
     // Virtualizer MUST be called before any early returns (Rules of Hooks)
     const rowVirtualizer = useVirtualizer({
@@ -272,12 +306,12 @@ export function SplitView({ projectId, onBack }) {
                     <div className="flex flex-col items-center justify-center flex-1 max-w-xs">
                         <div className="flex justify-between w-full text-[10px] text-gray-500 mb-1 uppercase tracking-wider font-semibold">
                             <span>Progress</span>
-                            <span>{Math.round((filteredSegments.filter(s => s.status === 'translated' || s.status === 'approved').length / filteredSegments.length) * 100) || 0}%</span>
+                            <span>{progressPct}%</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
                             <div
                                 className="bg-indigo-500 h-full transition-all duration-500 ease-out"
-                                style={{ width: `${(filteredSegments.filter(s => s.status === 'translated' || s.status === 'approved').length / filteredSegments.length) * 100 || 0}%` }}
+                                style={{ width: `${progressPct}%` }}
                             />
                         </div>
                     </div>
@@ -432,20 +466,11 @@ export function SplitView({ projectId, onBack }) {
                                     <SegmentRow
                                         segment={seg}
                                         project={project}
-                                        generatingSegments={generatingSegments}
-                                        flashingSegments={flashingSegments}
+                                        generating={generatingSegments[seg.id] || null}
+                                        isFlashing={!!flashingSegments[seg.id]}
                                         showDebug={showDebug}
-                                        onAiDraft={handleAiDraft}
-                                        onToggleFlag={handleToggleFlag}
-                                        onToggleLock={handleToggleLock}
-                                        onToggleSkip={handleToggleSkip}
-                                        onPropagate={handlePropagate}
-                                        onSave={handleSave}
-                                        onFocus={handleSegmentFocus}
-                                        onNavigate={handleNavigation}
-                                        onContextMenu={handleContextMenu}
-                                        registerEditor={(id, ed) => editorRefs.current[id] = ed}
-                                        onGlossaryUpdate={handleGlossaryUpdate}
+                                        registerEditor={registerEditor}
+                                        {...rowHandlers}
                                     />
                                 </div>
                             );

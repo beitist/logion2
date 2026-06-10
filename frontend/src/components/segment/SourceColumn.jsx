@@ -21,8 +21,8 @@ import { MatchCard } from './MatchCard';
  * @param {Array} sortedMatches - Pre-sorted and filtered matches
  * @param {Array} tmMatches - TM-only matches for shortcut key assignment
  * @param {boolean} hasContext - Whether context panel should be shown
- * @param {Object} generatingSegments - Map of segment IDs currently generating
- * @param {Object} flashingSegments - Map of segment IDs with flash animation
+ * @param {string|null} generating - AI generation mode for THIS segment or null
+ * @param {boolean} isFlashing - Whether THIS segment has the flash animation
  * @param {boolean} showDebug - Whether to show debug info
  * @param {Function} onAiDraft - Callback for AI draft generation
  * @param {Function} onContextMenu - Callback for right-click context menu (glossary add)
@@ -33,8 +33,8 @@ export function SourceColumn({
     sortedMatches,
     tmMatches,
     hasContext,
-    generatingSegments,
-    flashingSegments,
+    generating = null,
+    isFlashing = false,
     showDebug,
     showSourceTC,
     tcMode,
@@ -231,7 +231,7 @@ export function SourceColumn({
 
             {/* Context Panel (Translation Memory / AI Matches) */}
             {/* Also show when generating so user sees loading feedback even with no existing matches */}
-            {(hasContext || generatingSegments[segment.id]) && (
+            {(hasContext || generating) && (
                 <div className="mt-6 border-t border-gray-200 pt-4">
                     {/* Header with refresh buttons */}
                     <div className="flex justify-between items-center mb-3">
@@ -243,18 +243,18 @@ export function SourceColumn({
                             {/* Search/Refresh matches (cheap - retrieval only, no LLM) */}
                             <button
                                 onClick={() => onAiDraft(segment.id, false, "analyze", false, true)}
-                                className={`text-gray-400 hover:text-blue-600 transition-colors ${generatingSegments[segment.id] === 'analyze' ? 'animate-pulse text-blue-500' : generatingSegments[segment.id] ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                className={`text-gray-400 hover:text-blue-600 transition-colors ${generating === 'analyze' ? 'animate-pulse text-blue-500' : generating ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 title="Search Matches (Refresh) - Cheap"
-                                disabled={!!generatingSegments[segment.id]}
+                                disabled={!!generating}
                             >
                                 <Search size={14} />
                             </button>
                             {/* Regenerate translation (uses tokens) */}
                             <button
                                 onClick={() => onAiDraft(segment.id, false, "translate", false, true)}
-                                className={`text-gray-400 hover:text-indigo-600 transition-colors ${generatingSegments[segment.id] && generatingSegments[segment.id] !== 'analyze' ? 'animate-spin text-indigo-500' : ''}`}
+                                className={`text-gray-400 hover:text-indigo-600 transition-colors ${generating && generating !== 'analyze' ? 'animate-spin text-indigo-500' : ''}`}
                                 title="Regenerate Translation (Force Refresh) - Uses Tokens"
-                                disabled={!!generatingSegments[segment.id]}
+                                disabled={!!generating}
                             >
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -270,14 +270,14 @@ export function SourceColumn({
                                 key={idx}
                                 match={match}
                                 shortcutLabel={getShortcutLabel(match, tmMatches)}
-                                isFlashing={match.type === 'mt' && flashingSegments[segment.id]}
+                                isFlashing={match.type === 'mt' && isFlashing}
                                 project={project}
                             />
                         ))}
 
                         {/* Skeleton loader: shown while generating and no MT match exists yet.
                            Mimics the look of an MT MatchCard with pulsing placeholder lines. */}
-                        {generatingSegments[segment.id] && generatingSegments[segment.id] !== 'analyze' && !sortedMatches.some(m => m.type === 'mt') && (
+                        {generating && generating !== 'analyze' && !sortedMatches.some(m => m.type === 'mt') && (
                             <div className="p-2.5 rounded-lg border-l-4 border-l-orange-500 border border-gray-200/50 bg-orange-50 animate-pulse">
                                 <div className="flex justify-between items-center mb-2">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-orange-700 flex items-center gap-1">

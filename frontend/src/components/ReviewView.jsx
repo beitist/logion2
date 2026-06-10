@@ -291,8 +291,8 @@ export function ReviewView({ projectId, onBack }) {
                                 <SegmentRow
                                     segment={activeSegment}
                                     project={project}
-                                    generatingSegments={{}}
-                                    flashingSegments={{}}
+                                    generating={null}
+                                    isFlashing={false}
                                     showDebug={false}
                                     onAiDraft={noop}
                                     onToggleFlag={handleToggleFlag}

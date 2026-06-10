@@ -125,6 +125,10 @@ class InferenceOrchestrator:
             context_used=context
         )
 
+    # Max segments per LLM call. Larger batches are split: one oversized prompt
+    # risks context overflow and makes any JSON failure lose the whole batch.
+    MAX_BATCH_CHUNK = 15
+
     async def generate_structured_batch(
         self,
         preceding_context: List[str],
@@ -133,11 +137,87 @@ class InferenceOrchestrator:
         source_lang: str,
         target_lang: str,
         model_name: str = None,
-        custom_prompt: str = ""
+        custom_prompt: str = "",
+        _depth: int = 0
     ) -> (Dict[str, str], Dict):
         """
-        Translates a batch using a structured JSON prompt with Windowed Context.
+        Translates a batch using structured JSON prompts with Windowed Context.
+
+        Splits oversized batches into chunks of MAX_BATCH_CHUNK and retries
+        segments missing from a response by bisecting the chunk (down to single
+        segments). Guarantees: every input id is attempted; a failing chunk
+        only affects its own segments. Ids still absent from the returned dict
+        after retries are marked as errors by the callers.
         """
+        results: Dict[str, str] = {}
+        total_usage = {"input_tokens": 0, "output_tokens": 0}
+
+        if not batch_items:
+            return results, total_usage
+
+        def _add_usage(u: Dict):
+            total_usage["input_tokens"] += u.get("input_tokens", 0)
+            total_usage["output_tokens"] += u.get("output_tokens", 0)
+
+        # 1. Chunk oversized batches (sequentially, keeps document order)
+        if len(batch_items) > self.MAX_BATCH_CHUNK:
+            for i in range(0, len(batch_items), self.MAX_BATCH_CHUNK):
+                chunk = batch_items[i:i + self.MAX_BATCH_CHUNK]
+                r, u = await self.generate_structured_batch(
+                    preceding_context, following_context, chunk,
+                    source_lang, target_lang, model_name, custom_prompt,
+                    _depth=_depth
+                )
+                results.update(r)
+                _add_usage(u)
+            return results, total_usage
+
+        # 2. Single chunk: one LLM call
+        chunk_results, usage = await self._structured_chunk_call(
+            preceding_context, following_context, batch_items,
+            source_lang, target_lang, model_name, custom_prompt
+        )
+        results.update(chunk_results)
+        _add_usage(usage)
+
+        # 3. Recover missing segments by bisecting (changes prompt composition,
+        #    so a poisoned neighbor can't keep killing the same chunk)
+        missing = [it for it in batch_items if it['id'] not in results]
+        if missing and len(batch_items) > 1 and _depth < 5:
+            logger.warning(
+                f"Batch response missing {len(missing)}/{len(batch_items)} segments — "
+                f"bisecting retry (depth {_depth + 1})"
+            )
+            mid = max(1, len(missing) // 2)
+            for part in (missing[:mid], missing[mid:]):
+                if not part:
+                    continue
+                r, u = await self.generate_structured_batch(
+                    preceding_context, following_context, part,
+                    source_lang, target_lang, model_name, custom_prompt,
+                    _depth=_depth + 1
+                )
+                results.update(r)
+                _add_usage(u)
+        elif missing:
+            logger.error(
+                f"{len(missing)} segment(s) unrecoverable after retries: "
+                f"{[it['id'] for it in missing]}"
+            )
+
+        return results, total_usage
+
+    async def _structured_chunk_call(
+        self,
+        preceding_context: List[str],
+        following_context: List[str],
+        batch_items: List[Dict],
+        source_lang: str,
+        target_lang: str,
+        model_name: str = None,
+        custom_prompt: str = ""
+    ) -> (Dict[str, str], Dict):
+        """Single structured-JSON LLM call for one chunk (no splitting/retry here)."""
         if not model_name: model_name = get_default_model_id()
         
         import json

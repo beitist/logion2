@@ -4,18 +4,20 @@ Stand: 2026-06-09. Konsolidierte Befunde aus vier parallelen Code-Reviews (Backe
 
 **Arbeitsplan:**
 - Phase 1 ✅ ABGESCHLOSSEN: Kritische Bugs #1–#10 + toter Code (inkl. Legacy-Translate-Cluster)
-- Phase 2 (läuft): #14 ✅ · #16 ✅ · #12 ✅ · #11 strukturell ✅ (HNSW-Planner-Nutzung offen) · #15 offen · #13 offen (niedrige Prio)
-- Phase 3: Detailbefunde (Anhang) — noch offen
+- Phase 2 ✅ ABGESCHLOSSEN: #11–#16 alle erledigt (#11: bewusst kein HNSW-Forcing, siehe Befund)
+- Phase 3 (nächster Schritt): Detailbefunde (Anhang) — nach Bedarf priorisieren
 
 Legende: `[ ]` offen · `[~]` in Arbeit · `[x]` erledigt
 
-### 🔖 Hier morgen weitermachen
-1. **#11 Rest — HNSW-Nutzung erzwingen:** `hnsw.iterative_scan=strict_order` + `enable_seqscan=off` scoped auf die zwei Vektor-Queries in `retrieval.py` (`_search_vector_chunks`, `search_internal_tm`-Stage-2). **Vorher testen:** HNSW-Ergebnisse == exakte Ergebnisse (kein Under-Return wegen `project_id`-Filter). Probe-Setup unter `tmp/score_test/`.
-2. **#15 — LLM-Batch-Chunking** (`inference.py:generate_structured_batch`): in 10–20er-Gruppen splitten, Garantie: jedes Segment genau einmal, kein Drop bei Teil-Fehler.
-3. **#13 — SegmentRow-Memoization** (niedrige Prio, Politur).
-4. Danach Phase 3 (Detailbefunde) nach Bedarf.
+### 🔖 Hier weitermachen
+Phase 3 — lohnendste Kandidaten aus dem Anhang:
+1. `create_project` löscht Projekt bei Parsing-Fehler (Datenverlust-Risiko, project_service.py:146)
+2. Workflow-Locking TOCTOU (segment_service.py:451) — atomares UPDATE/`with_for_update`
+3. `metadata_json`-Mutationen ohne `flag_modified` (translate-Pfad ist weg, aber segment_service.py:54 bleibt)
+4. Frontend: Load-Race in `useProjectData` (ignore-Flag), API-Client `VITE_API_BASE`
+5. `parse_document`-Fallback: unbekannte Endungen klar ablehnen statt DOCX-Crash
 
-**Hinweis:** DB-Migration ist ausgeführt (halfvec + Indizes, alembic@`f8970d1b1e8e`). Backend nach dem Pull/Neustart konsistent. `tmp/score_test/` ist Scratch (nicht committet) — kann bleiben zum Kalibrieren.
+**Hinweis:** DB-Migration ausgeführt (halfvec + Indizes, alembic@`f8970d1b1e8e`). `tmp/` ist gitignored (Scratch + Testskripte: `rerank_probe.py`, `test_rerank_e2e.py`, `test_hnsw_correctness.py`).
 
 ---
 
@@ -80,9 +82,9 @@ Legende: `[ ]` offen · `[~]` in Arbeit · `[x]` erledigt
 
 ## Phase 2 — Performance / Skalierung (#11–#16) — später besprechen
 
-- [~] **#11 ANN-Indizes (halfvec HNSW) — MIGRATION AUSGEFÜHRT, Planner-Nutzung offen** — Spalten `Segment.embedding`/`ContextChunk.embedding` jetzt `halfvec(2048)`. HNSW-Indizes `ix_*_embedding_hnsw` gebaut. **Gemessen:** Seq Scan exakt 102 ms vs. HNSW 2,6 ms (~40×). ABER: Planner wählt bei 17k Zeilen noch Seq Scan (pgvector unterschätzt Distanzkosten). Interaktiv egal (LLM dauert Sekunden), bei Batch über 13k Segmente relevant (22 Min vs. 34 Sek). **OFFEN:** HNSW-Nutzung erzwingen — braucht `SET enable_seqscan=off` + `hnsw.iterative_scan=strict_order` (für die `project_id`-gefilterten Queries, sonst Under-Return). Korrektheits-sensibel → separat testen.
+- [x] **#11 ANN-Indizes (halfvec HNSW) — FERTIG, bewusst KEIN Forcing** — Spalten `halfvec(2048)`, HNSW-Indizes gebaut (Migration ausgeführt). **Korrektheitstest gegen echte Daten** (`tmp/score_test/test_hnsw_correctness.py`, 12 Samples über alle Projekte): Die 102-ms-Messung von gestern war die *ungefilterte* Query — die echten App-Queries filtern nach `project_id` und laufen via Btree exakt in ~13 ms. Forciertes HNSW (`iterative_scan=strict_order`) wäre für context_chunks **6× langsamer** (79,6 vs. 12,9 ms — globaler Graph kämpft gegen Projektfilter) bei worst recall 0,95. Planner wählt beim größten Projekt (1.869 Seg.) bereits **von selbst** HNSW. → Planner-Default ist korrekt; Indizes liegen bereit und greifen automatisch mit wachsender Datenmenge. Keine Code-Änderung.
 - [x] **#12 DB-Indizes + Alembic — FERTIG** — Alembic eingeführt (`backend/alembic/`, `env.py` an App-`Base`/`engine`, `requirements.in` ergänzt). Migration `f8970d1b1e8e` ausgeführt (alembic_version gestempelt). btree `ix_segments_project_id` + Composite `ix_segments_project_index` **verifiziert genutzt** (Bitmap Index Scan, 1,3 ms statt Seq Scan über 13k Zeilen). Modelle: `Segment.project_id index=True` + `__table_args__`-Composite. `create_all` bleibt für frische DBs; Migration idempotent (`IF NOT EXISTS`).
-- [~] **#13 `SegmentRow`-`memo()` wirkungslos — RE-ASSESSMENT** — `SplitView.jsx:432-449`. Bestätigt: Handler nicht `useCallback`'d, `registerEditor` inline, `generatingSegments`/`flashingSegments` als ganze Maps → memo defeated. **ABER:** Virtualisierung (`overscan: 5`) rendert nur ~20-30 sichtbare Zeilen, Tiptap-Instanzen werden via Refs NICHT neu erzeugt → praktischer Aufwand gering. Das erklärt, warum es im Betrieb nicht auffällt. Agenten-Einschätzung „größter Hebel" war **überzogen**. Fix bleibt sinnvoll als Politur (Handler `useCallback`, `registerEditor` stabil, skalare `isGenerating`/`isFlashing`-Props), aber niedrige Prio, niedriges Risiko.
+- [x] **#13 `SegmentRow`-Memoization — FERTIG** — `SplitView.jsx`: (1) `filteredSegments` + Progress-% in `useMemo` (stabilisiert auch den Scroll-Effekt), (2) Handler über Latest-Ref-Pattern (`rowHandlers`, stabile Identität, ruft immer die aktuelle Implementierung — kein Refactor der 3 Hooks nötig), (3) `registerEditor` in `useCallback`, (4) Skalar-Props `generating`/`isFlashing` statt ganzer Maps (durchgezogen bis `SourceColumn`; `ReviewView` angepasst). memo greift jetzt: Chat-Tippen/Logs rerendern keine Zeilen mehr. Build ✅.
 - [x] **#14 Fuzzy/TM-Scores — UMGESETZT** (empirisch kalibriert via `tmp/score_test/`)
   - **Cross-lingual-Erkenntnis:** Fuzzy scheidet aus (perfektes DE-Äquivalent fuzzy 49 vs. unverwandtes EN 86). Voyage-Relevance trennt sauber relevant (0,85-0,95) von Müll (0,2-0,35).
   - **Umgesetzt in `retrieval.py`:** (1) Exakt-Hash-Matches markiert (`metadata.exact`) + im Dedup höchste Prio → behalten 100/99/98, werden nie vom Rerank überschrieben. (2) `_rescale_relevance`: Log-Kurve über Band [0,75-0,99]→0-100 (konfigurierbar via `rerank_band_lo/hi`). (3) Längenfaktor + `+2`-Boost + hartcodierter `>35`-Cutoff entfernt. (4) Per-Kategorie-Slider (`threshold_mandatory/optional/tm`) verkabelt — waren vorher **tot** (nur `threshold_internal_tm` kam an). (5) Kein Flat-Fallback 80 mehr — ohne Voyage nur Exakt-Matches.
@@ -94,7 +96,7 @@ Legende: `[ ]` offen · `[~]` in Arbeit · `[x]` erledigt
   - **Flat-Fallbacks:** ohne Voyage-Client alle Scores 80 (`:173`) bzw. 60 (`:442`).
   - **Vorschlag (Design, braucht Freigabe):** Voyage nur zum **Finden/Ordnen** der Kandidaten nutzen; **angezeigten Score** als echte Fuzzy-Ratio (`fuzz.WRatio`/`token_sort_ratio` auf tag-strippten Source) berechnen; exakte Matches behalten 100/99/98 (nie überschreiben). Einheitliche, übersetzer-verständliche Skala.
   - O(n²) in `_fuzzy_internal_tm` (Z.413) ist sekundär — User sagt Fuzzy „funktioniert eigentlich gut", Optimierung optional.
-- [ ] **#15 `generate_structured_batch` ohne Chunking** — `inference.py:128`, `manager.py:66`. Ganzer Batch in einem Prompt → Kontext-Overflow, all-or-nothing-Retry. In 10–20er-Gruppen splitten. **User: „hauptsache am Ende ist nix verloren!"** → Chunking MUSS garantieren, dass jedes Segment genau einmal verarbeitet wird (kein Drop bei Teil-Fehler).
+- [x] **#15 LLM-Batch-Chunking — FERTIG** — `generate_structured_batch` chunkt jetzt intern (MAX_BATCH_CHUNK=15, deckt alle 3 Call-Sites ab; gefährlichster Pfad war `tasks.py`: ALLE Projektsegmente in einem Prompt). Fehlende/gecrashte Segmente werden per **Bisection-Retry** (bis Tiefe 5, runter bis Solo-Calls) wiederholt — ein „vergiftetes" Segment kann nur noch sich selbst kosten, nicht den Batch. Endgültig fehlende IDs werden explizit geloggt und vom Caller als `error` markiert (sichtbar, nicht still verloren). Mit Mock-LLM verifiziert: Drop-Erkennung, Crash-Isolation, Usage-Summierung.
 - [x] **#16 Voyage-Retry/Backoff** — `retrieval.py`. `_voyage_with_retry` mit exponentiellem Backoff um `embed`, `_rerank_voyage`, `_rerank_internal_tm`; transiente Fehler (429/5xx/timeout/connection) bis 3× retry, sonst Re-raise an bestehende Fallbacks. ✅ Import OK.
 
 ---

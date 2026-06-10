@@ -12,8 +12,8 @@ import { TargetColumn } from './TargetColumn';
  * Props:
  * @param {Object} segment - The segment data (source_content, target_content, metadata, etc.)
  * @param {Object} project - Project configuration
- * @param {Object} generatingSegments - Map of segment IDs currently generating AI drafts
- * @param {Object} flashingSegments - Map of segment IDs with flash animation
+ * @param {string|null} generating - AI generation mode for THIS segment ('analyze', 'translate', …) or null
+ * @param {boolean} isFlashing - Whether THIS segment has the flash animation
  * @param {boolean} showDebug - Whether to show debug information
  * @param {Function} onAiDraft - Callback to trigger AI draft generation
  * @param {Function} onToggleFlag - Callback to toggle flag state
@@ -26,8 +26,8 @@ import { TargetColumn } from './TargetColumn';
 export const SegmentRow = memo(({
     segment,
     project,
-    generatingSegments,
-    flashingSegments,
+    generating = null,
+    isFlashing = false,
     showDebug,
     onAiDraft,
     onToggleFlag,
@@ -132,8 +132,8 @@ export const SegmentRow = memo(({
                 sortedMatches={sortedMatches}
                 tmMatches={tmMatches}
                 hasContext={hasContext}
-                generatingSegments={generatingSegments}
-                flashingSegments={flashingSegments}
+                generating={generating}
+                isFlashing={isFlashing}
                 showDebug={showDebug}
                 showSourceTC={showSourceTC}
                 tcMode={tcMode}
