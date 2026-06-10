@@ -28,6 +28,12 @@ backend/uploads/
 uploads/
 backups/
 tmp/
+
+# --- Project backups & exports (never commit client data) ---
+*.logion.zip
+*.logion/
+*.tmx
+*.zip
 app.log
 app.log.*
 app.json
