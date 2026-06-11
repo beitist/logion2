@@ -366,23 +366,34 @@ class SegmentService:
             inner_meta = current_meta.get("metadata", {})
             if not isinstance(inner_meta, dict):
                 inner_meta = {}
+            variant = (tc_params.tc_variant or "").lower()
             inner_meta["ai_model"] = model_name
-            inner_meta["tc_stage_translation"] = stage_translation
+            if variant:
+                inner_meta[f"tc_stage_translation_{variant}"] = stage_translation
+            else:
+                inner_meta["tc_stage_translation"] = stage_translation
 
             # MT card content: TC markup (with diffs) when base was provided,
             # clean translation otherwise (TC 0 / base stage).
             mt_card_content = tc_content if base else stage_translation
 
-            # Update MT match in context_matches so the MatchCard shows the current result
+            # Update MT match in context_matches so the MatchCard shows the current result.
+            # PRE/POST variants coexist as separate cards: replace only the card of the
+            # same variant (legacy unversioned MT cards are always replaced).
             existing_matches = current_meta.get("context_matches", [])
-            non_mt = [m for m in existing_matches if m.get("type") != "mt"]
-            non_mt.append({
+            kept = [
+                m for m in existing_matches
+                if m.get("type") != "mt"
+                or (variant and m.get("variant") and m.get("variant") != variant)
+            ]
+            kept.append({
                 "type": "mt",
                 "content": mt_card_content,
                 "score": None,
-                "filename": model_name,
+                "filename": f"{variant.upper()} · {model_name}" if variant else model_name,
+                **({"variant": variant} if variant else {}),
             })
-            current_meta["context_matches"] = non_mt
+            current_meta["context_matches"] = kept
 
             current_meta["metadata"] = inner_meta
             segment.metadata_json = current_meta

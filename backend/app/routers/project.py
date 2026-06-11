@@ -16,6 +16,9 @@ class TCDraftParams(BaseModel):
     tc_author_id: str = "mt"
     tc_author_name: str = "MT"
     tc_date: str = ""
+    # 'pre' = MT of the original stage, 'post' = MT of the final stage.
+    # Both can coexist as separate MT cards; '' keeps legacy single-card behavior.
+    tc_variant: str = ""
 from ..models import Project, Segment, ProjectFile, ProjectFileCategory, AiUsageLog
 from ..logger import get_logger
 from ..config import get_default_model_id

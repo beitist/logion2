@@ -98,18 +98,29 @@ export const SegmentRow = memo(({
     }, [targetTCEnabled, currentStage.author, replaceAuthors, translatorName]);
 
     // Wrap onAiDraft for TC segments.
-    // TC 0 / first_last: simple MT with correct source stage text.
-    // TC 1+ step_by_step: no manual shortcut — batch workflow only.
-    const wrappedOnAiDraft = useCallback((segmentId, isAuto, mode, isWorkflow, forceRefresh, tcParams) => {
+    // step_by_step: MT of the ORIGINAL (PRE) and FINAL (POST) stage as two MT
+    //   cards — intermediate stages are never machine-translated. The translator
+    //   inserts PRE or POST (Cmd+Opt+0 / Cmd+Opt+1), then steps the slider and
+    //   tracks the remaining changes manually in the target editor.
+    // first_last: single MT of the final source text.
+    const wrappedOnAiDraft = useCallback(async (segmentId, isAuto, mode, isWorkflow, forceRefresh, tcParams) => {
         if (tcMode && !isSimpleInsert && stages.length >= 2 && !mode) {
-            // step_by_step TC1+: disabled — must use batch workflow
-            if (tcMode === 'step_by_step' && activeTCStage > baseStage) {
-                return Promise.resolve(null);
+            if (tcMode === 'step_by_step') {
+                const mkParams = (stageIdx, variant) => ({
+                    tc_source_text: stages[stageIdx]?.text || '',
+                    tc_base_translation: '',
+                    tc_author_id: 'mt',
+                    tc_author_name: variant === 'pre' ? 'MT-PRE' : 'MT-POST',
+                    tc_date: stages[stageIdx]?.date || '',
+                    tc_variant: variant,
+                });
+                // Sequential: useAIQueue blocks concurrent drafts per segment.
+                await onAiDraft(segmentId, false, 'translate', false, false, mkParams(baseStage, 'pre'));
+                await onAiDraft(segmentId, false, 'translate', false, false, mkParams(stages.length - 1, 'post'));
+                return null; // no auto-insert — user picks a card explicitly
             }
             // first_last: translate the final source text
-            // step_by_step TC0: translate the base stage (classic MT)
-            const stageIdx = tcMode === 'first_last' ? stages.length - 1 : baseStage;
-            const stageData = stages[stageIdx] || {};
+            const stageData = stages[stages.length - 1] || {};
             const tcParamsAuto = {
                 tc_source_text: stageData.text || '',
                 tc_base_translation: '',
@@ -121,7 +132,7 @@ export const SegmentRow = memo(({
         } else {
             return onAiDraft(segmentId, isAuto, mode, isWorkflow, forceRefresh, tcParams);
         }
-    }, [onAiDraft, tcMode, isSimpleInsert, activeTCStage, stages, baseStage]);
+    }, [onAiDraft, tcMode, isSimpleInsert, stages, baseStage]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">

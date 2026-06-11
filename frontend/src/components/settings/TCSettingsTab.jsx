@@ -28,7 +28,11 @@ export function TCSettingsTab({ project, onUpdate }) {
                 tc_translator_name: tc.tc_translator_name || ''
             });
         }
-    }, [project]);
+    // Sync from server state only when switching projects — NOT on every
+    // project identity change: the workflow auto-poll calls setProject every
+    // 2.5s and would clobber unsaved edits (dropdown 'jumps back' bug).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [project?.id]);
 
     const handleSave = async () => {
         setSaving(true);

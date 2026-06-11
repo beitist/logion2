@@ -10,6 +10,8 @@ Stand: 2026-06-09. Konsolidierte Befunde aus vier parallelen Code-Reviews (Backe
 Legende: `[ ]` offen · `[~]` in Arbeit · `[x]` erledigt
 
 ### 🔖 Hier weitermachen
+0. **Batch-TC-Workflow (`tc_batch.py`) funktioniert nicht richtig** (User-Report 2026-06-11, vertagt). Im Editor gilt jetzt das PRE/POST-Modell (MT nur Original- + Final-Stage, `tc_variant` in `TCDraftParams`); der Batch-Workflow hat noch seine alte Stage-für-Stage-Logik. Klären: Symptome erfragen, dann vermutlich auf PRE/POST umstellen. Kontext: Erledigt-Log „2026-06-11 — Akut-Bugfixes".
+
 Phase 3 — lohnendste Kandidaten aus dem Anhang:
 1. `create_project` löscht Projekt bei Parsing-Fehler (Datenverlust-Risiko, project_service.py:146)
 2. Workflow-Locking TOCTOU (segment_service.py:451) — atomares UPDATE/`with_for_update`
@@ -170,6 +172,11 @@ Phase 3 — lohnendste Kandidaten aus dem Anhang:
 ---
 
 ## Erledigt-Log
+
+**2026-06-11 — Akut-Bugfixes (außerhalb Overhaul-Plan)**
+- **Settings-Clobber-Bug:** Alle 4 Settings-Tabs (AI/RAG/TC/Project) resetteten lokalen Edit-State bei jeder `project`-Identitätsänderung — der Workflow-Auto-Poll (alle 2,5 s `setProject`) überschrieb ungespeicherte Auswahl (Symptom: „Model-Dropdown springt zurück, nichts speicherbar"). Fix: Effekt-Dep `[project]` → `[project?.id]`.
+- **SettingsToggle-Prop-Mismatch:** Komponente erwartet `enabled`, AISettingsTab/ProjectSettingsTab übergaben `checked` → Toggles zeigten immer „aus", setzten beim Klick immer `true`. 5 Stellen gefixt.
+- **TC PRE/POST-MT implementiert** (User-Design): step_by_step-TC-Segmente erzeugen beim MT-Trigger jetzt ZWEI Karten — PRE (MT der Original-Stage) + POST (MT der Final-Stage), Zwischenstufen werden nie maschinell übersetzt. `Cmd+Opt+0`=PRE, `Cmd+Opt+1`=POST (neu). Backend: `TCDraftParams.tc_variant`, varianten-bewusste MT-Karten (koexistieren). Frontend: `SegmentRow.wrappedOnAiDraft` (sequenzielles Paar), Sortierung pre→post, Shortcut-Labels, `insertMatchContent`-Helper. Target-TC-Aktivierung (Slider +1 → Editor trackt, Original-Autoren bleiben) war nie weg — nur durch den Clobber-Bug nicht aktivierbar (tc_mode nicht speicherbar).
 
 **2026-06-09 — Phase 1 abgeschlossen** (Backend `py_compile` ✅, Frontend `vite build` ✅)
 - #1 `ai_service.py` — `Data` → `data` (verifiziert: `data` ist Param)

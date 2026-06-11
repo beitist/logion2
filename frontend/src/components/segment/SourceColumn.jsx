@@ -89,10 +89,12 @@ export function SourceColumn({
 
     /**
      * Determines keyboard shortcut label for a match.
-     * MT = Cmd+Opt+0, TM matches = Cmd+Opt+9, 8, 7...
+     * MT = Cmd+Opt+0 (PRE / single), Cmd+Opt+1 (POST), TM matches = Cmd+Opt+9, 8, 7...
      */
     const getShortcutLabel = (match, tmMatches) => {
-        if (match.type === 'mt') return 'Cmd+Opt+0';
+        if (match.type === 'mt') {
+            return match.variant === 'post' ? 'Cmd+Opt+1' : 'Cmd+Opt+0';
+        }
         if (match.type === 'glossary') return '';
 
         const tmIdx = tmMatches.indexOf(match);

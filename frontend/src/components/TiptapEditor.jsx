@@ -296,6 +296,25 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
         return hydrated;
     };
 
+    // Replaces the whole editor content with a match. Uses trackManualChanged
+    // so TC markup (<insert>/<delete>) survives the insertion.
+    const insertMatchContent = (editorInstance, match) => {
+        const hydrated = hydrateContent(match.content, availableTagsRef.current);
+        try {
+            const doc = createNodeFromContent(hydrated, editorInstance.schema, {
+                parseOptions: { preserveWhitespace: 'full' }
+            });
+            const { state, view } = editorInstance;
+            const tr = state.tr
+                .replaceWith(0, state.doc.content.size, doc.content)
+                .setMeta('trackManualChanged', true)
+                .setMeta('addToHistory', false);
+            view.dispatch(tr);
+        } catch (e) {
+            editorInstance.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
+        }
+    };
+
     const editor = useEditor({
         extensions: [
             StarterKit.configure({
@@ -357,29 +376,28 @@ export function TiptapEditor({ content, onUpdate, segmentId, onSave, isReadOnly,
                             return true;
                         },
 
-                        // --- INSERT MATCHES (Legacy: 0=MT, 9,8,7=Refs) ---
-                        // 0. Mandatory / MT
+                        // --- INSERT MATCHES (0=MT/PRE, 1=POST, 9,8,7=Refs) ---
+                        // 0. MT — PRE variant (original stage) for TC segments,
+                        //    or the single/legacy MT card otherwise
                         'Mod-Alt-0': () => {
                             const matches = contextMatchesRef.current;
-                            const mtMatch = matches?.find(m => m.type === 'mt');
+                            const mts = matches?.filter(m => m.type === 'mt') || [];
+                            const mtMatch = mts.find(m => m.variant === 'pre') || mts[0];
                             const bestMatch = mtMatch || matches?.[0];
-
                             if (bestMatch) {
-                                const hydrated = hydrateContent(bestMatch.content, availableTagsRef.current);
-                                // Use trackManualChanged to preserve TC markup (<insert>/<delete>)
-                                try {
-                                    const doc = createNodeFromContent(hydrated, this.editor.schema, {
-                                        parseOptions: { preserveWhitespace: 'full' }
-                                    });
-                                    const { state, view } = this.editor;
-                                    const tr = state.tr
-                                        .replaceWith(0, state.doc.content.size, doc.content)
-                                        .setMeta('trackManualChanged', true)
-                                        .setMeta('addToHistory', false);
-                                    view.dispatch(tr);
-                                } catch (e) {
-                                    this.editor.commands.setContent(hydrated, false, { preserveWhitespace: 'full' });
-                                }
+                                insertMatchContent(this.editor, bestMatch);
+                                return true;
+                            }
+                            return false;
+                        },
+
+                        // 1. MT — POST variant (final stage) for TC segments
+                        'Mod-Alt-1': () => {
+                            const matches = contextMatchesRef.current;
+                            const mts = matches?.filter(m => m.type === 'mt') || [];
+                            const postMatch = mts.find(m => m.variant === 'post') || mts[1];
+                            if (postMatch) {
+                                insertMatchContent(this.editor, postMatch);
                                 return true;
                             }
                             return false;

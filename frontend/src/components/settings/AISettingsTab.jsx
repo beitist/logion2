@@ -98,7 +98,11 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                 auto_fetch_mt_on_focus: !ai.preload_mode
             });
         }
-    }, [project]);
+    // Sync from server state only when switching projects — NOT on every
+    // project identity change: the workflow auto-poll calls setProject every
+    // 2.5s and would clobber unsaved edits (dropdown 'jumps back' bug).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [project?.id]);
 
     // Load Available Models from backend
     useEffect(() => {
@@ -339,7 +343,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                             {/* Auto-fetch on Focus Toggle */}
                             <label className="flex items-center gap-3 px-3 py-2 bg-white rounded-lg border border-gray-100 cursor-pointer">
                                 <SettingsToggle
-                                    checked={guiSettings.auto_fetch_mt_on_focus}
+                                    enabled={guiSettings.auto_fetch_mt_on_focus}
                                     onChange={(val) => setGuiSettings({ ...guiSettings, auto_fetch_mt_on_focus: val })}
                                     accentColor="bg-indigo-500"
                                 />
@@ -352,7 +356,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                             {/* Auto-Glossary on Edit */}
                             <label className="flex items-center gap-3 px-3 py-2 bg-white rounded-lg border border-gray-100 cursor-pointer">
                                 <SettingsToggle
-                                    checked={settings.auto_glossary_on_edit}
+                                    enabled={settings.auto_glossary_on_edit}
                                     onChange={(val) => setSettings({ ...settings, auto_glossary_on_edit: val })}
                                     accentColor="bg-teal-500"
                                 />
@@ -427,7 +431,7 @@ export function AISettingsTab({ project, onUpdate, onQueueAll }) {
                                 </div>
                             </div>
                             <SettingsToggle
-                                checked={guiSettings.show_match_penalties}
+                                enabled={guiSettings.show_match_penalties}
                                 onChange={(val) => setGuiSettings({ ...guiSettings, show_match_penalties: val })}
                                 accentColor="bg-emerald-500"
                             />

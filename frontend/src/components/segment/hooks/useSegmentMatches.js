@@ -34,11 +34,16 @@ export function useSegmentMatches(segment) {
         }
 
         // Sort: MT first (always shown at top), then by score descending.
-        // Copy first — rawMatches may alias segment.context_matches (state) when
-        // no AI draft was injected, and .sort() mutates in place.
+        // Two MT cards can coexist for TC segments: PRE (original stage) before
+        // POST (final stage). Copy first — rawMatches may alias
+        // segment.context_matches (state), and .sort() mutates in place.
+        const variantRank = (v) => (v === 'pre' ? 0 : v === 'post' ? 1 : 2);
         const sortedMatches = [...rawMatches].sort((a, b) => {
-            if (a.type === 'mt') return -1;
-            if (b.type === 'mt') return 1;
+            const aMt = a.type === 'mt';
+            const bMt = b.type === 'mt';
+            if (aMt && bMt) return variantRank(a.variant) - variantRank(b.variant);
+            if (aMt) return -1;
+            if (bMt) return 1;
             return (b.score || 0) - (a.score || 0);
         });
 

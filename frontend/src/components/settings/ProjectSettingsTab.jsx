@@ -31,7 +31,11 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                 include_comments_in_workflows: !!project.config?.include_comments_in_workflows, // Default false
             });
         }
-    }, [project]);
+    // Sync from server state only when switching projects — NOT on every
+    // project identity change: the workflow auto-poll calls setProject every
+    // 2.5s and would clobber unsaved edits (dropdown 'jumps back' bug).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [project?.id]);
 
     const handleSave = async () => {
         setSaving(true);
@@ -172,7 +176,7 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                                 </div>
                             </div>
                             <SettingsToggle
-                                checked={formData.use_ai}
+                                enabled={formData.use_ai}
                                 onChange={(val) => setFormData({ ...formData, use_ai: val })}
                                 accentColor="bg-emerald-500"
                             />
@@ -187,7 +191,7 @@ export function ProjectSettingsTab({ project, onUpdate, onReinit }) {
                                 </div>
                             </div>
                             <SettingsToggle
-                                checked={formData.include_comments_in_workflows}
+                                enabled={formData.include_comments_in_workflows}
                                 onChange={(val) => setFormData({ ...formData, include_comments_in_workflows: val })}
                                 accentColor="bg-emerald-500"
                             />

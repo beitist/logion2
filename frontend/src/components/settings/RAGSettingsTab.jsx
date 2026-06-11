@@ -28,7 +28,11 @@ export function RAGSettingsTab({ project, onUpdate }) {
                 threshold_internal_tm: ai.threshold_internal_tm !== undefined ? ai.threshold_internal_tm : 90
             });
         }
-    }, [project]);
+    // Sync from server state only when switching projects — NOT on every
+    // project identity change: the workflow auto-poll calls setProject every
+    // 2.5s and would clobber unsaved edits (dropdown 'jumps back' bug).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [project?.id]);
 
     const handleSave = async () => {
         setSaving(true);
